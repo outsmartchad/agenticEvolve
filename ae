@@ -1,0 +1,316 @@
+#!/bin/bash
+# ae — agenticEvolve CLI
+# Single entrypoint for humans and agents.
+set -euo pipefail
+
+EXODIR="$HOME/.agenticEvolve"
+source "$EXODIR/config.sh"
+
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+case "$CMD" in
+
+    # --- Setup ---
+    init)
+        echo "Running agenticEvolve initializer..."
+        claude -p "$(cat $EXODIR/prompts/initialize.md)" \
+            --model sonnet \
+            --dangerously-skip-permissions
+        ;;
+
+    # --- Core loop ---
+    cycle)
+        bash "$EXODIR/run-cycle.sh"
+        ;;
+
+    # --- Status ---
+    status)
+        echo "=== agenticEvolve status ==="
+        echo ""
+
+        # Last cycle
+        LAST_LOG=$(ls -t "$LOGS"/2*.log 2>/dev/null | head -1 || true)
+        if [ -n "$LAST_LOG" ]; then
+            echo "Last cycle: $(basename "$LAST_LOG" .log)"
+            LAST_LINE=$(tail -1 "$LAST_LOG" 2>/dev/null || echo "unknown")
+            echo "Result: $LAST_LINE"
+        else
+            echo "Last cycle: never run"
+        fi
+        echo ""
+
+        # Action items
+        PENDING=$(grep -c '^\- \[ \]' "$MEMORY/action-items.md" 2>/dev/null) || PENDING=0
+        DONE=$(grep -c '^\- \[x\]' "$MEMORY/action-items.md" 2>/dev/null) || DONE=0
+        echo "Action items: $PENDING pending, $DONE completed"
+
+        # Skills queue
+        QUEUED=$(ls "$QUEUE/" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        echo "Skills in queue: $QUEUED"
+
+        # Cost
+        TODAY_DATE=$(date +%Y-%m-%d)
+        TODAY_COST=$(grep "$TODAY_DATE" "$LOGS/cost.log" 2>/dev/null | awk '{sum+=$3} END{printf "%.2f", sum+0}') || TODAY_COST="0.00"
+        [ -s "$LOGS/cost.log" ] && TOTAL_COST=$(tail -1 "$LOGS/cost.log" | awk '{printf "%.2f", $4+0}') || TOTAL_COST="0.00"
+        echo "Cost today: \$$TODAY_COST / \$$DAILY_CAP"
+        echo "Cost total: \$$TOTAL_COST"
+        echo ""
+
+        # Signals today
+        TODAY_SIGNALS=$(ls "$SIGNALS/$TODAY_DATE/" 2>/dev/null | wc -l | tr -d ' ') || TODAY_SIGNALS=0
+        echo "Signal files today: $TODAY_SIGNALS"
+        ;;
+
+    # --- Review ---
+    review)
+        FOUND=0
+        for skill_dir in "$QUEUE"/*/; do
+            [ -d "$skill_dir" ] || continue
+            FOUND=1
+            name=$(basename "$skill_dir")
+            echo "━━━ $name ━━━"
+            cat "$skill_dir/SKILL.md" 2>/dev/null || echo "(no SKILL.md)"
+            echo ""
+            read -p "[a]pprove / [r]eject / [s]kip? " choice </dev/tty
+            case "$choice" in
+                a|approve)
+                    mkdir -p "$SKILLS/$name"
+                    mv "$skill_dir"* "$SKILLS/$name/" 2>/dev/null
+                    rmdir "$skill_dir" 2>/dev/null || true
+                    echo "## $(date -Iseconds) — Approved: $name" >> "$MEMORY/log.md"
+                    echo "---" >> "$MEMORY/log.md"
+                    echo "✅ Approved: $name → ~/.claude/skills/$name/"
+                    ;;
+                r|reject)
+                    read -p "Reason (optional): " reason </dev/tty
+                    echo "## $(date -Iseconds) — Rejected: $name — ${reason:-no reason}" >> "$MEMORY/log.md"
+                    echo "---" >> "$MEMORY/log.md"
+                    rm -rf "$skill_dir"
+                    echo "❌ Rejected: $name"
+                    ;;
+                *)
+                    echo "Skipped"
+                    ;;
+            esac
+            echo ""
+        done
+        [ "$FOUND" -eq 0 ] && echo "Queue is empty."
+        ;;
+
+    approve)
+        SKILL="${1:?Usage: ae approve <skill-name>}"
+        if [ -d "$QUEUE/$SKILL" ]; then
+            mkdir -p "$SKILLS/$SKILL"
+            mv "$QUEUE/$SKILL/"* "$SKILLS/$SKILL/"
+            rmdir "$QUEUE/$SKILL" 2>/dev/null || true
+            echo "## $(date -Iseconds) — Approved: $SKILL" >> "$MEMORY/log.md"
+            echo "---" >> "$MEMORY/log.md"
+            echo "✅ Approved: $SKILL → ~/.claude/skills/$SKILL/"
+        else
+            echo "Not found: $QUEUE/$SKILL"
+            exit 1
+        fi
+        ;;
+
+    reject)
+        SKILL="${1:?Usage: ae reject <skill-name>}"
+        REASON="${3:-no reason given}"
+        # Handle --reason flag
+        if [ "${2:-}" = "--reason" ]; then
+            REASON="${3:-no reason given}"
+        fi
+        if [ -d "$QUEUE/$SKILL" ]; then
+            echo "## $(date -Iseconds) — Rejected: $SKILL — $REASON" >> "$MEMORY/log.md"
+            echo "---" >> "$MEMORY/log.md"
+            rm -rf "$QUEUE/$SKILL"
+            echo "❌ Rejected: $SKILL ($REASON)"
+        else
+            echo "Not found: $QUEUE/$SKILL"
+            exit 1
+        fi
+        ;;
+
+    # --- Watchlist ---
+    watchlist)
+        SUB="${1:-show}"
+        case "$SUB" in
+            show)
+                cat "$MEMORY/watchlist.md"
+                ;;
+            add)
+                TYPE="${2:?Usage: ae watchlist add <type> <value>}"
+                VALUE="${3:?Usage: ae watchlist add <type> <value>}"
+                echo "- $VALUE" >> "$MEMORY/watchlist.md"
+                echo "Added to watchlist: $VALUE"
+                ;;
+            rm)
+                VALUE="${3:?Usage: ae watchlist rm <type> <value>}"
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sed -i '' "/$VALUE/d" "$MEMORY/watchlist.md"
+                else
+                    sed -i "/$VALUE/d" "$MEMORY/watchlist.md"
+                fi
+                echo "Removed from watchlist: $VALUE"
+                ;;
+            *)
+                echo "Usage: ae watchlist [show|add|rm] [type] [value]"
+                ;;
+        esac
+        ;;
+
+    # --- Collectors ---
+    collect)
+        SOURCE="${1:-all}"
+        if [ "$SOURCE" = "all" ]; then
+            bash "$EXODIR/collectors/github.sh" || true
+            bash "$EXODIR/collectors/hackernews.sh" || true
+            bash "$EXODIR/collectors/x-search.sh" || true
+        elif [ -f "$EXODIR/collectors/$SOURCE.sh" ]; then
+            bash "$EXODIR/collectors/$SOURCE.sh"
+        else
+            echo "Unknown collector: $SOURCE"
+            echo "Available: github, hackernews, x-search"
+            exit 1
+        fi
+        ;;
+
+    # --- Memory ---
+    state)
+        cat "$MEMORY/state.md"
+        ;;
+
+    log)
+        LINES="${1:-50}"
+        tail -"$LINES" "$MEMORY/log.md"
+        ;;
+
+    # --- Cost ---
+    cost)
+        SUB="${1:-summary}"
+        case "$SUB" in
+            summary)
+                echo "=== Cost ==="
+                TODAY_DATE=$(date +%Y-%m-%d)
+                TODAY_COST=$(grep "$TODAY_DATE" "$LOGS/cost.log" 2>/dev/null | awk '{sum+=$3} END{printf "%.2f", sum+0}') || TODAY_COST="0.00"
+                WEEK_COST=$(grep "$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d)\|$(date +%Y-%m-%d)" "$LOGS/cost.log" 2>/dev/null | awk '{sum+=$3} END{printf "%.2f", sum+0}') || WEEK_COST="0.00"
+                [ -s "$LOGS/cost.log" ] && TOTAL=$(tail -1 "$LOGS/cost.log" | awk '{printf "%.2f", $4+0}') || TOTAL="0.00"
+                echo "Today:      \$$TODAY_COST / \$$DAILY_CAP"
+                echo "This week:  \$$WEEK_COST / \$$WEEKLY_CAP"
+                echo "All time:   \$$TOTAL"
+                ;;
+            check)
+                TODAY_DATE=$(date +%Y-%m-%d)
+                TODAY_COST=$(grep "$TODAY_DATE" "$LOGS/cost.log" 2>/dev/null | awk '{sum+=$3} END{print sum+0}') || TODAY_COST="0"
+                if awk "BEGIN{exit ($TODAY_COST >= $DAILY_CAP)}"; then
+                    exit 0  # under cap
+                else
+                    echo "Daily cap exceeded: \$$TODAY_COST >= \$$DAILY_CAP"
+                    exit 1
+                fi
+                ;;
+        esac
+        ;;
+
+    # --- Queue ---
+    queue)
+        SUB="${1:-ls}"
+        case "$SUB" in
+            ls)
+                ITEMS=$(ls "$QUEUE/" 2>/dev/null)
+                if [ -z "$ITEMS" ]; then
+                    echo "Queue is empty."
+                else
+                    echo "Skills in queue:"
+                    for d in "$QUEUE"/*/; do
+                        [ -d "$d" ] && echo "  - $(basename "$d")"
+                    done
+                fi
+                ;;
+            *)
+                mkdir -p "$QUEUE/$SUB"
+                echo "Created queue entry: $SUB"
+                ;;
+        esac
+        ;;
+
+    # --- GC ---
+    gc)
+        bash "$EXODIR/run-gc.sh"
+        ;;
+
+    # --- Cron ---
+    start)
+        # Add cron jobs (idempotent)
+        EXISTING=$(crontab -l 2>/dev/null || true)
+        NEW="$EXISTING"
+        echo "$EXISTING" | grep -q "run-cycle.sh" || NEW="$NEW
+0 */2 * * * $EXODIR/run-cycle.sh >> $LOGS/cron.log 2>&1"
+        echo "$EXISTING" | grep -q "run-gc.sh" || NEW="$NEW
+0 3 * * 0 $EXODIR/run-gc.sh >> $LOGS/cron-gc.log 2>&1"
+        echo "$NEW" | crontab -
+        echo "✅ Cron jobs enabled:"
+        echo "  - Cycle: every 2 hours"
+        echo "  - GC: Sunday 3am"
+        ;;
+
+    stop)
+        crontab -l 2>/dev/null | grep -v "agenticEvolve" | crontab - 2>/dev/null || true
+        echo "🛑 Cron jobs disabled."
+        ;;
+
+    pause)
+        N="${1:-1}"
+        PAUSE_UNTIL=$(date -v+${N}H +%Y-%m-%dT%H:%M 2>/dev/null || date -d "+$N hours" +%Y-%m-%dT%H:%M)
+        echo "$PAUSE_UNTIL" > "$EXODIR/logs/.pause_until"
+        echo "⏸ Paused for $N hours (until $PAUSE_UNTIL)"
+        ;;
+
+    # --- Telegram ---
+    notify)
+        MSG="${1:?Usage: ae notify <message>}"
+        bash "$EXODIR/notify.sh" "$MSG"
+        ;;
+
+    listen)
+        bash "$EXODIR/telegram-listener.sh"
+        ;;
+
+    # --- Help ---
+    help|*)
+        cat <<'EOF'
+ae — agenticEvolve CLI
+
+SETUP
+  ae init                  First-time setup (run once)
+  ae start                 Enable cron jobs (cycle + gc)
+  ae stop                  Disable cron jobs
+  ae pause [hours]         Pause for N hours
+
+CORE
+  ae cycle                 Run one full cycle
+  ae collect [source]      Run collectors (github, hackernews, x-search, or all)
+  ae gc                    Run garbage collection
+
+REVIEW
+  ae status                System status
+  ae review                Interactive skill review
+  ae approve <skill>       Approve a queued skill
+  ae reject <skill>        Reject a queued skill
+  ae queue [ls|name]       List or create queue entries
+
+MEMORY
+  ae state                 Show curated learnings
+  ae log [N]               Tail last N lines of log (default 50)
+  ae watchlist             Show watchlist
+  ae watchlist add <t> <v> Add to watchlist
+  ae watchlist rm <t> <v>  Remove from watchlist
+  ae cost                  Cost breakdown
+  ae cost check            Check if daily cap reached
+
+TELEGRAM
+  ae notify <msg>          Send Telegram message
+  ae listen                Start Telegram callback listener
+EOF
+        ;;
+esac
