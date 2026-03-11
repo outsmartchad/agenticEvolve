@@ -1,0 +1,18 @@
+# Runtime data (not tracked — generated per-machine)
+logs/*.log
+signals/
+skills-queue/
+archive/
+
+# Keep directory structure
+!logs/.gitkeep
+!signals/.gitkeep
+!skills-queue/.gitkeep
+!archive/.gitkeep
+
+# OS
+.DS_Store
+
+# Secrets (never commit)
+.env
+*.key
