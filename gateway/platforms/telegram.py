@@ -16,8 +16,8 @@ CRON_DIR = EXODIR / "cron"
 CRON_JOBS_FILE = CRON_DIR / "jobs.json"
 
 try:
-    from telegram import Update, BotCommand
-    from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
+    from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
     HAS_TELEGRAM = True
 except ImportError:
     HAS_TELEGRAM = False
@@ -1258,6 +1258,95 @@ class TelegramAdapter(BasePlatformAdapter):
     # ── /model — view or switch model ────────────────────────────
     # (overrides the existing read-only /model handler above)
 
+    # ── URL/link detection helper ───────────────────────────────
+
+    _URL_RE = re.compile(
+        r'https?://(?:github\.com|gitlab\.com|bitbucket\.org|npmjs\.com|pypi\.org|'
+        r'huggingface\.co|arxiv\.org|medium\.com|dev\.to|blog\.|docs\.|'
+        r'[\w.-]+\.(?:com|org|io|dev|ai|sh|co))/\S+',
+        re.IGNORECASE
+    )
+
+    def _extract_urls(self, text: str) -> list[str]:
+        """Extract meaningful URLs from text (not just any link)."""
+        return self._URL_RE.findall(text)
+
+    async def _offer_absorb_learn(self, update: Update, target: str, target_type: str = "link"):
+        """Show inline keyboard asking user if they want to absorb/learn a target."""
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Absorb", callback_data=f"absorb:{target[:200]}"),
+                InlineKeyboardButton("Learn", callback_data=f"learn:{target[:200]}"),
+            ],
+            [
+                InlineKeyboardButton("Just chat", callback_data="chat:proceed"),
+            ]
+        ])
+        await update.message.reply_text(
+            f"I noticed a {target_type}. Want me to absorb it into our system or learn from it?\n\n"
+            f"{target[:200]}",
+            reply_markup=keyboard
+        )
+
+    async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline keyboard button presses for absorb/learn prompts."""
+        query = update.callback_query
+        if not query or not query.data:
+            return
+        await query.answer()
+
+        user_id = query.from_user.id
+        if not self._is_allowed(user_id):
+            return
+
+        chat_id = str(query.message.chat_id)
+        data = query.data
+
+        if data.startswith("absorb:"):
+            target = data[7:]
+            await query.edit_message_text(f"Absorbing: {target[:100]}...")
+            # Trigger absorb pipeline
+            context.args = [target]
+            fake_update = update
+            fake_update._effective_message = query.message
+            await self._handle_absorb(update, context)
+
+        elif data.startswith("learn:"):
+            target = data[6:]
+            await query.edit_message_text(f"Learning from: {target[:100]}...")
+            # Trigger learn pipeline
+            context.args = [target]
+            fake_update = update
+            fake_update._effective_message = query.message
+            await self._handle_learn(update, context)
+
+        elif data == "chat:proceed":
+            # User chose to just chat — remove the keyboard and let it be
+            await query.edit_message_text("Got it, continuing as normal chat.")
+
+    # ── Photo/image handler ──────────────────────────────────────
+
+    async def _handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle photos sent to the bot."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        caption = update.message.caption or ""
+
+        # If photo has a URL in the caption, offer absorb/learn
+        urls = self._extract_urls(caption) if caption else []
+        if urls:
+            await self._offer_absorb_learn(update, urls[0], "link in image caption")
+            return
+
+        # Otherwise just acknowledge — we can't process images directly via claude -p
+        await update.message.reply_text(
+            "I received your image but I can't process images directly through the gateway yet.\n\n"
+            "If you have a URL to share, send it as text and I'll offer to absorb or learn from it."
+        )
+
     # ── Regular text messages ────────────────────────────────────
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1269,6 +1358,18 @@ class TelegramAdapter(BasePlatformAdapter):
 
         chat_id = str(update.message.chat_id)
         text = update.message.text
+
+        # Detect URLs — offer absorb/learn if the message is primarily a link
+        urls = self._extract_urls(text)
+        if urls:
+            # If the message is mostly just a URL (link share), offer absorb/learn
+            non_url_text = text
+            for url in urls:
+                non_url_text = non_url_text.replace(url, "").strip()
+            if len(non_url_text) < 30:
+                # Message is primarily a link share
+                await self._offer_absorb_learn(update, urls[0], "link")
+                return
 
         # Keep typing indicator alive while Claude processes
         typing_active = True
@@ -1337,6 +1438,12 @@ class TelegramAdapter(BasePlatformAdapter):
 
         # Regular text messages
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
+
+        # Photo handler
+        self.app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo))
+
+        # Inline keyboard callback handler (absorb/learn/chat buttons)
+        self.app.add_handler(CallbackQueryHandler(self._handle_callback))
 
         await self.app.initialize()
         await self.app.start()
