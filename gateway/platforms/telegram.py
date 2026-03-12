@@ -85,7 +85,8 @@ class TelegramAdapter(BasePlatformAdapter):
             "*Evolution*\n"
             "/evolve — Scan signals + build skills now\n"
             "/evolve `--dry-run` — Preview what would be built\n"
-            "/learn `<repo-url or tech>` — Deep-dive a repo or tech\n\n"
+            "/learn `<repo-url or tech>` — Deep-dive a repo or tech\n"
+            "/learnings — View past findings (or search)\n\n"
             "*Skills Queue*\n"
             "/queue — Skills pending approval\n"
             "/approve `<name>` — Install a queued skill\n"
@@ -708,6 +709,14 @@ class TelegramAdapter(BasePlatformAdapter):
             f"- Add a concise entry about what we learned to ~/.agenticEvolve/memory/MEMORY.md\n"
             f"- Focus on the extractable pattern, not a description of the tool\n"
             f"- Use § as separator, respect the 2200 char limit\n\n"
+            f"STRUCTURED OUTPUT (REQUIRED):\n"
+            f"At the END of your response, include this JSON block so we can store the learning:\n"
+            f"```json\n"
+            f'{{"verdict": "ADOPT|STEAL|SKIP", '
+            f'"patterns": "key patterns extracted (1-3 sentences)", '
+            f'"operational_benefit": "how this helps our system (1-2 sentences)", '
+            f'"skill_created": "skill-name or empty string"}}\n'
+            f"```\n\n"
         )
 
         if is_github:
@@ -778,9 +787,81 @@ class TelegramAdapter(BasePlatformAdapter):
             if cost > 0 and self._gateway:
                 self._gateway._log_cost("telegram", "learn", cost)
 
+            # Store learning in DB
+            try:
+                from ..session_db import add_learning
+                # Parse structured JSON from response
+                learning_data = {"verdict": "UNKNOWN", "patterns": "", "operational_benefit": "", "skill_created": ""}
+                json_start = response.rfind('```json')
+                json_end = response.rfind('```', json_start + 7) if json_start >= 0 else -1
+                if json_start >= 0 and json_end > json_start:
+                    json_str = response[json_start + 7:json_end].strip()
+                    try:
+                        learning_data = json.loads(json_str)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+
+                target_type = "github" if is_github else ("url" if is_url else "topic")
+                add_learning(
+                    target=target,
+                    target_type=target_type,
+                    verdict=learning_data.get("verdict", "UNKNOWN"),
+                    patterns=learning_data.get("patterns", ""),
+                    operational_benefit=learning_data.get("operational_benefit", ""),
+                    skill_created=learning_data.get("skill_created", ""),
+                    full_report=response[:8000],
+                    cost=cost,
+                )
+                log.info(f"[learn] Stored learning: {target} -> {learning_data.get('verdict', '?')}")
+            except Exception as e:
+                log.warning(f"[learn] Failed to store learning: {e}")
+
         except Exception as e:
             log.error(f"Learn error: {e}")
             await self.app.bot.send_message(chat_id=int(chat_id), text=f"Learn failed: {e}")
+
+    # ── /learnings — view past learnings ────────────────────────
+
+    async def _handle_learnings(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List past learnings or search them."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        query = " ".join(context.args) if context.args else ""
+
+        from ..session_db import list_learnings, search_learnings
+
+        if query:
+            items = search_learnings(query, limit=10)
+        else:
+            items = list_learnings(limit=10)
+
+        if not items:
+            msg = "No learnings stored yet. Use `/learn <topic>` to start." if not query else f"No learnings matching `{query}`."
+            return await update.message.reply_text(msg, parse_mode="Markdown")
+
+        lines = [f"*Learnings{' matching: ' + query if query else ''}*\n"]
+        for item in items:
+            verdict = item.get("verdict", "?")
+            target = item.get("target", "?")
+            patterns = item.get("patterns", "")
+            created = item.get("created_at", "")[:10]
+            skill = item.get("skill_created", "")
+
+            lines.append(f"*{target}* [{verdict}] ({created})")
+            if patterns:
+                lines.append(f"  {patterns[:200]}")
+            if skill:
+                lines.append(f"  Skill: `{skill}`")
+            lines.append("")
+
+        text = "\n".join(lines)
+        for i in range(0, len(text), 4000):
+            await self.app.bot.send_message(
+                chat_id=update.message.chat_id, text=text[i:i+4000], parse_mode="Markdown"
+            )
 
     # ── /gc — garbage collection ────────────────────────────────
 
@@ -867,6 +948,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "reject": self._handle_reject,
             "learn": self._handle_learn,
             "gc": self._handle_gc,
+            "learnings": self._handle_learnings,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -898,6 +980,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("queue", "Skills pending approval"),
                 BotCommand("approve", "Install a queued skill"),
                 BotCommand("reject", "Remove a queued skill"),
+                BotCommand("learnings", "View past /learn findings"),
                 BotCommand("gc", "Garbage collection + health check"),
             ])
         except Exception as e:

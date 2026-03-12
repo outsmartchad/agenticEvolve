@@ -45,18 +45,34 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
         CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title) WHERE title IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS learnings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            patterns TEXT,
+            operational_benefit TEXT,
+            skill_created TEXT,
+            full_report TEXT,
+            cost REAL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
     """)
     # FTS5 — ignore errors if already exists
-    try:
-        conn.execute("""
-            CREATE VIRTUAL TABLE messages_fts USING fts5(
-                content,
-                content=messages,
-                content_rowid=id
-            )
-        """)
-    except sqlite3.OperationalError:
-        pass  # already exists
+    for stmt in [
+        """CREATE VIRTUAL TABLE messages_fts USING fts5(
+            content, content=messages, content_rowid=id
+        )""",
+        """CREATE VIRTUAL TABLE learnings_fts USING fts5(
+            target, patterns, operational_benefit, full_report,
+            content=learnings, content_rowid=id
+        )""",
+    ]:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # already exists
     conn.commit()
     conn.close()
 
@@ -211,6 +227,61 @@ def stats() -> dict:
         "sources": {r["source"]: r["cnt"] for r in sources},
         "db_size_mb": round(db_size / 1024 / 1024, 1)
     }
+
+
+# ── Learnings ────────────────────────────────────────────────
+
+def add_learning(target: str, target_type: str, verdict: str,
+                 patterns: str = "", operational_benefit: str = "",
+                 skill_created: str = "", full_report: str = "",
+                 cost: float = 0) -> int:
+    """Store a /learn finding. Returns the learning ID."""
+    conn = _connect()
+    ts = datetime.now(timezone.utc).isoformat()
+    cursor = conn.execute(
+        "INSERT INTO learnings (target, target_type, verdict, patterns, "
+        "operational_benefit, skill_created, full_report, cost, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (target, target_type, verdict, patterns, operational_benefit,
+         skill_created, full_report, cost, ts)
+    )
+    rowid = cursor.lastrowid
+    # Update FTS
+    conn.execute(
+        "INSERT INTO learnings_fts(rowid, target, patterns, operational_benefit, full_report) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (rowid, target, patterns, operational_benefit, full_report)
+    )
+    conn.commit()
+    conn.close()
+    return rowid
+
+
+def search_learnings(query: str, limit: int = 5) -> list[dict]:
+    """FTS5 search across learnings."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT l.id, l.target, l.target_type, l.verdict, l.patterns, "
+        "l.operational_benefit, l.skill_created, l.cost, l.created_at, rank "
+        "FROM learnings_fts "
+        "JOIN learnings l ON learnings_fts.rowid = l.id "
+        "WHERE learnings_fts MATCH ? ORDER BY rank LIMIT ?",
+        (query, limit)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def list_learnings(limit: int = 20) -> list[dict]:
+    """List recent learnings."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, target, target_type, verdict, patterns, skill_created, "
+        "cost, created_at FROM learnings ORDER BY created_at DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # Initialize on import
