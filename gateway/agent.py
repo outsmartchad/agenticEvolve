@@ -145,51 +145,74 @@ def invoke_claude(message: str, model: str = "sonnet",
     env = os.environ.copy()
     work_dir = cwd or str(Path.home())
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=work_dir,
-            env=env
-        )
+    # Retry up to 2 times on empty response
+    for attempt in range(2):
+        try:
+            log.debug(f"Claude invocation (attempt {attempt+1}): prompt={len(full_prompt)} chars, model={model}")
 
-        output = result.stdout.strip()
-        if not output:
-            stderr = result.stderr.strip()
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=work_dir,
+                env=env
+            )
+
+            output = result.stdout.strip()
+            stderr = result.stderr.strip() if result.stderr else ""
+
             if stderr:
-                log.error(f"Claude stderr: {stderr[:500]}")
-            return {"text": "No response from Claude.", "cost": 0, "success": False}
+                log.debug(f"Claude stderr: {stderr[:300]}")
 
-        # Parse stream-json: extract text from assistant messages and cost from result
-        text_parts = []
-        cost = 0
-        for line in output.split("\n"):
-            line = line.strip()
-            if not line:
+            if not output:
+                log.warning(f"Claude returned empty stdout (returncode={result.returncode}, stderr={stderr[:200]})")
+                if attempt == 0:
+                    log.info("Retrying...")
+                    continue
+                return {"text": f"Claude returned no output (exit code {result.returncode}). Try again.", "cost": 0, "success": False}
+
+            # Parse stream-json: extract text from assistant messages and cost from result
+            text_parts = []
+            cost = 0
+            for line in output.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if obj.get("type") == "assistant":
+                        for block in obj.get("message", {}).get("content", []):
+                            if block.get("type") == "text":
+                                text_parts.append(block["text"])
+                    elif obj.get("type") == "result":
+                        result_text = obj.get("result", "")
+                        if result_text:
+                            text_parts.append(result_text)
+                        cost = obj.get("total_cost_usd", 0)
+                except json.JSONDecodeError:
+                    continue
+
+            if not text_parts:
+                log.warning(f"Claude returned output but no text found. Output preview: {output[:300]}")
+                if attempt == 0:
+                    continue
+                return {"text": "Claude responded but I couldn't parse the output. Try again.", "cost": cost, "success": False}
+
+            final_text = text_parts[-1]
+            return {"text": final_text, "cost": cost, "success": True}
+
+        except subprocess.TimeoutExpired:
+            return {"text": "Request timed out (5 min limit).", "cost": 0, "success": False}
+        except FileNotFoundError:
+            return {"text": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code", "cost": 0, "success": False}
+        except Exception as e:
+            log.error(f"Claude invocation error: {e}")
+            if attempt == 0:
                 continue
-            try:
-                obj = json.loads(line)
-                if obj.get("type") == "assistant":
-                    for block in obj.get("message", {}).get("content", []):
-                        if block.get("type") == "text":
-                            text_parts.append(block["text"])
-                elif obj.get("type") == "result":
-                    text_parts.append(obj.get("result", ""))
-                    cost = obj.get("total_cost_usd", 0)
-            except json.JSONDecodeError:
-                continue
+            return {"text": f"Error: {e}", "cost": 0, "success": False}
 
-        final_text = text_parts[-1] if text_parts else "No response."
-        return {"text": final_text, "cost": cost, "success": True}
-
-    except subprocess.TimeoutExpired:
-        return {"text": "Request timed out (5 min limit).", "cost": 0, "success": False}
-    except FileNotFoundError:
-        return {"text": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code", "cost": 0, "success": False}
-    except Exception as e:
-        return {"text": f"Error: {e}", "cost": 0, "success": False}
+    return {"text": "Failed after retries.", "cost": 0, "success": False}
 
 
 def generate_title(message: str) -> str:
