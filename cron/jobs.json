@@ -1,0 +1,15 @@
+[
+  {
+    "id": "signal-scan",
+    "prompt": "Scan for useful developer tools and emerging technologies. Do the following:\n\n1. Use the Bash tool to run: bash ~/.agenticEvolve/collectors/github.sh\n2. Use the Bash tool to run: bash ~/.agenticEvolve/collectors/hackernews.sh\n3. Read the output files from ~/.agenticEvolve/signals/ for today's date\n4. Analyze the collected signals. For each genuinely useful tool or library:\n   - Summarize what it does and why it matters\n   - Rate actionability (high/medium/low)\n5. If any signal is highly actionable (a tool that could improve our workflow), create a Claude Code skill for it in ~/.claude/skills/\n6. Return a concise summary of findings.",
+    "schedule_type": "interval",
+    "interval_seconds": 7200,
+    "deliver_to": "telegram",
+    "deliver_chat_id": "934847281",
+    "created_at": "2026-03-12T17:15:00Z",
+    "next_run_at": "2026-03-13T01:00:00Z",
+    "run_count": 0,
+    "paused": true,
+    "last_run_at": null
+  }
+]

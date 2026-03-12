@@ -1,7 +1,7 @@
 """GatewayRunner — main entry point for the agenticEvolve messaging gateway.
 
 Connects Telegram/Discord/WhatsApp, routes messages to Claude Code,
-manages sessions, and (eventually) runs the cron scheduler.
+manages sessions, runs cron scheduler.
 
 Usage:
     python -m gateway.run
@@ -12,15 +12,16 @@ import logging
 import signal
 import sys
 import os
+import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
 from .config import load_config
-from .agent import invoke_claude
+from .agent import invoke_claude, get_today_cost, generate_title
 from .session_db import (
     create_session, generate_session_id, add_message,
-    end_session, list_sessions, get_session_messages
+    end_session, list_sessions, get_session_messages, set_title
 )
 from .platforms.telegram import TelegramAdapter
 from .platforms.discord import DiscordAdapter
@@ -31,6 +32,9 @@ log = logging.getLogger("agenticEvolve.gateway")
 EXODIR = Path.home() / ".agenticEvolve"
 PID_FILE = EXODIR / "gateway.pid"
 LOG_DIR = EXODIR / "logs"
+CRON_DIR = EXODIR / "cron"
+CRON_JOBS_FILE = CRON_DIR / "jobs.json"
+CRON_OUTPUT_DIR = CRON_DIR / "output"
 
 
 class GatewayRunner:
@@ -39,84 +43,110 @@ class GatewayRunner:
     def __init__(self):
         self.config: dict = {}
         self.adapters: list = []
+        self._adapter_map: dict[str, object] = {}  # platform_name -> adapter
         self._active_sessions: dict[str, str] = {}  # session_key -> session_id
         self._session_last_active: dict[str, datetime] = {}  # session_key -> last msg time
-        self._locks: dict[str, asyncio.Lock] = {}  # session_key -> lock (serialize per-chat)
+        self._session_msg_count: dict[str, int] = {}  # session_key -> message count (for title)
+        self._locks: dict[str, asyncio.Lock] = {}  # session_key -> lock
         self._shutdown_event = asyncio.Event()
         self._session_cleanup_task: Optional[asyncio.Task] = None
+        self._cron_task: Optional[asyncio.Task] = None
 
     # ── Session key ──────────────────────────────────────────────
 
     def _session_key(self, platform: str, chat_id: str) -> str:
-        """Deterministic session key: platform:chat_id."""
         return f"{platform}:{chat_id}"
 
     def _get_or_create_session(self, platform: str, chat_id: str,
                                 user_id: str) -> str:
-        """Return active session_id, creating a new one if expired or missing."""
         key = self._session_key(platform, chat_id)
         idle_minutes = self.config.get("session_idle_minutes", 120)
         now = datetime.now(timezone.utc)
 
-        # Check if existing session is still valid
         if key in self._active_sessions:
             last = self._session_last_active.get(key)
             if last and (now - last) > timedelta(minutes=idle_minutes):
-                # Session expired — end it and create new
                 old_sid = self._active_sessions.pop(key)
                 end_session(old_sid)
+                self._session_msg_count.pop(key, None)
                 log.info(f"Session expired: {old_sid} (idle {idle_minutes}m)")
             else:
                 self._session_last_active[key] = now
                 return self._active_sessions[key]
 
-        # Create new session
         sid = generate_session_id()
         create_session(sid, source=platform, user_id=user_id,
                        model=self.config.get("model", "sonnet"))
         self._active_sessions[key] = sid
         self._session_last_active[key] = now
+        self._session_msg_count[key] = 0
         log.info(f"New session: {sid} ({platform}:{chat_id})")
         return sid
 
     def _get_lock(self, session_key: str) -> asyncio.Lock:
-        """Get or create a per-session lock to serialize agent calls."""
         if session_key not in self._locks:
             self._locks[session_key] = asyncio.Lock()
         return self._locks[session_key]
+
+    # ── Cost cap ─────────────────────────────────────────────────
+
+    def _check_cost_cap(self) -> tuple[bool, str]:
+        """Check if daily cost cap is exceeded. Returns (allowed, reason)."""
+        daily_cap = self.config.get("daily_cost_cap", 5.0)
+        today_cost = get_today_cost()
+        if today_cost >= daily_cap:
+            return False, f"Daily cost cap reached (${today_cost:.2f}/${daily_cap:.2f}). Resets at midnight UTC."
+        return True, ""
 
     # ── Message handler ──────────────────────────────────────────
 
     async def handle_message(self, platform: str, chat_id: str,
                               user_id: str, text: str) -> str:
-        """Core message handler — called by platform adapters.
-
-        Routes message to Claude Code and returns the response text.
-        Serializes requests per session_key so concurrent messages
-        from the same chat don't collide.
-        """
+        """Core message handler — called by platform adapters."""
         key = self._session_key(platform, chat_id)
         lock = self._get_lock(key)
 
         async with lock:
+            # Cost cap check
+            allowed, reason = self._check_cost_cap()
+            if not allowed:
+                return reason
+
             session_id = self._get_or_create_session(platform, chat_id, user_id)
 
             # Persist user message
             add_message(session_id, "user", text)
 
-            # Build context prefix
-            context = (
-                f"[Gateway context: platform={platform}, chat_id={chat_id}, "
-                f"user_id={user_id}, session={session_id}]\n\n"
+            # Track message count for title generation
+            self._session_msg_count[key] = self._session_msg_count.get(key, 0) + 1
+
+            # Auto-title on first message
+            if self._session_msg_count[key] == 1:
+                title = generate_title(text)
+                set_title(session_id, title)
+
+            # Fetch conversation history for this session
+            history = get_session_messages(session_id)
+            # Remove the last message (the one we just added) — it's the current message
+            if history:
+                history = history[:-1]
+
+            # Build context
+            session_context = (
+                f"[Gateway: platform={platform}, chat_id={chat_id}, "
+                f"user_id={user_id}, session={session_id}]"
             )
 
-            prompt = context + text
             model = self.config.get("model", "sonnet")
 
-            # Run Claude Code in executor to avoid blocking the event loop
+            # Run Claude Code in executor
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
-                None, lambda: invoke_claude(prompt, model=model)
+                None,
+                lambda: invoke_claude(
+                    text, model=model, history=history,
+                    session_context=session_context
+                )
             )
 
             response_text = result.get("text", "No response.")
@@ -128,13 +158,13 @@ class GatewayRunner:
             # Log cost
             if cost > 0:
                 self._log_cost(platform, session_id, cost)
+                log.info(f"Response sent ({platform}:{chat_id}) cost=${cost:.4f}")
 
             return response_text
 
     # ── Cost tracking ────────────────────────────────────────────
 
     def _log_cost(self, platform: str, session_id: str, cost: float):
-        """Append cost to logs/cost.log."""
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         cost_file = LOG_DIR / "cost.log"
         ts = datetime.now(timezone.utc).isoformat()
@@ -145,11 +175,10 @@ class GatewayRunner:
     # ── Session cleanup ──────────────────────────────────────────
 
     async def _session_cleanup_loop(self):
-        """Periodically check for idle sessions and end them."""
         idle_minutes = self.config.get("session_idle_minutes", 120)
         while not self._shutdown_event.is_set():
             try:
-                await asyncio.sleep(60)  # check every minute
+                await asyncio.sleep(60)
                 now = datetime.now(timezone.utc)
                 expired_keys = []
                 for key, last in self._session_last_active.items():
@@ -158,6 +187,7 @@ class GatewayRunner:
                 for key in expired_keys:
                     sid = self._active_sessions.pop(key, None)
                     self._session_last_active.pop(key, None)
+                    self._session_msg_count.pop(key, None)
                     self._locks.pop(key, None)
                     if sid:
                         end_session(sid)
@@ -167,10 +197,127 @@ class GatewayRunner:
             except Exception as e:
                 log.error(f"Session cleanup error: {e}")
 
+    # ── Cron scheduler ───────────────────────────────────────────
+
+    async def _cron_loop(self):
+        """Tick-based cron scheduler. Checks jobs.json every 60s."""
+        if not self.config.get("cron", {}).get("enabled", True):
+            log.info("Cron scheduler: disabled")
+            return
+
+        log.info("Cron scheduler: started")
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.sleep(60)
+                await self._run_due_jobs()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.error(f"Cron scheduler error: {e}")
+
+    async def _run_due_jobs(self):
+        """Check and execute due cron jobs."""
+        if not CRON_JOBS_FILE.exists():
+            return
+
+        try:
+            jobs = json.loads(CRON_JOBS_FILE.read_text())
+        except (json.JSONDecodeError, Exception) as e:
+            log.error(f"Failed to read jobs.json: {e}")
+            return
+
+        now = datetime.now(timezone.utc)
+        modified = False
+
+        for job in jobs:
+            if job.get("paused", False):
+                continue
+
+            next_run = job.get("next_run_at")
+            if not next_run:
+                continue
+
+            try:
+                next_dt = datetime.fromisoformat(next_run)
+            except (ValueError, TypeError):
+                continue
+
+            if now < next_dt:
+                continue
+
+            # Job is due — execute it
+            job_id = job.get("id", "unknown")
+            prompt = job.get("prompt", "")
+            deliver_to = job.get("deliver_to", "local")
+            deliver_chat_id = job.get("deliver_chat_id", "")
+
+            log.info(f"Cron job due: {job_id}")
+
+            # Cost cap check
+            allowed, reason = self._check_cost_cap()
+            if not allowed:
+                log.warning(f"Cron job {job_id} skipped: {reason}")
+                continue
+
+            # Run in executor
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda p=prompt: invoke_claude(
+                    p, model=self.config.get("model", "sonnet"),
+                    session_context=f"[Cron job: {job_id}]"
+                )
+            )
+
+            response = result.get("text", "No response.")
+            cost = result.get("cost", 0)
+
+            if cost > 0:
+                self._log_cost("cron", job_id, cost)
+
+            # Save output
+            CRON_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            job_output_dir = CRON_OUTPUT_DIR / job_id
+            job_output_dir.mkdir(exist_ok=True)
+            output_file = job_output_dir / f"{now.strftime('%Y%m%d_%H%M%S')}.txt"
+            output_file.write_text(response)
+
+            # Deliver to platform
+            if deliver_to != "local" and deliver_chat_id:
+                adapter = self._adapter_map.get(deliver_to)
+                if adapter:
+                    try:
+                        await adapter.send(deliver_chat_id, f"[Cron: {job_id}]\n\n{response}")
+                    except Exception as e:
+                        log.error(f"Cron delivery failed ({deliver_to}): {e}")
+
+            # Update job
+            job["run_count"] = job.get("run_count", 0) + 1
+            job["last_run_at"] = now.isoformat()
+
+            # Compute next run
+            schedule_type = job.get("schedule_type", "")
+            if schedule_type == "once":
+                job["paused"] = True
+            elif schedule_type == "interval":
+                interval_seconds = job.get("interval_seconds", 3600)
+                job["next_run_at"] = (now + timedelta(seconds=interval_seconds)).isoformat()
+            elif schedule_type == "cron":
+                # Simple cron: just add 24h for daily jobs (good enough for now)
+                job["next_run_at"] = (now + timedelta(hours=24)).isoformat()
+
+            modified = True
+            log.info(f"Cron job completed: {job_id} (cost=${cost:.4f})")
+
+        if modified:
+            try:
+                CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+            except Exception as e:
+                log.error(f"Failed to write jobs.json: {e}")
+
     # ── Platform startup ─────────────────────────────────────────
 
     def _create_adapters(self):
-        """Instantiate enabled platform adapters."""
         platforms_cfg = self.config.get("platforms", {})
 
         adapter_classes = {
@@ -186,7 +333,9 @@ class GatewayRunner:
                 continue
             try:
                 adapter = cls(pcfg, self.handle_message)
+                adapter._gateway = self  # give adapter access to gateway
                 self.adapters.append(adapter)
+                self._adapter_map[name] = adapter
                 log.info(f"Platform {name}: created")
             except ImportError as e:
                 log.warning(f"Platform {name}: skipped ({e})")
@@ -196,12 +345,9 @@ class GatewayRunner:
     # ── Main lifecycle ───────────────────────────────────────────
 
     async def start(self):
-        """Start the gateway: load config, start adapters, wait for shutdown."""
-        # Load config
         self.config = load_config()
         log.info("Config loaded")
 
-        # Create adapters
         self._create_adapters()
 
         if not self.adapters:
@@ -209,7 +355,6 @@ class GatewayRunner:
             log.error("Example: set TELEGRAM_BOT_TOKEN in ~/.agenticEvolve/.env")
             return
 
-        # Start all adapters
         for adapter in self.adapters:
             try:
                 await adapter.start()
@@ -219,50 +364,43 @@ class GatewayRunner:
         started = [a.name for a in self.adapters]
         log.info(f"Gateway running: {', '.join(started)}")
 
-        # Write PID file
         PID_FILE.write_text(str(os.getpid()))
 
-        # Start session cleanup
+        # Start background tasks
         self._session_cleanup_task = asyncio.create_task(self._session_cleanup_loop())
+        self._cron_task = asyncio.create_task(self._cron_loop())
 
-        # Wait for shutdown signal
         await self._shutdown_event.wait()
 
     async def stop(self):
-        """Graceful shutdown — stop all adapters, end active sessions."""
         log.info("Gateway shutting down...")
 
-        # Cancel cleanup task
-        if self._session_cleanup_task:
-            self._session_cleanup_task.cancel()
+        for task in [self._session_cleanup_task, self._cron_task]:
+            if task:
+                task.cancel()
 
-        # Stop adapters
         for adapter in self.adapters:
             try:
                 await adapter.stop()
             except Exception as e:
                 log.error(f"Error stopping {adapter.name}: {e}")
 
-        # End all active sessions
         for key, sid in self._active_sessions.items():
             end_session(sid)
         self._active_sessions.clear()
 
-        # Remove PID file
         if PID_FILE.exists():
             PID_FILE.unlink()
 
         log.info("Gateway stopped")
 
     def request_shutdown(self):
-        """Signal the gateway to shut down."""
         self._shutdown_event.set()
 
 
 # ── Entry point ──────────────────────────────────────────────────
 
 def setup_logging():
-    """Configure logging to stderr + file."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     fmt = logging.Formatter(
@@ -270,12 +408,10 @@ def setup_logging():
         datefmt="%Y-%m-%d %H:%M:%S"
     )
 
-    # Stderr handler
     stderr_handler = logging.StreamHandler(sys.stderr)
     stderr_handler.setFormatter(fmt)
     stderr_handler.setLevel(logging.INFO)
 
-    # File handler
     file_handler = logging.FileHandler(LOG_DIR / "gateway.log")
     file_handler.setFormatter(fmt)
     file_handler.setLevel(logging.DEBUG)
@@ -285,7 +421,6 @@ def setup_logging():
     root.addHandler(stderr_handler)
     root.addHandler(file_handler)
 
-    # Quiet noisy libs
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.WARNING)
@@ -293,12 +428,9 @@ def setup_logging():
 
 
 async def start_gateway():
-    """Async entry point — create runner, wire signals, start."""
     runner = GatewayRunner()
 
     loop = asyncio.get_running_loop()
-
-    # Wire SIGINT/SIGTERM to graceful shutdown
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, runner.request_shutdown)
 
@@ -309,7 +441,6 @@ async def start_gateway():
 
 
 def main():
-    """Sync entry point."""
     setup_logging()
     log.info("Starting agenticEvolve gateway...")
     asyncio.run(start_gateway())

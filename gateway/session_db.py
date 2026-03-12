@@ -160,6 +160,16 @@ def search_sessions(query: str, limit: int = 5) -> list[dict]:
     return results
 
 
+def set_title(session_id: str, title: str):
+    conn = _connect()
+    conn.execute(
+        "UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL",
+        (title, session_id)
+    )
+    conn.commit()
+    conn.close()
+
+
 def list_sessions(source: str = None, limit: int = 20) -> list[dict]:
     conn = _connect()
     if source:
