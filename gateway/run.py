@@ -92,11 +92,19 @@ class GatewayRunner:
     # ── Cost cap ─────────────────────────────────────────────────
 
     def _check_cost_cap(self) -> tuple[bool, str]:
-        """Check if daily cost cap is exceeded. Returns (allowed, reason)."""
+        """Check if daily or weekly cost cap is exceeded. Returns (allowed, reason)."""
+        from .agent import get_week_cost
+
         daily_cap = self.config.get("daily_cost_cap", 5.0)
         today_cost = get_today_cost()
         if today_cost >= daily_cap:
             return False, f"Daily cost cap reached (${today_cost:.2f}/${daily_cap:.2f}). Resets at midnight UTC."
+
+        weekly_cap = self.config.get("weekly_cost_cap", 25.0)
+        week_cost = get_week_cost()
+        if week_cost >= weekly_cap:
+            return False, f"Weekly cost cap reached (${week_cost:.2f}/${weekly_cap:.2f}). Resets Monday UTC."
+
         return True, ""
 
     # ── Message handler ──────────────────────────────────────────
@@ -304,8 +312,7 @@ class GatewayRunner:
                 interval_seconds = job.get("interval_seconds", 3600)
                 job["next_run_at"] = (now + timedelta(seconds=interval_seconds)).isoformat()
             elif schedule_type == "cron":
-                # Simple cron: just add 24h for daily jobs (good enough for now)
-                job["next_run_at"] = (now + timedelta(hours=24)).isoformat()
+                job["next_run_at"] = self._next_cron_run(job, now).isoformat()
 
             modified = True
             log.info(f"Cron job completed: {job_id} (cost=${cost:.4f})")
@@ -315,6 +322,66 @@ class GatewayRunner:
                 CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
             except Exception as e:
                 log.error(f"Failed to write jobs.json: {e}")
+
+    # ── Cron expression parser ──────────────────────────────────
+
+    def _next_cron_run(self, job: dict, after: datetime) -> datetime:
+        """Calculate next run time from a cron expression with optional timezone.
+
+        Supports standard 5-field cron: minute hour day month weekday
+        Handles *, specific values, and */N step syntax.
+        Falls back to +24h if parsing fails.
+        """
+        cron_expr = job.get("cron", "")
+        tz_name = job.get("timezone", "")
+
+        # Resolve timezone offset
+        tz = timezone.utc
+        TZ_OFFSETS = {
+            "Asia/Hong_Kong": 8, "Asia/Shanghai": 8, "Asia/Tokyo": 9,
+            "US/Eastern": -5, "US/Pacific": -8, "Europe/London": 0,
+            "Europe/Berlin": 1, "UTC": 0,
+        }
+        if tz_name in TZ_OFFSETS:
+            tz = timezone(timedelta(hours=TZ_OFFSETS[tz_name]))
+
+        if not cron_expr or len(cron_expr.split()) != 5:
+            return after + timedelta(hours=24)
+
+        try:
+            parts = cron_expr.split()
+            minute_spec, hour_spec = parts[0], parts[1]
+            # day_spec, month_spec, weekday_spec = parts[2], parts[3], parts[4]
+
+            def _parse_field(spec: str, max_val: int) -> list[int]:
+                """Parse a cron field into a sorted list of valid values."""
+                if spec == "*":
+                    return list(range(max_val))
+                if spec.startswith("*/"):
+                    step = int(spec[2:])
+                    return list(range(0, max_val, step))
+                if "," in spec:
+                    return sorted(int(v) for v in spec.split(","))
+                return [int(spec)]
+
+            valid_minutes = _parse_field(minute_spec, 60)
+            valid_hours = _parse_field(hour_spec, 24)
+
+            # Start searching from 1 minute after 'after', in the job's timezone
+            candidate = after.astimezone(tz).replace(second=0, microsecond=0) + timedelta(minutes=1)
+
+            # Search up to 48 hours ahead
+            for _ in range(48 * 60):
+                if candidate.hour in valid_hours and candidate.minute in valid_minutes:
+                    return candidate.astimezone(timezone.utc)
+                candidate += timedelta(minutes=1)
+
+            # Fallback
+            return after + timedelta(hours=24)
+
+        except Exception as e:
+            log.warning(f"Failed to parse cron '{cron_expr}': {e}, falling back to +24h")
+            return after + timedelta(hours=24)
 
     # ── Platform startup ─────────────────────────────────────────
 

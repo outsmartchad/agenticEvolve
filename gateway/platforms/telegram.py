@@ -70,39 +70,44 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
         await update.message.reply_text(
-            "*agenticEvolve commands*\n\n"
-            "*Core*\n"
+            "agenticEvolve commands\n\n"
+            "Core\n"
             "/help — Show this help\n"
             "/status — System status\n"
-            "/model — Current model\n"
+            "/model [name] — View or switch model\n"
             "/cost — Today's cost\n"
+            "/config — View runtime config\n"
             "/heartbeat — Check if bot is alive\n\n"
-            "*Sessions*\n"
+            "Sessions\n"
             "/newsession — Force new session\n"
-            "/sessions — Recent sessions\n\n"
-            "*Memory*\n"
-            "/memory — Show bounded memory\n\n"
-            "*Evolution*\n"
+            "/sessions — Recent sessions\n"
+            "/search <query> — FTS5 search past sessions\n\n"
+            "Memory & Identity\n"
+            "/memory — Show bounded memory\n"
+            "/soul — View agent personality\n\n"
+            "Evolution\n"
             "/evolve — Scan signals + build skills now\n"
-            "/evolve `--dry-run` — Preview what would be built\n"
-            "/absorb `<target>` — Deep scan + implement improvements\n"
-            "/absorb `--dry-run <target>` — Preview gaps only\n"
-            "/learn `<target>` — Deep-dive + extract patterns (read-only)\n"
+            "/evolve --dry-run — Preview what would be built\n"
+            "/absorb <target> — Deep scan + implement improvements\n"
+            "/absorb --dry-run <target> — Preview gaps only\n"
+            "/learn <target> — Deep-dive + extract patterns\n"
             "/learnings — View past findings (or search)\n\n"
-            "*Skills Queue*\n"
+            "Skills\n"
+            "/skills — List installed skills\n"
             "/queue — Skills pending approval\n"
-            "/approve `<name>` — Install a queued skill\n"
-            "/reject `<name>` — Remove a queued skill\n\n"
-            "*Scheduling*\n"
-            "/loop `<interval>` `<prompt>` — Recurring job\n"
+            "/approve <name> — Install a queued skill\n"
+            "/reject <name> — Remove a queued skill\n\n"
+            "Scheduling\n"
+            "/loop <interval> <prompt> — Recurring job\n"
             "/loops — List active loops\n"
-            "/unloop `<id>` — Cancel a loop\n"
-            "/notify `<delay>` `<msg>` — One-shot reminder\n\n"
-            "*Maintenance*\n"
+            "/unloop <id> — Cancel a loop\n"
+            "/pause <id> — Pause a loop\n"
+            "/unpause <id> — Resume a loop\n"
+            "/notify <delay> <msg> — One-shot reminder\n\n"
+            "Maintenance\n"
             "/gc — Garbage collection + health check\n"
-            "/gc `dry` — Preview without deleting\n\n"
-            "Or just send any message to chat with Claude.",
-            parse_mode="Markdown"
+            "/gc dry — Preview without deleting\n\n"
+            "Or just send any message to chat with Claude."
         )
 
     # ── /status ──────────────────────────────────────────────────
@@ -163,13 +168,13 @@ class TelegramAdapter(BasePlatformAdapter):
         user = user_path.read_text().strip() if user_path.exists() else "(empty)"
 
         text = (
-            f"*MEMORY.md* ({len(mem)}/2200)\n\n{mem}\n\n"
+            f"MEMORY.md ({len(mem)}/2200)\n\n{mem}\n\n"
             f"---\n\n"
-            f"*USER.md* ({len(user)}/1375)\n\n{user}"
+            f"USER.md ({len(user)}/1375)\n\n{user}"
         )
         if len(text) > 4000:
             text = text[:3950] + "\n\n... [truncated]"
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text)
 
     # ── /sessions ────────────────────────────────────────────────
 
@@ -238,10 +243,33 @@ class TelegramAdapter(BasePlatformAdapter):
             return
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
-        model = "sonnet"
-        if self._gateway:
-            model = self._gateway.config.get("model", "sonnet")
-        await update.message.reply_text(f"Current model: `{model}`", parse_mode="Markdown")
+
+        new_model = context.args[0] if context.args else ""
+        if new_model:
+            valid = {"sonnet", "opus", "haiku", "claude-sonnet-4-20250514",
+                     "claude-opus-4-6", "claude-haiku-4-5-20251001"}
+            if new_model not in valid:
+                return await update.message.reply_text(
+                    f"Unknown model: {new_model}\n\n"
+                    f"Valid: sonnet, opus, haiku"
+                )
+            if self._gateway:
+                self._gateway.config["model"] = new_model
+                # Persist to config.yaml
+                import yaml
+                config_path = EXODIR / "config.yaml"
+                try:
+                    cfg = yaml.safe_load(config_path.read_text()) or {}
+                    cfg["model"] = new_model
+                    config_path.write_text(yaml.dump(cfg, default_flow_style=False))
+                except Exception as e:
+                    log.warning(f"Failed to persist model change: {e}")
+            await update.message.reply_text(f"Model switched to: {new_model}")
+        else:
+            model = "sonnet"
+            if self._gateway:
+                model = self._gateway.config.get("model", "sonnet")
+            await update.message.reply_text(f"Current model: {model}\n\nUsage: /model <sonnet|opus|haiku>")
 
     # ── /evolve ──────────────────────────────────────────────────
 
@@ -575,12 +603,12 @@ class TelegramAdapter(BasePlatformAdapter):
         args = " ".join(context.args) if context.args else ""
         if not args:
             await update.message.reply_text(
-                "*Usage:* `/notify <delay> <message>`\n\n"
-                "*Examples:*\n"
-                "`/notify 30m check deployment status`\n"
-                "`/notify 2h review PR feedback`\n"
-                "`/notify 1d renew API key`",
-                parse_mode="Markdown"
+                "Usage: /notify <delay> <message>\n\n"
+                "Examples:\n"
+                "/notify 60s check if build finished\n"
+                "/notify 30m check deployment status\n"
+                "/notify 2h review PR feedback\n"
+                "/notify 1d renew API key"
             )
             return
 
@@ -589,12 +617,12 @@ class TelegramAdapter(BasePlatformAdapter):
             return await update.message.reply_text("Need delay and message. Example: `/notify 30m check the build`", parse_mode="Markdown")
 
         delay_str, message = parts[0], parts[1].strip()
-        match = re.fullmatch(r"(\d+)(m|h|d)", delay_str.lower())
+        match = re.fullmatch(r"(\d+)(s|m|h|d)", delay_str.lower())
         if not match:
-            return await update.message.reply_text(f"Invalid delay `{delay_str}`. Use `30m`, `2h`, `1d`.", parse_mode="Markdown")
+            return await update.message.reply_text(f"Invalid delay `{delay_str}`. Use `60s`, `30m`, `2h`, `1d`.", parse_mode="Markdown")
 
         value, unit = int(match.group(1)), match.group(2)
-        multipliers = {"m": 60, "h": 3600, "d": 86400}
+        multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
         delay_seconds = value * multipliers[unit]
 
         CRON_DIR.mkdir(parents=True, exist_ok=True)
@@ -626,12 +654,11 @@ class TelegramAdapter(BasePlatformAdapter):
         jobs.append(job)
         CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
 
-        unit_names = {"m": "minutes", "h": "hours", "d": "days"}
+        unit_names = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
         await update.message.reply_text(
-            f"Reminder set: `{job_id}`\n"
+            f"Reminder set: {job_id}\n"
             f"In {value} {unit_names[unit]}: {message}\n"
-            f"Will fire at: {run_at.strftime('%H:%M UTC')}",
-            parse_mode="Markdown"
+            f"Will fire at: {run_at.strftime('%H:%M UTC')}"
         )
 
     # ── /learn — deep-dive a repo or tech ──────────────────────
@@ -1029,6 +1056,210 @@ class TelegramAdapter(BasePlatformAdapter):
 
     # ── Regular messages ─────────────────────────────────────────
 
+    # ── /search — FTS5 search across past sessions ─────────────
+
+    async def _handle_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Search past sessions using FTS5. Usage: /search <query>"""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        query = " ".join(context.args) if context.args else ""
+        if not query:
+            await update.message.reply_text(
+                "Usage: /search <query>\n\n"
+                "Examples:\n"
+                "/search telegram rate limit\n"
+                "/search cost cap\n"
+                "/search absorb pipeline"
+            )
+            return
+
+        from ..session_db import search_sessions
+        results = search_sessions(query, limit=5)
+
+        if not results:
+            await update.message.reply_text(f"No results for: {query}")
+            return
+
+        lines = [f"Search results for: {query}\n"]
+        for r in results:
+            title = r.get("title", "Untitled") or "Untitled"
+            sid = r["session_id"][:8]
+            started = r.get("started_at", "")[:10]
+            match_count = len(r.get("matches", []))
+            lines.append(f"\n[{sid}] {title} ({started})")
+            for m in r.get("matches", [])[:2]:
+                snippet = m["content"][:200].replace("\n", " ")
+                lines.append(f"  {m['role']}: {snippet}")
+            if match_count > 2:
+                lines.append(f"  ... +{match_count - 2} more matches")
+
+        text = "\n".join(lines)
+        if len(text) > 4000:
+            text = text[:3950] + "\n\n... [truncated]"
+        await update.message.reply_text(text)
+
+    # ── /skills — list installed skills ──────────────────────────
+
+    async def _handle_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List all installed Claude Code skills."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        skills_dir = Path.home() / ".claude" / "skills"
+        if not skills_dir.exists():
+            return await update.message.reply_text("No skills directory found.")
+
+        skills = sorted(skills_dir.glob("*/SKILL.md"))
+        if not skills:
+            return await update.message.reply_text("No skills installed.")
+
+        lines = [f"Installed skills ({len(skills)})\n"]
+        for skill_path in skills:
+            name = skill_path.parent.name
+            # Read first line of description from frontmatter
+            desc = ""
+            try:
+                content = skill_path.read_text()
+                for line in content.splitlines():
+                    if line.startswith("description:"):
+                        desc = line[12:].strip()[:100]
+                        break
+            except Exception:
+                pass
+
+            # Check if disable-model-invocation
+            explicit = ""
+            try:
+                if "disable-model-invocation: true" in skill_path.read_text():
+                    explicit = " [explicit]"
+            except Exception:
+                pass
+
+            lines.append(f"  {name}{explicit}")
+            if desc:
+                lines.append(f"    {desc}")
+
+        # Queue count
+        queue_dir = EXODIR / "skills-queue"
+        queued = len(list(queue_dir.glob("*/SKILL.md"))) if queue_dir.exists() else 0
+        if queued:
+            lines.append(f"\nQueued: {queued} pending approval")
+
+        text = "\n".join(lines)
+        if len(text) > 4000:
+            text = text[:3950] + "\n\n... [truncated]"
+        await update.message.reply_text(text)
+
+    # ── /soul — view SOUL.md ─────────────────────────────────────
+
+    async def _handle_soul(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Display the agent's SOUL.md personality definition."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        soul_path = EXODIR / "SOUL.md"
+        if not soul_path.exists():
+            return await update.message.reply_text("SOUL.md not found.")
+
+        soul = soul_path.read_text().strip()
+        text = f"SOUL.md ({len(soul)} chars)\n\n{soul}"
+        if len(text) > 4000:
+            text = text[:3950] + "\n\n... [truncated]"
+        await update.message.reply_text(text)
+
+    # ── /config — view runtime configuration ─────────────────────
+
+    async def _handle_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show current runtime configuration (no secrets)."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        cfg = self._gateway.config if self._gateway else {}
+
+        model = cfg.get("model", "sonnet")
+        daily_cap = cfg.get("daily_cost_cap", 5.0)
+        weekly_cap = cfg.get("weekly_cost_cap", 25.0)
+        session_idle = cfg.get("session_idle_minutes", 120)
+        cron_enabled = cfg.get("cron", {}).get("enabled", True)
+
+        platforms = []
+        for pname, pcfg in cfg.get("platforms", {}).items():
+            status = "enabled" if pcfg.get("enabled", False) else "disabled"
+            users = len(pcfg.get("allowed_users", []))
+            platforms.append(f"  {pname}: {status} ({users} users)")
+
+        text = (
+            f"Configuration\n\n"
+            f"Model: {model}\n"
+            f"Daily cap: ${daily_cap:.2f}\n"
+            f"Weekly cap: ${weekly_cap:.2f}\n"
+            f"Session idle timeout: {session_idle}m\n"
+            f"Cron scheduler: {'on' if cron_enabled else 'off'}\n\n"
+            f"Platforms:\n" + "\n".join(platforms)
+        )
+        await update.message.reply_text(text)
+
+    # ── /pause, /unpause — toggle cron job ───────────────────────
+
+    async def _handle_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Pause a cron job. Usage: /pause <id>"""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+        await self._toggle_job(update, context, paused=True)
+
+    async def _handle_unpause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Unpause a cron job. Usage: /unpause <id>"""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+        await self._toggle_job(update, context, paused=False)
+
+    async def _toggle_job(self, update: Update, context: ContextTypes.DEFAULT_TYPE, paused: bool):
+        """Shared logic for pause/unpause."""
+        job_id = context.args[0] if context.args else ""
+        if not job_id:
+            action = "pause" if paused else "unpause"
+            return await update.message.reply_text(f"Usage: /{action} <job_id>\n\nUse /loops to see job IDs.")
+
+        if not CRON_JOBS_FILE.exists():
+            return await update.message.reply_text("No jobs configured.")
+
+        try:
+            jobs = json.loads(CRON_JOBS_FILE.read_text())
+        except Exception:
+            return await update.message.reply_text("Failed to read jobs.json.")
+
+        found = False
+        for job in jobs:
+            if job.get("id") == job_id:
+                job["paused"] = paused
+                found = True
+                break
+
+        if not found:
+            return await update.message.reply_text(f"Job not found: {job_id}")
+
+        CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+        action = "Paused" if paused else "Unpaused"
+        await update.message.reply_text(f"{action} job: {job_id}")
+
+    # ── /model — view or switch model ────────────────────────────
+    # (overrides the existing read-only /model handler above)
+
+    # ── Regular text messages ────────────────────────────────────
+
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.message.text:
             return
@@ -1094,6 +1325,12 @@ class TelegramAdapter(BasePlatformAdapter):
             "gc": self._handle_gc,
             "absorb": self._handle_absorb,
             "learnings": self._handle_learnings,
+            "search": self._handle_search,
+            "skills": self._handle_skills,
+            "soul": self._handle_soul,
+            "config": self._handle_config,
+            "pause": self._handle_pause,
+            "unpause": self._handle_unpause,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -1128,6 +1365,12 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("reject", "Remove a queued skill"),
                 BotCommand("learnings", "View past /learn findings"),
                 BotCommand("gc", "Garbage collection + health check"),
+                BotCommand("search", "Search past sessions (FTS5)"),
+                BotCommand("skills", "List installed skills"),
+                BotCommand("soul", "View agent personality"),
+                BotCommand("config", "View runtime config"),
+                BotCommand("pause", "Pause a cron job"),
+                BotCommand("unpause", "Resume a paused cron job"),
             ])
         except Exception as e:
             log.warning(f"Failed to set bot commands: {e}")

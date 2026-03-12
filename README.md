@@ -11,7 +11,7 @@ Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as the ag
 │  ┌────────────┐  ┌────────────────┐  ┌──────────────────┐     │
 │  │  Gateway    │  │  Claude Code   │  │  Memory System   │     │
 │  │  (Python)   │→ │  (claude -p)   │→ │  MEMORY.md       │     │
-│  │            │  │  + skills (8)  │  │  USER.md         │     │
+│  │            │  │  + skills (7)  │  │  USER.md         │     │
 │  │  Telegram  │  │  + MCP         │  │  SQLite+FTS5     │     │
 │  │  Discord   │  │  + subagents   │  │  Learnings DB    │     │
 │  │  WhatsApp  │  └────────────────┘  └──────────────────┘     │
@@ -79,25 +79,31 @@ Findings persist in SQLite+FTS5, searchable via `/learnings`.
 
 Cleans stale sessions (30d), empty sessions (24h), orphan skills (7d), checks memory entropy (85% threshold), rotates logs. Supports `--dry` preview mode.
 
-## Telegram Commands (22)
+## Telegram Commands (27)
 
 | Command | Description |
 |---------|-------------|
 | `/start`, `/help` | Welcome message, command list |
 | `/status` | System overview (gateway, memory, sessions, cost) |
 | `/heartbeat` | Liveness check |
+| `/config` | View runtime config (model, caps, platforms) |
 | `/memory` | Show bounded memory (MEMORY.md + USER.md) |
+| `/soul` | View agent personality (SOUL.md) |
 | `/sessions` | List recent sessions |
+| `/search <query>` | FTS5 full-text search across past sessions |
 | `/newsession` | Force start a new session |
 | `/cost` | Today's cost breakdown |
-| `/model` | Current model info |
+| `/model [name]` | View or switch model (sonnet/opus/haiku) |
 | `/evolve` | Run signal → skill pipeline |
 | `/absorb <target>` | Deep scan → self-improve pipeline |
 | `/learn <target>` | Deep-dive a repo or tech |
 | `/learnings [query]` | Search past /learn findings |
+| `/skills` | List installed Claude Code skills |
 | `/loop` | Create a recurring cron job |
 | `/loops` | List active loops |
 | `/unloop <id>` | Cancel a loop |
+| `/pause <id>` | Pause a cron job |
+| `/unpause <id>` | Resume a paused cron job |
 | `/notify` | Set a one-shot reminder |
 | `/queue` | Show skills pending approval |
 | `/approve <name>` | Install a queued skill |
@@ -112,7 +118,7 @@ Each incoming message:
 
 1. **Gateway** receives message from Telegram/Discord/WhatsApp
 2. **Session manager** resolves or creates a session (idle timeout = 2h)
-3. **Cost cap** is checked before invoking Claude
+3. **Cost cap** is checked before invoking Claude (daily + weekly)
 4. **Conversation history** from the current session is loaded (last 20 turns, 8K chars)
 5. **System prompt** is assembled from SOUL.md + MEMORY.md + USER.md
 6. **Claude Code** (`claude -p`) processes the message with full tool access
@@ -120,24 +126,23 @@ Each incoming message:
 8. **Response** is sent back to the platform
 9. **Message + response** are persisted to SQLite for future search
 
-The cron scheduler runs inside the gateway process, ticking every 60 seconds to execute due jobs and deliver results to your platform.
+The cron scheduler runs inside the gateway process, ticking every 60 seconds to execute due jobs and deliver results to your platform. Supports standard 5-field cron expressions (`0 6 * * *`) with timezone awareness.
 
-## Skills (8 installed)
+## Skills (7 installed)
 
-Skills follow the [official skill-creator](https://github.com/anthropics/claude-plugins-official) quality standards — pushy descriptions with "Use when..." trigger clauses, progressive disclosure, and proper frontmatter.
+Skills follow the [official skill-creator](https://github.com/anthropics/claude-plugins-official) quality standards — short imperative descriptions with "ALWAYS read this skill" framing, progressive disclosure, and proper frontmatter.
 
 | Skill | Purpose | Trigger |
 |-------|---------|---------|
-| **memory** | Manage persistent bounded memory | Proactively when learning about user/environment |
 | **session-search** | FTS5 search across past conversations | "we talked about...", "remember when..." |
-| **cron-manager** | Schedule recurring agent tasks | "set up a job", "run every..." |
+| **cron-manager** | Schedule recurring agent tasks | "cron", "schedule", "recurring job", "run every" |
 | **brave-search** | Web search via Brave API | "search for", "look up", "what's the latest on" |
 | **skill-creator** | Create, eval, benchmark, and optimize skills | "create a skill", "optimize this skill" |
 | **nah** | PreToolUse permission guard | Explicit invocation only |
 | **agent-browser-protocol** | Chromium browser automation MCP | Explicit invocation only |
 | **unf** | Auto file versioning daemon | Explicit invocation only |
 
-Skills with `disable-model-invocation: true` (nah, ABP, unf) only trigger when explicitly invoked — they're install/config tools, not general-purpose.
+Skills with `disable-model-invocation: true` (nah, ABP, unf, cron-manager) only trigger when explicitly invoked — they're install/config tools, not general-purpose.
 
 ## Project structure
 
@@ -159,7 +164,7 @@ Skills with `disable-model-invocation: true` (nah, ABP, unf) only trigger when e
 │   ├── session_db.py           # SQLite + FTS5 (sessions + learnings)
 │   └── platforms/
 │       ├── base.py             # Platform adapter interface
-│       ├── telegram.py         # Telegram (~1,150 lines, 22 commands)
+│       ├── telegram.py         # Telegram (~1,380 lines, 27 commands)
 │       ├── discord.py          # Discord (written, untested)
 │       └── whatsapp.py         # WhatsApp (written, untested)
 │
@@ -295,14 +300,14 @@ ae doctor               # Diagnose issues
 - **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) with frozen snapshot pattern. Injected at session start, never changes mid-session.
 - **Session continuity** — conversation history fed back into each `claude -p` call within a session (last 20 turns, 8K chars). Sessions auto-expire after 2h idle.
 - **Skills follow skill-creator standards** — descriptions are "pushy" with "Use when..." clauses to avoid undertriggering. Progressive disclosure keeps SKILL.md lean, heavy docs go in references/.
-- **Safety gates everywhere** — skills queue with human approval, cost caps, user whitelisting, review agent validation, bounded memory limits.
-- **Cron inside the gateway** — no OS cron dependency. Jobs run in fresh sessions with self-contained prompts.
+- **Safety gates everywhere** — skills queue with human approval, daily + weekly cost caps, user whitelisting, review agent validation, bounded memory limits.
+- **Cron inside the gateway** — no OS cron dependency. Supports standard 5-field cron expressions with timezone awareness (Asia/Hong_Kong, US/Eastern, etc.), interval-based, and one-shot jobs. Pause/unpause via Telegram.
 
 ## Platform support
 
 | Platform | Status | Library |
 |----------|--------|---------|
-| Telegram | Working (22 commands) | python-telegram-bot |
+| Telegram | Working (27 commands) | python-telegram-bot |
 | Discord | Written, untested | discord.py |
 | WhatsApp | Written, untested | @whiskeysockets/baileys (Node.js bridge) |
 

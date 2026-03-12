@@ -44,7 +44,7 @@ def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
         CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title) WHERE title IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title) WHERE title IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS learnings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

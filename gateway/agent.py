@@ -95,6 +95,31 @@ def get_today_cost() -> float:
     return total
 
 
+def get_week_cost() -> float:
+    """Read this week's (Mon-Sun) total cost from cost.log."""
+    cost_file = EXODIR / "logs" / "cost.log"
+    if not cost_file.exists():
+        return 0.0
+    now = datetime.now(timezone.utc)
+    # Monday of this week
+    monday = (now - __import__('datetime').timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+    total = 0.0
+    try:
+        for line in cost_file.read_text().splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                date_str = parts[0][:10]
+                if date_str >= monday:
+                    cost_str = parts[3].replace("$", "")
+                    try:
+                        total += float(cost_str)
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+    return total
+
+
 def invoke_claude(message: str, model: str = "sonnet",
                   cwd: str = None, history: list[dict] = None,
                   session_context: str = "") -> dict:
