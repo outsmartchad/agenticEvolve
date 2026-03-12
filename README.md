@@ -1,41 +1,110 @@
 # agenticEvolve
 
-A personal AI agent that lives on your messaging platforms, remembers you across sessions, scans for developer signals, and evolves your capabilities daily.
+A personal closed-loop agentic system that evolves your development capabilities daily.
 
-Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as the agent engine — zero custom agent code. The intelligence lives in prompts, memory, and skills.
+Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as the agent engine — zero custom agent loops. Intelligence lives in prompts, memory, and skills.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     agenticEvolve v2                          │
-│                                                              │
-│  ┌────────────┐  ┌────────────────┐  ┌──────────────────┐   │
-│  │  Gateway    │  │  Claude Code   │  │  Memory System   │   │
-│  │  (Python)   │→ │  (claude -p)   │→ │  MEMORY.md       │   │
-│  │            │  │  with tools    │  │  USER.md         │   │
-│  │  Telegram  │  │  + skills      │  │  SQLite+FTS5     │   │
-│  │  Discord   │  │  + MCP         │  │                  │   │
-│  │  WhatsApp  │  └────────────────┘  └──────────────────┘   │
-│  │  CLI       │         ↑                     ↑              │
-│  └────────────┘         │                     │              │
-│         ↑               │              ┌──────┴─────┐       │
-│         │          ┌────┴────┐         │ Session DB │       │
-│         │          │  Cron   │         │ (FTS5)     │       │
-│         │          │Scheduler│         └────────────┘       │
-│         │          └─────────┘                               │
-│  ┌──────┴───────────────────────────────────────────┐       │
-│  │              SOUL.md + AGENTS.md                  │       │
-│  │         (personality + project context)           │       │
-│  └───────────────────────────────────────────────────┘       │
-└──────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                      agenticEvolve v2                          │
+│                                                                │
+│  ┌────────────┐  ┌────────────────┐  ┌──────────────────┐     │
+│  │  Gateway    │  │  Claude Code   │  │  Memory System   │     │
+│  │  (Python)   │→ │  (claude -p)   │→ │  MEMORY.md       │     │
+│  │            │  │  + skills (8)  │  │  USER.md         │     │
+│  │  Telegram  │  │  + MCP         │  │  SQLite+FTS5     │     │
+│  │  Discord   │  │  + subagents   │  │  Learnings DB    │     │
+│  │  WhatsApp  │  └────────────────┘  └──────────────────┘     │
+│  │  CLI       │         ↑                     ↑                │
+│  └────────────┘         │                     │                │
+│         ↑          ┌────┴────┐         ┌──────┴─────┐         │
+│         │          │  Cron   │         │ Session DB │         │
+│         │          │Scheduler│         │  (FTS5)    │         │
+│    ┌────┴────┐     └─────────┘         └────────────┘         │
+│    │Pipelines│                                                 │
+│    │ evolve  │  ┌───────────────────────────────────────┐     │
+│    │ absorb  │  │       SOUL.md + AGENTS.md             │     │
+│    │ learn   │  │    (personality + project context)     │     │
+│    │ gc      │  └───────────────────────────────────────┘     │
+│    └─────────┘                                                 │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## What it does
 
-- **Talk to it from Telegram, Discord, or WhatsApp** — bidirectional messaging with full Claude Code capabilities (file ops, terminal, web search, MCP, skills)
-- **Remembers you across sessions** — bounded memory (MEMORY.md + USER.md) injected into every call, conversation history within sessions
-- **Scans for developer signals** — GitHub trending, Hacker News, X/Twitter via scheduled cron jobs
-- **Auto-creates skills** — when it solves a complex problem, it can save the workflow as a reusable Claude Code skill
-- **Cost-controlled** — daily/weekly caps with automatic enforcement
+- **Bidirectional messaging** — talk to it from Telegram, Discord, or WhatsApp with full Claude Code capabilities (file ops, terminal, web search, MCP, skills)
+- **Persistent memory** — bounded memory (MEMORY.md + USER.md) and SQLite+FTS5 session/learnings database. Injected into every call, searchable across all past conversations
+- **Self-evolving** — scans GitHub trending, Hacker News, and X for developer signals, then auto-builds Claude Code skills (with human approval gate)
+- **Absorbs from the wild** — deep-scans any repo/URL/topic, compares against itself, identifies gaps, and implements improvements to its own codebase
+- **Learns and remembers** — extracts patterns from repos and tools, stores structured findings with verdicts (ADOPT/STEAL/SKIP) in a searchable learnings DB
+- **Cost-controlled** — daily/weekly caps enforced before every Claude invocation
+
+## Pipelines
+
+### `/evolve` — Signal → Skill
+
+5-stage pipeline: **COLLECT → ANALYZE → BUILD → REVIEW → REPORT**
+
+1. Signal collectors scan GitHub trending, HN, and X
+2. Analyzer scores signals on relevance, novelty, actionability (0-9)
+3. Builder creates skills using [skill-creator quality standards](#skills) for candidates scoring ≥ 7.0
+4. Reviewer agent validates security, quality, correctness
+5. Skills land in `skills-queue/` — requires human `/approve` to install
+
+Supports `--dry-run` (stops after ANALYZE, shows what would be built).
+
+### `/absorb <target>` — Deep Scan → Self-Improve
+
+5-stage pipeline: **SCAN → GAP → PLAN → IMPLEMENT → REPORT**
+
+1. Deep-scans target (clones repos, reads source, maps architecture)
+2. Gap analysis compares target against our system
+3. Planner creates concrete file-level implementation plan
+4. Implementer modifies our system files to absorb improvements
+5. Changes logged in learnings DB
+
+Supports `--dry-run` (stops after GAP, shows gaps by priority).
+
+### `/learn <target>` — Pattern Extraction
+
+Deep-dives a repo, URL, or technology. Extracts patterns for operational benefit — not book reports. Returns structured findings with three verdicts:
+
+- **ADOPT** — use it directly
+- **STEAL** — take the patterns, skip the dependency
+- **SKIP** — not useful for our workflow
+
+Findings persist in SQLite+FTS5, searchable via `/learnings`.
+
+### `/gc` — Garbage Collection
+
+Cleans stale sessions (30d), empty sessions (24h), orphan skills (7d), checks memory entropy (85% threshold), rotates logs. Supports `--dry` preview mode.
+
+## Telegram Commands (22)
+
+| Command | Description |
+|---------|-------------|
+| `/start`, `/help` | Welcome message, command list |
+| `/status` | System overview (gateway, memory, sessions, cost) |
+| `/heartbeat` | Liveness check |
+| `/memory` | Show bounded memory (MEMORY.md + USER.md) |
+| `/sessions` | List recent sessions |
+| `/newsession` | Force start a new session |
+| `/cost` | Today's cost breakdown |
+| `/model` | Current model info |
+| `/evolve` | Run signal → skill pipeline |
+| `/absorb <target>` | Deep scan → self-improve pipeline |
+| `/learn <target>` | Deep-dive a repo or tech |
+| `/learnings [query]` | Search past /learn findings |
+| `/loop` | Create a recurring cron job |
+| `/loops` | List active loops |
+| `/unloop <id>` | Cancel a loop |
+| `/notify` | Set a one-shot reminder |
+| `/queue` | Show skills pending approval |
+| `/approve <name>` | Install a queued skill |
+| `/reject <name>` | Remove a queued skill |
+| `/gc` | Run garbage collection |
+
+Regular text messages are routed to Claude Code as chat with full session continuity.
 
 ## How it works
 
@@ -44,60 +113,93 @@ Each incoming message:
 1. **Gateway** receives message from Telegram/Discord/WhatsApp
 2. **Session manager** resolves or creates a session (idle timeout = 2h)
 3. **Cost cap** is checked before invoking Claude
-4. **Conversation history** from the current session is loaded and injected
+4. **Conversation history** from the current session is loaded (last 20 turns, 8K chars)
 5. **System prompt** is assembled from SOUL.md + MEMORY.md + USER.md
 6. **Claude Code** (`claude -p`) processes the message with full tool access
-7. **Response** is sent back to the platform
-8. **Message + response** are persisted to SQLite for future search
+7. **Streaming progress** — tool use events are batched and sent as typing indicators
+8. **Response** is sent back to the platform
+9. **Message + response** are persisted to SQLite for future search
 
 The cron scheduler runs inside the gateway process, ticking every 60 seconds to execute due jobs and deliver results to your platform.
+
+## Skills (8 installed)
+
+Skills follow the [official skill-creator](https://github.com/anthropics/claude-plugins-official) quality standards — pushy descriptions with "Use when..." trigger clauses, progressive disclosure, and proper frontmatter.
+
+| Skill | Purpose | Trigger |
+|-------|---------|---------|
+| **memory** | Manage persistent bounded memory | Proactively when learning about user/environment |
+| **session-search** | FTS5 search across past conversations | "we talked about...", "remember when..." |
+| **cron-manager** | Schedule recurring agent tasks | "set up a job", "run every..." |
+| **brave-search** | Web search via Brave API | "search for", "look up", "what's the latest on" |
+| **skill-creator** | Create, eval, benchmark, and optimize skills | "create a skill", "optimize this skill" |
+| **nah** | PreToolUse permission guard | Explicit invocation only |
+| **agent-browser-protocol** | Chromium browser automation MCP | Explicit invocation only |
+| **unf** | Auto file versioning daemon | Explicit invocation only |
+
+Skills with `disable-model-invocation: true` (nah, ABP, unf) only trigger when explicitly invoked — they're install/config tools, not general-purpose.
 
 ## Project structure
 
 ```
 ~/.agenticEvolve/
-├── ae                       # CLI entrypoint
-├── config.yaml              # Settings (model, platforms, cost caps)
-├── .env                     # Secrets (bot tokens)
-├── SOUL.md                  # Agent personality
+├── ae                          # CLI entrypoint
+├── config.yaml                 # Settings (model, platforms, cost caps)
+├── .env                        # Secrets (bot tokens)
+├── SOUL.md                     # Agent personality
+├── AGENTS.md                   # Project conventions + agent roles
 │
-├── gateway/                 # Messaging gateway (Python)
-│   ├── run.py               # GatewayRunner — main process
-│   ├── agent.py             # Claude Code invocation wrapper
-│   ├── config.py            # Config loader (YAML + .env)
-│   ├── session_db.py        # SQLite + FTS5 session persistence
+├── gateway/                    # Messaging gateway (~3,500 lines Python)
+│   ├── run.py                  # GatewayRunner — main process
+│   ├── agent.py                # Claude Code invocation wrapper
+│   ├── evolve.py               # 5-stage evolve pipeline
+│   ├── absorb.py               # 5-stage absorb pipeline
+│   ├── gc.py                   # Garbage collection
+│   ├── config.py               # Config loader (YAML + .env)
+│   ├── session_db.py           # SQLite + FTS5 (sessions + learnings)
 │   └── platforms/
-│       ├── base.py          # Platform adapter interface
-│       ├── telegram.py      # Telegram (python-telegram-bot)
-│       ├── discord.py       # Discord (discord.py)
-│       └── whatsapp.py      # WhatsApp (Baileys Node.js bridge)
+│       ├── base.py             # Platform adapter interface
+│       ├── telegram.py         # Telegram (~1,150 lines, 22 commands)
+│       ├── discord.py          # Discord (written, untested)
+│       └── whatsapp.py         # WhatsApp (written, untested)
 │
 ├── memory/
-│   ├── MEMORY.md            # Agent's notes (2200 char limit)
-│   ├── USER.md              # User profile (1375 char limit)
-│   └── sessions.db          # SQLite + FTS5
+│   ├── MEMORY.md               # Agent's notes (2200 char limit)
+│   ├── USER.md                 # User profile (1375 char limit)
+│   └── sessions.db             # SQLite + FTS5
 │
 ├── cron/
-│   ├── jobs.json            # Scheduled jobs
-│   └── output/              # Job output history
+│   └── jobs.json               # Scheduled jobs
 │
-├── whatsapp-bridge/         # Node.js WhatsApp bridge
-│   ├── bridge.js            # Baileys subprocess (JSON stdin/stdout)
-│   └── package.json
+├── skills-queue/               # Skills pending human approval
 │
-├── collectors/              # Signal collectors (bash)
+├── collectors/                 # Signal collectors (bash)
 │   ├── github.sh
 │   ├── hackernews.sh
 │   └── x-search.sh
 │
-├── skills/                  # Claude Code skill definitions
-│   ├── memory/SKILL.md      # Memory management (/memory add|replace|remove)
-│   ├── session-search/SKILL.md  # FTS5 session search
-│   └── cron-manager/SKILL.md    # Job scheduling
+├── whatsapp-bridge/            # Node.js WhatsApp bridge
+│   └── bridge.js
 │
 └── logs/
     ├── gateway.log
     └── cost.log
+
+~/.claude/skills/               # Installed Claude Code skills
+├── memory/
+├── session-search/
+├── cron-manager/
+├── brave-search/
+├── skill-creator/              # Official skill-creator (create, eval, benchmark, optimize)
+│   ├── SKILL.md
+│   ├── agents/                 # Grader, Comparator, Analyzer subagents
+│   ├── scripts/                # run_eval.py, run_loop.py, aggregate_benchmark.py
+│   ├── eval-viewer/            # HTML viewer for qualitative + quantitative review
+│   ├── references/             # JSON schemas
+│   └── assets/                 # Templates
+├── nah/
+├── agent-browser-protocol/
+└── unf/
 ```
 
 ## Setup
@@ -106,7 +208,7 @@ The cron scheduler runs inside the gateway process, ticking every 60 seconds to 
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) — authenticated
 - Python 3.11+
-- (Optional) Node.js 18+ — only needed for WhatsApp
+- (Optional) Node.js 18+ — only for WhatsApp
 - (Optional) [GitHub CLI](https://cli.github.com/) — for signal collectors
 
 ### Install
@@ -155,7 +257,7 @@ To find your user ID, start the bot and send any message — it will reply with 
 
 ## Usage
 
-### Gateway (primary)
+### Gateway
 
 ```bash
 ae gateway              # Start the messaging gateway
@@ -167,7 +269,7 @@ ae gateway install      # Install as launchd service (auto-start on boot)
 ### Memory
 
 ```bash
-ae memory               # Show bounded memory state (MEMORY.md + USER.md)
+ae memory               # Show bounded memory state
 ae memory reset         # Clear all memory
 ```
 
@@ -182,60 +284,33 @@ ae sessions stats       # Session statistics
 ### Status & Cost
 
 ```bash
-ae status               # System overview (gateway, memory, sessions, cost)
+ae status               # System overview
 ae cost                 # Cost breakdown
 ae doctor               # Diagnose issues
 ```
 
-### Config
-
-```bash
-ae config               # Show config.yaml
-ae config edit          # Open in editor
-ae setup                # First-time setup wizard
-```
-
-### Legacy (v1)
-
-```bash
-ae cycle                # Run one signal scan cycle
-ae collect [source]     # Run collectors (github, hackernews, x-search)
-```
-
 ## Key design decisions
 
-- **Claude Code is the agent engine** — no custom agent loop, no tool registry. Claude Code already has 25+ tools, MCP, skills, and subagent delegation. We build infrastructure around `claude -p`, not a competing agent.
-- **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) with frozen snapshot pattern. Injected at session start, never changes mid-session. Managed via a Claude Code skill.
-- **Session continuity** — conversation history is fed back into each `claude -p` call within a session (last 20 turns, 8K chars max). Sessions auto-expire after 2h idle.
-- **User verification** — Telegram users must be whitelisted by user ID. Unknown users get a message with their ID to send to the bot owner.
-- **Cost caps** — $5/day, $25/week (configurable). Enforced before every Claude invocation.
+- **Claude Code is the agent engine** — no custom agent loop, no tool registry. `claude -p` has 25+ tools, MCP, skills, and subagent delegation. We build infrastructure around it, not a competing agent.
+- **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) with frozen snapshot pattern. Injected at session start, never changes mid-session.
+- **Session continuity** — conversation history fed back into each `claude -p` call within a session (last 20 turns, 8K chars). Sessions auto-expire after 2h idle.
+- **Skills follow skill-creator standards** — descriptions are "pushy" with "Use when..." clauses to avoid undertriggering. Progressive disclosure keeps SKILL.md lean, heavy docs go in references/.
+- **Safety gates everywhere** — skills queue with human approval, cost caps, user whitelisting, review agent validation, bounded memory limits.
 - **Cron inside the gateway** — no OS cron dependency. Jobs run in fresh sessions with self-contained prompts.
 
 ## Platform support
 
 | Platform | Status | Library |
 |----------|--------|---------|
-| Telegram | Working | python-telegram-bot |
+| Telegram | Working (22 commands) | python-telegram-bot |
 | Discord | Written, untested | discord.py |
-| WhatsApp | Written, untested | @whiskeysockets/baileys (Node.js subprocess) |
-
-## Skills
-
-Skills are Claude Code's native extensibility mechanism. agenticEvolve ships with 3 built-in skills:
-
-| Skill | Command | Purpose |
-|-------|---------|---------|
-| memory | `/memory add\|replace\|remove` | Manage persistent bounded memory |
-| session-search | `/session-search <query>` | FTS5 search across past conversations |
-| cron-manager | `/cron add\|list\|remove` | Schedule recurring agent tasks |
-
-Skills auto-install to `~/.claude/skills/` and are available in all Claude Code sessions.
+| WhatsApp | Written, untested | @whiskeysockets/baileys (Node.js bridge) |
 
 ## Inspiration
 
 - [hermes-agent](https://github.com/NousResearch/hermes-agent) — bounded memory, session persistence, messaging gateway, agent-managed cron
+- [Anthropic skill-creator](https://github.com/anthropics/claude-plugins-official) — skill creation patterns, eval-driven development, description optimization
 - [snarktank/ralph](https://github.com/snarktank/ralph) — v1 inspiration (bash orchestrator, two-tier learning)
-- [Anthropic's harness engineering research](https://www.anthropic.com/) — initializer agent pattern
 
 ## License
 
