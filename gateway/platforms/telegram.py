@@ -75,21 +75,25 @@ class TelegramAdapter(BasePlatformAdapter):
             "/help — Show this help\n"
             "/status — System status\n"
             "/model — Current model\n"
-            "/cost — Today's cost\n\n"
+            "/cost — Today's cost\n"
+            "/heartbeat — Check if bot is alive\n\n"
             "*Sessions*\n"
             "/newsession — Force new session\n"
             "/sessions — Recent sessions\n\n"
             "*Memory*\n"
             "/memory — Show bounded memory\n\n"
             "*Evolution*\n"
-            "/evolve — Scan signals + build skills now\n\n"
+            "/evolve — Scan signals + build skills now\n"
+            "/learn `<repo-url or tech>` — Deep-dive a repo or tech\n\n"
+            "*Skills Queue*\n"
+            "/queue — Skills pending approval\n"
+            "/approve `<name>` — Install a queued skill\n"
+            "/reject `<name>` — Remove a queued skill\n\n"
             "*Scheduling*\n"
             "/loop `<interval>` `<prompt>` — Recurring job\n"
             "/loops — List active loops\n"
             "/unloop `<id>` — Cancel a loop\n"
             "/notify `<delay>` `<msg>` — One-shot reminder\n\n"
-            "*Health*\n"
-            "/heartbeat — Check if bot is alive\n\n"
             "Or just send any message to chat with Claude.",
             parse_mode="Markdown"
         )
@@ -609,6 +613,153 @@ class TelegramAdapter(BasePlatformAdapter):
             parse_mode="Markdown"
         )
 
+    # ── /learn — deep-dive a repo or tech ──────────────────────
+
+    async def _handle_learn(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Deep-dive a repo, library, or tech. Analyze how we benefit and optionally build a skill."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        target = " ".join(context.args) if context.args else ""
+        if not target:
+            await update.message.reply_text(
+                "*Usage:* `/learn <repo-url or tech name>`\n\n"
+                "*Examples:*\n"
+                "`/learn https://github.com/vercel/ai`\n"
+                "`/learn anthropic tool-use patterns`\n"
+                "`/learn htmx`\n"
+                "`/learn https://github.com/nicepkg/aide`",
+                parse_mode="Markdown"
+            )
+            return
+
+        await update.message.reply_text(
+            f"Learning about `{target}`...\n\nI'll research it, analyze how it benefits us, and suggest if we should build a skill for it.",
+            parse_mode="Markdown"
+        )
+
+        chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+        loop = asyncio.get_running_loop()
+
+        # Build progress bridge
+        msg_buffer = []
+        async def send_progress(text: str):
+            msg_buffer.append(text)
+            if len(msg_buffer) % 3 == 0:
+                batch = "\n".join(msg_buffer[-3:])
+                try:
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=batch, parse_mode="Markdown")
+                except Exception:
+                    pass
+
+        def on_progress_sync(text: str):
+            asyncio.run_coroutine_threadsafe(send_progress(text), loop)
+
+        is_url = target.startswith("http://") or target.startswith("https://")
+        is_github = "github.com" in target
+
+        if is_github:
+            learn_prompt = (
+                f"You are the LEARN agent for agenticEvolve.\n\n"
+                f"Deep-dive this GitHub repo: {target}\n\n"
+                f"Do the following:\n"
+                f"1. Clone the repo to a temp directory (or use WebFetch/gh to read it)\n"
+                f"2. Read the README, key source files, and architecture\n"
+                f"3. Understand what it does, how it works, and what problems it solves\n\n"
+                f"Then analyze for Vincent (@outsmartchad) who builds AI agents, onchain infrastructure, and developer tools:\n\n"
+                f"4. HOW WE BENEFIT:\n"
+                f"   - What specific problems does this solve for us?\n"
+                f"   - Can we integrate it into our existing projects?\n"
+                f"   - What patterns/techniques can we steal even if we don't use the library directly?\n\n"
+                f"5. ARCHITECTURE ANALYSIS:\n"
+                f"   - Key design patterns used\n"
+                f"   - How it compares to alternatives\n"
+                f"   - Strengths and weaknesses\n\n"
+                f"6. SKILL RECOMMENDATION:\n"
+                f"   - Should we build a Claude Code skill for this? (yes/no with reasoning)\n"
+                f"   - If yes, create the skill in ~/.agenticEvolve/skills-queue/<name>/SKILL.md\n"
+                f"   - The skill goes to queue for review, NOT auto-installed\n\n"
+                f"7. MEMORY UPDATE:\n"
+                f"   - Add a concise entry about this tool to ~/.agenticEvolve/memory/MEMORY.md\n"
+                f"   - Use § as separator, respect the 2200 char limit\n\n"
+                f"Return a structured analysis report."
+            )
+        elif is_url:
+            learn_prompt = (
+                f"You are the LEARN agent for agenticEvolve.\n\n"
+                f"Research this URL: {target}\n\n"
+                f"1. Fetch the page content using WebFetch\n"
+                f"2. Understand what technology/tool/library it describes\n"
+                f"3. Research further if needed (search for docs, GitHub repo, examples)\n\n"
+                f"Then analyze for Vincent who builds AI agents, onchain infrastructure, and developer tools:\n\n"
+                f"4. HOW WE BENEFIT: What problems does this solve? Can we use it?\n"
+                f"5. PRACTICAL EXAMPLES: Show how we'd actually use this in our workflow\n"
+                f"6. SKILL RECOMMENDATION: Should we build a Claude Code skill? If yes, create in ~/.agenticEvolve/skills-queue/<name>/SKILL.md\n"
+                f"7. MEMORY UPDATE: Add entry to ~/.agenticEvolve/memory/MEMORY.md (§ separator, 2200 char limit)\n\n"
+                f"Return a structured analysis report."
+            )
+        else:
+            learn_prompt = (
+                f"You are the LEARN agent for agenticEvolve.\n\n"
+                f"Research this technology/concept: {target}\n\n"
+                f"1. Search the web for the latest information about '{target}'\n"
+                f"2. Find the official repo, docs, and key resources\n"
+                f"3. Understand what it is, how it works, and the ecosystem around it\n\n"
+                f"Then analyze for Vincent who builds AI agents, onchain infrastructure, and developer tools:\n\n"
+                f"4. HOW WE BENEFIT:\n"
+                f"   - What specific problems does this solve for us?\n"
+                f"   - How does it compare to what we currently use?\n"
+                f"   - Is it mature enough to adopt?\n\n"
+                f"5. QUICK START: The fastest way to try it out (3-5 commands)\n"
+                f"6. SKILL RECOMMENDATION: Should we build a Claude Code skill? If yes, create in ~/.agenticEvolve/skills-queue/<name>/SKILL.md\n"
+                f"7. MEMORY UPDATE: Add entry to ~/.agenticEvolve/memory/MEMORY.md (§ separator, 2200 char limit)\n\n"
+                f"Return a structured analysis report."
+            )
+
+        model = "sonnet"
+        if self._gateway:
+            model = self._gateway.config.get("model", "sonnet")
+
+        try:
+            from ..agent import invoke_claude_streaming
+
+            result = await loop.run_in_executor(
+                None,
+                lambda: invoke_claude_streaming(
+                    learn_prompt,
+                    on_progress=on_progress_sync,
+                    model=model,
+                    session_context=f"[Learn: {target[:50]}]"
+                )
+            )
+
+            # Flush remaining progress
+            remaining = len(msg_buffer) % 3
+            if remaining > 0:
+                batch = "\n".join(msg_buffer[-remaining:])
+                try:
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=batch, parse_mode="Markdown")
+                except Exception:
+                    pass
+
+            response = result.get("text", "No output.")
+            cost = result.get("cost", 0)
+
+            header = f"*Learn: {target}* (${cost:.2f})\n\n"
+            full = header + response
+            for i in range(0, len(full), 4000):
+                await self.app.bot.send_message(chat_id=int(chat_id), text=full[i:i+4000], parse_mode="Markdown")
+
+            if cost > 0 and self._gateway:
+                self._gateway._log_cost("telegram", "learn", cost)
+
+        except Exception as e:
+            log.error(f"Learn error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"Learn failed: {e}")
+
     # ── Regular messages ─────────────────────────────────────────
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -659,6 +810,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "queue": self._handle_queue,
             "approve": self._handle_approve,
             "reject": self._handle_reject,
+            "learn": self._handle_learn,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -675,6 +827,7 @@ class TelegramAdapter(BasePlatformAdapter):
             await self.app.bot.set_my_commands([
                 BotCommand("help", "Show available commands"),
                 BotCommand("evolve", "Scan signals + build skills"),
+                BotCommand("learn", "Deep-dive a repo or tech"),
                 BotCommand("status", "System status"),
                 BotCommand("heartbeat", "Check if bot is alive"),
                 BotCommand("memory", "Show bounded memory"),
