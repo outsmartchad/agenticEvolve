@@ -235,81 +235,28 @@ class TelegramAdapter(BasePlatformAdapter):
     # ── /evolve ──────────────────────────────────────────────────
 
     async def _handle_evolve(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Run signal scan + analysis + skill building with live progress."""
+        """Run multi-stage evolve pipeline with live progress."""
         if not update.message:
             return
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        status_msg = await update.message.reply_text("Evolving... scanning signals and building skills.\n\nProgress updates will appear below.")
-
         chat_id = str(update.message.chat_id)
-        progress_lines = []
-        progress_lock = asyncio.Lock()
-
-        async def send_progress(text: str):
-            """Send progress as a new message (batched)."""
-            progress_lines.append(text)
-            # Send every 3 tool calls to avoid Telegram rate limits
-            if len(progress_lines) % 3 == 0:
-                batch = "\n".join(progress_lines[-3:])
-                try:
-                    await self.app.bot.send_message(
-                        chat_id=int(chat_id), text=batch, parse_mode="Markdown"
-                    )
-                except Exception as e:
-                    log.warning(f"Progress send failed: {e}")
-
-        # Wrapper to bridge sync callback to async
-        loop = asyncio.get_running_loop()
-        def on_progress_sync(text: str):
-            asyncio.run_coroutine_threadsafe(send_progress(text), loop)
-
-        evolve_prompt = (
-            "You are running an evolution cycle for agenticEvolve. Do the following:\n\n"
-            "1. Run the signal collectors to gather fresh data:\n"
-            "   - bash ~/.agenticEvolve/collectors/github.sh\n"
-            "   - bash ~/.agenticEvolve/collectors/hackernews.sh\n"
-            "   - bash ~/.agenticEvolve/collectors/x-search.sh (if Brave API key is set)\n\n"
-            "2. Read today's signal files from ~/.agenticEvolve/signals/\n\n"
-            "3. Analyze ALL signals. For each one, evaluate:\n"
-            "   - Is this a useful developer tool, library, or technique?\n"
-            "   - Would it improve our workflow (AI agents, TypeScript, React, onchain infra)?\n"
-            "   - Is it actionable (can we use it right now)?\n\n"
-            "4. For the TOP 1-3 most actionable signals:\n"
-            "   - Create a Claude Code skill in ~/.claude/skills/<name>/SKILL.md\n"
-            "   - The skill should teach Claude Code how to use the tool effectively\n"
-            "   - Follow the SKILL.md format with YAML frontmatter (name, description, allowed-tools)\n\n"
-            "5. Update ~/.agenticEvolve/memory/MEMORY.md with what you found (use the memory skill format — entries separated by §)\n\n"
-            "6. Return a concise summary:\n"
-            "   - How many signals collected per source\n"
-            "   - Top findings with one-line descriptions\n"
-            "   - Skills created (if any)\n"
-            "   - Any errors encountered"
+        await update.message.reply_text(
+            "*Starting evolution pipeline...*\n\n"
+            "Stages: COLLECT → ANALYZE → BUILD → REVIEW → REPORT\n"
+            "Progress updates will appear below.",
+            parse_mode="Markdown"
         )
 
-        model = "sonnet"
-        if self._gateway:
-            model = self._gateway.config.get("model", "sonnet")
+        loop = asyncio.get_running_loop()
 
-        try:
-            from ..agent import invoke_claude_streaming
-
-            # Run streaming invocation in executor
-            result = await loop.run_in_executor(
-                None,
-                lambda: invoke_claude_streaming(
-                    evolve_prompt,
-                    on_progress=on_progress_sync,
-                    model=model,
-                    session_context="[Evolve cycle]"
-                )
-            )
-
-            # Send any remaining progress
-            remaining = len(progress_lines) % 3
-            if remaining > 0:
-                batch = "\n".join(progress_lines[-remaining:])
+        # Bridge sync progress callback to async Telegram messages
+        msg_buffer = []
+        async def send_progress(text: str):
+            msg_buffer.append(text)
+            if len(msg_buffer) % 3 == 0:
+                batch = "\n".join(msg_buffer[-3:])
                 try:
                     await self.app.bot.send_message(
                         chat_id=int(chat_id), text=batch, parse_mode="Markdown"
@@ -317,25 +264,114 @@ class TelegramAdapter(BasePlatformAdapter):
                 except Exception:
                     pass
 
-            response = result.get("text", "No output.")
-            cost = result.get("cost", 0)
+        def on_progress_sync(text: str):
+            asyncio.run_coroutine_threadsafe(send_progress(text), loop)
 
-            # Send final result
-            summary = f"*Evolution complete* (${cost:.2f})\n\n{response}"
+        model = "sonnet"
+        if self._gateway:
+            model = self._gateway.config.get("model", "sonnet")
+
+        try:
+            from ..evolve import EvolveOrchestrator
+
+            orchestrator = EvolveOrchestrator(model=model, on_progress=on_progress_sync)
+
+            # Run full pipeline in executor
+            summary, cost = await loop.run_in_executor(None, orchestrator.run)
+
+            # Send remaining buffered progress
+            remaining = len(msg_buffer) % 3
+            if remaining > 0:
+                batch = "\n".join(msg_buffer[-remaining:])
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=int(chat_id), text=batch, parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+
+            # Send final summary
             for i in range(0, len(summary), 4000):
                 await self.app.bot.send_message(
                     chat_id=int(chat_id), text=summary[i:i+4000], parse_mode="Markdown"
                 )
 
-            # Log cost
             if cost > 0 and self._gateway:
                 self._gateway._log_cost("telegram", "evolve", cost)
 
         except Exception as e:
             log.error(f"Evolve error: {e}")
-            await self.app.bot.send_message(
-                chat_id=int(chat_id), text=f"Evolution failed: {e}"
-            )
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"Evolution failed: {e}")
+
+    # ── /queue — list skills pending approval ────────────────────
+
+    async def _handle_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        from ..evolve import list_queue
+        items = list_queue()
+
+        if not items:
+            return await update.message.reply_text("Skills queue is empty. Run /evolve to discover new tools.")
+
+        lines = ["*Skills queue*\n"]
+        for item in items:
+            status = item["status"]
+            name = item["name"]
+            if status == "rejected":
+                issues = item.get("review", {}).get("issues", [])
+                lines.append(f"  `{name}` — rejected ({', '.join(issues[:2])})")
+                lines.append(f"    /approve {name} force")
+            else:
+                lines.append(f"  `{name}` — pending review")
+                lines.append(f"    /approve {name}")
+            lines.append(f"    /reject {name}")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    # ── /approve — install a queued skill ────────────────────────
+
+    async def _handle_approve(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        args = context.args if context.args else []
+        if not args:
+            return await update.message.reply_text("Usage: `/approve <skill-name>` or `/approve <skill-name> force`", parse_mode="Markdown")
+
+        name = args[0]
+        force = len(args) > 1 and args[1] == "force"
+
+        from ..evolve import approve_skill, approve_skill_force
+        if force:
+            ok, msg = approve_skill_force(name)
+        else:
+            ok, msg = approve_skill(name)
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    # ── /reject — remove a queued skill ──────────────────────────
+
+    async def _handle_reject(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        args = context.args if context.args else []
+        if not args:
+            return await update.message.reply_text("Usage: `/reject <skill-name> [reason]`", parse_mode="Markdown")
+
+        name = args[0]
+        reason = " ".join(args[1:]) if len(args) > 1 else ""
+
+        from ..evolve import reject_skill
+        ok, msg = reject_skill(name, reason)
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
     # ── /loop — create recurring cron job ────────────────────────
 
@@ -620,6 +656,9 @@ class TelegramAdapter(BasePlatformAdapter):
             "unloop": self._handle_unloop,
             "heartbeat": self._handle_heartbeat,
             "notify": self._handle_notify,
+            "queue": self._handle_queue,
+            "approve": self._handle_approve,
+            "reject": self._handle_reject,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -647,6 +686,9 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("loops", "List active loops"),
                 BotCommand("unloop", "Cancel a loop"),
                 BotCommand("notify", "Set a reminder"),
+                BotCommand("queue", "Skills pending approval"),
+                BotCommand("approve", "Install a queued skill"),
+                BotCommand("reject", "Remove a queued skill"),
             ])
         except Exception as e:
             log.warning(f"Failed to set bot commands: {e}")
