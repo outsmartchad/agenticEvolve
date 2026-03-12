@@ -1,6 +1,6 @@
 ---
 name: session-search
-description: Search past conversation sessions using full-text search. Use when you need to recall what was discussed previously, find a past decision, or locate a specific conversation.
+description: Search past conversation sessions using full-text search. Use when you need to recall what was discussed previously, find a past decision, locate a specific conversation, or when the user says "we talked about", "remember when", "what did we decide", "find that session where", or any reference to past agenticEvolve conversations.
 argument-hint: /session-search "how to deploy"
 allowed-tools: Bash(python3 *), Read
 ---

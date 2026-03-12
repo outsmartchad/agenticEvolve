@@ -156,7 +156,14 @@ class EvolveOrchestrator:
     # ── Stage 3: Build ───────────────────────────────────────────
 
     def stage_build(self, analyze_result: dict) -> dict:
-        """Build skills for top candidates — into QUEUE, not installed."""
+        """Build skills for top candidates — into QUEUE, not installed.
+
+        Uses patterns from the official skill-creator plugin:
+        - Pushy descriptions with "Use when..." trigger clauses
+        - Progressive disclosure (SKILL.md < 500 lines, heavy docs in references/)
+        - Explain the "why" instead of rigid MUSTs
+        - Source attribution at bottom
+        """
         candidates = analyze_result.get("candidates", [])
         if not candidates:
             self._report("  No candidates to build. Skipping.")
@@ -192,14 +199,43 @@ class EvolveOrchestrator:
                 f"URL: {url}\n"
                 f"Skill idea: {skill_idea}\n\n"
                 f"Create the skill file at: {skill_dir}/SKILL.md\n\n"
-                f"Requirements:\n"
-                f"- YAML frontmatter with: name, description, argument-hint, allowed-tools\n"
-                f"- Clear step-by-step procedure\n"
-                f"- Under 100 lines total\n"
-                f"- No hardcoded API keys, tokens, or secrets\n"
+
+                f"## Skill-Creator Quality Standards\n\n"
+
+                f"### YAML Frontmatter (required fields):\n"
+                f"- `name`: lowercase, hyphenated identifier\n"
+                f"- `description`: This is the PRIMARY trigger mechanism. It must include:\n"
+                f"  1. What the skill does (concise)\n"
+                f"  2. A 'Use when...' clause listing specific user phrases and contexts that should trigger it\n"
+                f"  3. Be slightly 'pushy' — lean toward triggering rather than undertriggering\n"
+                f"  Example: 'Deploy apps to cloud providers. Use when the user mentions deploying, hosting, "
+                f"pushing to production, setting up CI/CD, or wants to get their app online, even if they "
+                f"don\\'t say \"deploy\" explicitly.'\n"
+                f"- `argument-hint`: show example invocation pattern\n"
+                f"- `allowed-tools`: minimum tools needed (prefer specific patterns over broad globs)\n"
+                f"- `disable-model-invocation: true` if the skill should only run when explicitly invoked\n\n"
+
+                f"### SKILL.md Body:\n"
+                f"- Keep under 100 lines (ideal for queue skills; 500 lines is the hard max)\n"
+                f"- Use imperative form in instructions\n"
+                f"- Explain WHY things are important rather than using heavy-handed MUSTs\n"
+                f"- Include concrete examples with Input/Output where helpful\n"
+                f"- If the tool requires installation, include the install command first\n"
+                f"- End with a `Source: <url>` line for attribution\n\n"
+
+                f"### Progressive Disclosure:\n"
+                f"- Level 1 (always loaded): name + description in frontmatter (~100 words)\n"
+                f"- Level 2 (on trigger): SKILL.md body (the instructions)\n"
+                f"- Level 3 (as needed): bundled resources in references/, scripts/, assets/\n"
+                f"- If the skill needs extensive docs, put them in a `references/` subdirectory "
+                f"and reference them from SKILL.md with guidance on when to read them\n\n"
+
+                f"### Security:\n"
+                f"- No hardcoded API keys, tokens, secrets, or credentials\n"
                 f"- No placeholder values — only real, working instructions\n"
-                f"- If the tool requires installation, include the install command\n\n"
-                f"Create ONLY the SKILL.md file. Nothing else."
+                f"- Nothing destructive without explicit guards\n\n"
+
+                f"Create ONLY the SKILL.md file (and references/ if needed). Nothing else."
             )
 
             result = self._invoke(prompt, f"BUILD ({name})")

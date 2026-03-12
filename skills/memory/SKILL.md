@@ -2,7 +2,7 @@
 name: memory
 description: Manage persistent memory across sessions. Use when you learn something about the user, their environment, or conventions that should be remembered. Also use proactively after completing tasks, discovering workarounds, or when the user corrects you.
 argument-hint: /memory add "User prefers TypeScript over JavaScript"
-allowed-tools: Bash(cat *), Read, Edit, Write
+allowed-tools: Read, Edit, Write
 ---
 
 # Persistent Memory

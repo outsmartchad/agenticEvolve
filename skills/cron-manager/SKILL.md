@@ -2,6 +2,7 @@
 name: cron-manager
 description: Schedule, list, and manage recurring agent tasks. Use when the user wants to set up automated jobs like signal scanning, reminders, or periodic reports.
 argument-hint: /cron add "every 2h" "Scan GitHub trending for useful dev tools"
+disable-model-invocation: true
 allowed-tools: Bash(python3 *), Read, Write
 ---
 

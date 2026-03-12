@@ -52,10 +52,13 @@ Key files in our system (~/.agenticEvolve/):
   cron/jobs.json          — scheduled jobs
 
 Skills (~/.claude/skills/):
-  memory/SKILL.md         — memory management
-  session-search/SKILL.md — FTS5 session search
-  cron-manager/SKILL.md   — job scheduling
-  brave-search/SKILL.md   — web search via Brave API
+  memory/SKILL.md                  — memory management
+  session-search/SKILL.md          — FTS5 session search
+  cron-manager/SKILL.md            — job scheduling
+  brave-search/SKILL.md            — web search via Brave API
+  nah/SKILL.md                     — PreToolUse permission guard
+  agent-browser-protocol/SKILL.md  — Chromium browser automation MCP
+  unf/SKILL.md                     — auto file versioning daemon
 """
 
 
@@ -235,6 +238,20 @@ class AbsorbOrchestrator:
             f"- Do NOT modify .env or config.yaml\n"
             f"- Do NOT restart the gateway\n"
             f"- If creating a new skill, put it in ~/.agenticEvolve/skills-queue/ (NOT auto-install)\n\n"
+
+            f"## Skill-Creator Standards (if creating or modifying skills):\n"
+            f"When creating SKILL.md files, follow these quality standards:\n"
+            f"- **Description**: Must include a 'Use when...' clause listing specific user phrases and contexts "
+            f"that should trigger the skill. Be slightly 'pushy' to avoid undertriggering.\n"
+            f"- **Progressive disclosure**: Keep SKILL.md under 500 lines. Put heavy docs in references/ subdirectory.\n"
+            f"- **Explain the why**: Use reasoning over rigid MUSTs. Models respond better to understanding intent.\n"
+            f"- **allowed-tools**: Use specific patterns (e.g., `Bash(npm *)`) not broad globs like `Bash(*)`. "
+            f"Omit Bash entirely if the skill only needs Read/Edit/Write.\n"
+            f"- **disable-model-invocation: true**: Add this for skills that should only run when explicitly invoked "
+            f"(install/config tools, not general-purpose skills).\n"
+            f"- **Source attribution**: End with `Source: <url>` line.\n"
+            f"- **Security**: No hardcoded secrets, no placeholder values, no destructive commands without guards.\n\n"
+
             f"After implementing, list every file you changed and what you did.\n\n"
             f"At the END, return a JSON array of changes:\n"
             f"```json\n"
