@@ -235,17 +235,35 @@ class TelegramAdapter(BasePlatformAdapter):
     # ── /evolve ──────────────────────────────────────────────────
 
     async def _handle_evolve(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Run signal scan + analysis + skill building now."""
+        """Run signal scan + analysis + skill building with live progress."""
         if not update.message:
             return
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        await update.message.reply_text("Evolving... scanning signals and building skills. This may take a few minutes.")
-        await update.message.chat.send_action("typing")
+        status_msg = await update.message.reply_text("Evolving... scanning signals and building skills.\n\nProgress updates will appear below.")
 
         chat_id = str(update.message.chat_id)
-        user_id = str(update.message.from_user.id)
+        progress_lines = []
+        progress_lock = asyncio.Lock()
+
+        async def send_progress(text: str):
+            """Send progress as a new message (batched)."""
+            progress_lines.append(text)
+            # Send every 3 tool calls to avoid Telegram rate limits
+            if len(progress_lines) % 3 == 0:
+                batch = "\n".join(progress_lines[-3:])
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=int(chat_id), text=batch, parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    log.warning(f"Progress send failed: {e}")
+
+        # Wrapper to bridge sync callback to async
+        loop = asyncio.get_running_loop()
+        def on_progress_sync(text: str):
+            asyncio.run_coroutine_threadsafe(send_progress(text), loop)
 
         evolve_prompt = (
             "You are running an evolution cycle for agenticEvolve. Do the following:\n\n"
@@ -270,16 +288,54 @@ class TelegramAdapter(BasePlatformAdapter):
             "   - Any errors encountered"
         )
 
+        model = "sonnet"
+        if self._gateway:
+            model = self._gateway.config.get("model", "sonnet")
+
         try:
-            response = await self.on_message("telegram", chat_id, user_id, evolve_prompt)
-            if response:
-                for i in range(0, len(response), 4000):
-                    await update.message.reply_text(response[i:i+4000])
-            else:
-                await update.message.reply_text("Evolution cycle completed but returned no output.")
+            from ..agent import invoke_claude_streaming
+
+            # Run streaming invocation in executor
+            result = await loop.run_in_executor(
+                None,
+                lambda: invoke_claude_streaming(
+                    evolve_prompt,
+                    on_progress=on_progress_sync,
+                    model=model,
+                    session_context="[Evolve cycle]"
+                )
+            )
+
+            # Send any remaining progress
+            remaining = len(progress_lines) % 3
+            if remaining > 0:
+                batch = "\n".join(progress_lines[-remaining:])
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=int(chat_id), text=batch, parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+
+            response = result.get("text", "No output.")
+            cost = result.get("cost", 0)
+
+            # Send final result
+            summary = f"*Evolution complete* (${cost:.2f})\n\n{response}"
+            for i in range(0, len(summary), 4000):
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=summary[i:i+4000], parse_mode="Markdown"
+                )
+
+            # Log cost
+            if cost > 0 and self._gateway:
+                self._gateway._log_cost("telegram", "evolve", cost)
+
         except Exception as e:
             log.error(f"Evolve error: {e}")
-            await update.message.reply_text(f"Evolution failed: {e}")
+            await self.app.bot.send_message(
+                chat_id=int(chat_id), text=f"Evolution failed: {e}"
+            )
 
     # ── /loop — create recurring cron job ────────────────────────
 

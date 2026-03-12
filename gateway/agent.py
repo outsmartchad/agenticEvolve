@@ -215,6 +215,135 @@ def invoke_claude(message: str, model: str = "sonnet",
     return {"text": "Failed after retries.", "cost": 0, "success": False}
 
 
+def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
+                            cwd: str = None, session_context: str = "") -> dict:
+    """
+    Invoke Claude Code with real-time progress reporting via on_progress callback.
+
+    on_progress(update_text: str) is called whenever Claude uses a tool or
+    produces intermediate output. Used for long-running tasks like /evolve.
+
+    Returns dict with keys: text, cost, success
+    """
+    system_prompt = build_system_prompt()
+
+    prompt_parts = []
+    if session_context:
+        prompt_parts.append(session_context)
+    prompt_parts.append(f"# Current message:\n\n{message}")
+    full_prompt = "\n\n---\n\n".join(prompt_parts)
+
+    cmd = [
+        "claude", "-p", full_prompt,
+        "--model", model,
+        "--output-format", "stream-json",
+        "--verbose",
+        "--dangerously-skip-permissions",
+    ]
+    if system_prompt:
+        cmd.extend(["--append-system-prompt", system_prompt])
+
+    env = os.environ.copy()
+    work_dir = cwd or str(Path.home())
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=work_dir,
+            env=env,
+        )
+
+        text_parts = []
+        cost = 0
+        tool_count = 0
+        last_progress_tool = ""
+
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                msg_type = obj.get("type", "")
+
+                # Tool use — report what Claude is doing
+                if msg_type == "assistant":
+                    content = obj.get("message", {}).get("content", [])
+                    for block in content:
+                        if block.get("type") == "tool_use":
+                            tool_name = block.get("name", "unknown")
+                            tool_input = block.get("input", {})
+                            tool_count += 1
+
+                            # Build a human-readable progress line
+                            if tool_name == "Bash":
+                                cmd_preview = tool_input.get("command", "")[:80]
+                                progress = f"[{tool_count}] Running: `{cmd_preview}`"
+                            elif tool_name == "Read":
+                                file_path = tool_input.get("filePath", "")
+                                progress = f"[{tool_count}] Reading: `{file_path}`"
+                            elif tool_name == "Write":
+                                file_path = tool_input.get("filePath", "")
+                                progress = f"[{tool_count}] Writing: `{file_path}`"
+                            elif tool_name == "Edit":
+                                file_path = tool_input.get("filePath", "")
+                                progress = f"[{tool_count}] Editing: `{file_path}`"
+                            elif tool_name == "Glob":
+                                pattern = tool_input.get("pattern", "")
+                                progress = f"[{tool_count}] Searching: `{pattern}`"
+                            elif tool_name == "Grep":
+                                pattern = tool_input.get("pattern", "")
+                                progress = f"[{tool_count}] Grepping: `{pattern}`"
+                            elif tool_name == "WebFetch":
+                                url = tool_input.get("url", "")[:60]
+                                progress = f"[{tool_count}] Fetching: `{url}`"
+                            elif tool_name == "Task":
+                                desc = tool_input.get("description", "")[:60]
+                                progress = f"[{tool_count}] Subagent: {desc}"
+                            else:
+                                progress = f"[{tool_count}] {tool_name}"
+
+                            # Avoid sending duplicate progress for same tool
+                            if progress != last_progress_tool:
+                                last_progress_tool = progress
+                                try:
+                                    on_progress(progress)
+                                except Exception as e:
+                                    log.warning(f"Progress callback error: {e}")
+
+                        elif block.get("type") == "text":
+                            text_parts.append(block["text"])
+
+                elif msg_type == "result":
+                    result_text = obj.get("result", "")
+                    if result_text:
+                        text_parts.append(result_text)
+                    cost = obj.get("total_cost_usd", 0)
+
+            except json.JSONDecodeError:
+                continue
+
+        proc.wait(timeout=30)
+
+        if not text_parts:
+            return {"text": "Claude ran but produced no text output.", "cost": cost, "success": False}
+
+        final_text = text_parts[-1]
+        return {"text": final_text, "cost": cost, "success": True}
+
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return {"text": "Request timed out.", "cost": 0, "success": False}
+    except FileNotFoundError:
+        return {"text": "Claude CLI not found.", "cost": 0, "success": False}
+    except Exception as e:
+        log.error(f"Streaming invocation error: {e}")
+        return {"text": f"Error: {e}", "cost": 0, "success": False}
+
+
 def generate_title(message: str) -> str:
     """Generate a short session title from the first message.
 
