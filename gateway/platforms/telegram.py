@@ -1305,23 +1305,128 @@ class TelegramAdapter(BasePlatformAdapter):
         if data.startswith("absorb:"):
             target = data[7:]
             await query.edit_message_text(f"Absorbing: {target[:100]}...")
-            # Trigger absorb pipeline
-            context.args = [target]
-            fake_update = update
-            fake_update._effective_message = query.message
-            await self._handle_absorb(update, context)
+
+            is_url = target.startswith("http://") or target.startswith("https://")
+            is_github = "github.com" in target
+            target_type = "github" if is_github else ("url" if is_url else "topic")
+            model = self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet"
+
+            try:
+                from ..absorb import AbsorbOrchestrator
+
+                loop = asyncio.get_running_loop()
+                msg_buffer = []
+
+                async def send_progress(text: str):
+                    msg_buffer.append(text)
+                    if len(msg_buffer) % 3 == 0:
+                        batch = "\n".join(msg_buffer[-3:])
+                        try:
+                            await self.app.bot.send_message(chat_id=int(chat_id), text=batch)
+                        except Exception:
+                            pass
+
+                def on_progress_sync(text: str):
+                    asyncio.run_coroutine_threadsafe(send_progress(text), loop)
+
+                orchestrator = AbsorbOrchestrator(
+                    target=target,
+                    target_type=target_type,
+                    model=model,
+                    on_progress=on_progress_sync,
+                )
+
+                summary, cost = await loop.run_in_executor(
+                    None, lambda: orchestrator.run(dry_run=False)
+                )
+
+                for i in range(0, len(summary), 4000):
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=summary[i:i+4000])
+
+                # Store in learnings DB
+                try:
+                    from ..session_db import add_learning
+                    add_learning(
+                        target=target, target_type=target_type,
+                        verdict="ABSORBED",
+                        patterns="Absorbed via inline button. See full report.",
+                        operational_benefit=f"System improvements implemented. Cost: ${cost:.2f}",
+                        skill_created="", full_report=summary[:8000], cost=cost,
+                    )
+                except Exception as e:
+                    log.warning(f"Failed to store absorb learning: {e}")
+
+            except Exception as e:
+                log.error(f"Callback absorb error: {e}")
+                await self.app.bot.send_message(chat_id=int(chat_id), text=f"Absorb failed: {e}")
 
         elif data.startswith("learn:"):
             target = data[6:]
             await query.edit_message_text(f"Learning from: {target[:100]}...")
-            # Trigger learn pipeline
-            context.args = [target]
-            fake_update = update
-            fake_update._effective_message = query.message
-            await self._handle_learn(update, context)
+
+            is_url = target.startswith("http://") or target.startswith("https://")
+            is_github = "github.com" in target
+            target_type = "github" if is_github else ("url" if is_url else "topic")
+            model = self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet"
+
+            try:
+                from ..agent import invoke_claude_streaming, build_system_prompt
+
+                prompt = (
+                    f"Deep-dive this target and extract patterns our system can learn from:\n\n"
+                    f"Target: {target}\n\n"
+                    f"Focus on: what patterns can we steal, what would benefit our development workflow, "
+                    f"and whether we should ADOPT (use it) / STEAL (take patterns, skip dep) / SKIP (not useful).\n\n"
+                    f"At the END return a JSON block:\n"
+                    f'```json\n{{"verdict": "ADOPT|STEAL|SKIP", "patterns": "...", '
+                    f'"operational_benefit": "...", "skill_created": ""}}\n```'
+                )
+
+                loop = asyncio.get_running_loop()
+
+                def _run_learn():
+                    return invoke_claude_streaming(
+                        message=prompt,
+                        on_progress=lambda x: None,
+                        model=model,
+                    )
+
+                result = await loop.run_in_executor(None, _run_learn)
+
+                response = result.get("text", "No response")
+                cost = result.get("cost", 0)
+                for i in range(0, len(response), 4000):
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=response[i:i+4000])
+
+                # Store learning
+                try:
+                    from ..session_db import add_learning
+                    learning_data = {}
+                    if "```json" in response:
+                        json_start = response.index("```json")
+                        json_end = response.index("```", json_start + 7)
+                        json_str = response[json_start + 7:json_end].strip()
+                        try:
+                            learning_data = json.loads(json_str)
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+
+                    add_learning(
+                        target=target, target_type=target_type,
+                        verdict=learning_data.get("verdict", "UNKNOWN"),
+                        patterns=learning_data.get("patterns", ""),
+                        operational_benefit=learning_data.get("operational_benefit", ""),
+                        skill_created=learning_data.get("skill_created", ""),
+                        full_report=response[:8000], cost=cost,
+                    )
+                except Exception as e:
+                    log.warning(f"Failed to store learning from callback: {e}")
+
+            except Exception as e:
+                log.error(f"Callback learn error: {e}")
+                await self.app.bot.send_message(chat_id=int(chat_id), text=f"Learn failed: {e}")
 
         elif data == "chat:proceed":
-            # User chose to just chat — remove the keyboard and let it be
             await query.edit_message_text("Got it, continuing as normal chat.")
 
     # ── Photo/image handler ──────────────────────────────────────
