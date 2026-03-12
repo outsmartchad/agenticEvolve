@@ -10,6 +10,7 @@ Stages:
 Skills go to ~/.agenticEvolve/skills-queue/<name>/ and require
 human approval via /approve <name> before installing to ~/.claude/skills/.
 """
+import hashlib
 import json
 import logging
 import os
@@ -25,6 +26,13 @@ QUEUE_DIR = EXODIR / "skills-queue"
 SKILLS_DIR = Path.home() / ".claude" / "skills"
 SIGNALS_DIR = EXODIR / "signals"
 COLLECTORS_DIR = EXODIR / "collectors"
+
+# Per-stage tool allowlists — enforces least-privilege on read-only stages.
+# Stages not listed here (BUILD, COLLECT) get None → full access (--dangerously-skip-permissions).
+STAGE_TOOLS: dict[str, list[str]] = {
+    "ANALYZE": ["Read", "Bash", "Glob", "Grep"],
+    "REVIEW": ["Read", "Glob", "Grep"],
+}
 
 
 class EvolveOrchestrator:
@@ -45,16 +53,26 @@ class EvolveOrchestrator:
             pass
 
     def _invoke(self, prompt: str, stage: str) -> dict:
-        """Invoke Claude Code for a specific stage."""
+        """Invoke Claude Code for a specific stage.
+
+        Derives the stage key (text before first space or paren) and looks up
+        STAGE_TOOLS to enforce per-stage tool allowlists. Stages not in STAGE_TOOLS
+        run with full access (--dangerously-skip-permissions).
+        """
         from .agent import invoke_claude_streaming
 
         self._report(f"*Stage: {stage}*")
+
+        # Derive stage key: "REVIEW (name)" → "REVIEW", "BUILD (name)" → "BUILD"
+        stage_key = stage.split("(")[0].split()[0].upper()
+        allowed_tools = STAGE_TOOLS.get(stage_key)
 
         result = invoke_claude_streaming(
             prompt,
             on_progress=self.on_progress,
             model=self.model,
-            session_context=f"[Evolve/{stage}]"
+            session_context=f"[Evolve/{stage}]",
+            allowed_tools=allowed_tools,
         )
 
         cost = result.get("cost", 0)
@@ -257,14 +275,38 @@ class EvolveOrchestrator:
     # ── Stage 4: Review ──────────────────────────────────────────
 
     def stage_review(self, build_result: dict) -> dict:
-        """Review agent validates each built skill. READ-ONLY — does not modify."""
+        """Review agent validates each built skill. Includes security scan. READ-ONLY — does not modify."""
         built = build_result.get("built", [])
         if not built:
             return {"reviewed": []}
 
+        # Security scan all built skill files before LLM review
+        from .security import scan_file, format_telegram_report
+        blocked_names = set()
         reviewed = []
+        for skill in built:
+            sec_result = scan_file(skill["path"], label=skill["name"])
+            if sec_result.verdict == "BLOCKED":
+                self._report(f"*Security BLOCKED skill `{skill['name']}`*")
+                self._report(format_telegram_report(sec_result))
+                reject_file = Path(skill["path"]).parent / ".rejected"
+                reject_file.write_text(json.dumps({
+                    "name": skill["name"],
+                    "approved": False,
+                    "issues": [f.pattern_desc for f in sec_result.findings if f.severity == "critical"],
+                    "summary": "Blocked by security scan — potential malicious content"
+                }, indent=2))
+                reviewed.append({
+                    "name": skill["name"], "approved": False,
+                    "issues": ["SECURITY: " + f.pattern_desc for f in sec_result.findings if f.severity == "critical"],
+                    "summary": "Blocked by automated security scan",
+                    "skill_path": skill["path"],
+                })
+                blocked_names.add(skill["name"])
 
         for skill in built:
+            if skill["name"] in blocked_names:
+                continue
             name = skill["name"]
             path = skill["path"]
 
@@ -464,6 +506,13 @@ def approve_skill(name: str) -> tuple[bool, str]:
             continue  # skip .rejected marker
         shutil.copy2(str(f), str(install_dir / f.name))
 
+    # Write SHA256 hash of SKILL.md for integrity verification
+    skill_md = install_dir / "SKILL.md"
+    if skill_md.exists():
+        digest = hashlib.sha256(skill_md.read_bytes()).hexdigest()
+        (install_dir / ".hash").write_text(digest)
+        log.info(f"Wrote integrity hash for {name}: {digest[:12]}...")
+
     # Clean up queue
     shutil.rmtree(str(QUEUE_DIR / name))
 
@@ -495,8 +544,44 @@ def reject_skill(name: str, reason: str = "") -> tuple[bool, str]:
     return True, f"Skill `{name}` rejected and removed." + (f" Reason: {reason}" if reason else "")
 
 
+def verify_skill_hashes() -> list[str]:
+    """Check installed skills for hash integrity.
+
+    For each skill in ~/.claude/skills/ with a SKILL.md, compares its current
+    SHA256 against the stored .hash file written at approval time.
+
+    Returns list of skill names where hash is missing or mismatched.
+    Skills installed before this feature was added will appear as 'unverified'
+    (not quarantined — conservative default).
+    """
+    tampered: list[str] = []
+    if not SKILLS_DIR.exists():
+        return tampered
+
+    for skill_dir in sorted(SKILLS_DIR.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        hash_file = skill_dir / ".hash"
+        if not skill_md.exists():
+            continue
+        if not hash_file.exists():
+            tampered.append(skill_dir.name)
+            continue
+        expected = hash_file.read_text().strip()
+        actual = hashlib.sha256(skill_md.read_bytes()).hexdigest()
+        if actual != expected:
+            log.warning(f"Hash mismatch for skill {skill_dir.name}: expected {expected[:12]}... got {actual[:12]}...")
+            tampered.append(skill_dir.name)
+
+    return tampered
+
+
 def list_queue() -> list[dict]:
-    """List skills in the queue with their review status."""
+    """List skills in the queue with their review status.
+
+    Also surfaces any installed skill hash mismatches as a warning entry.
+    """
     if not QUEUE_DIR.exists():
         return []
 
@@ -522,6 +607,17 @@ def list_queue() -> list[dict]:
             "status": status,
             "review": review,
             "path": str(skill_file),
+        })
+
+    # Surface installed skill hash mismatches as a warning
+    tampered = verify_skill_hashes()
+    if tampered:
+        items.append({
+            "name": "__integrity_warning__",
+            "status": "warning",
+            "review": {},
+            "path": "",
+            "tampered_skills": tampered,
         })
 
     return items

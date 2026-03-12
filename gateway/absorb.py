@@ -98,6 +98,21 @@ class AbsorbOrchestrator:
         self._cost_total += cost
         return result
 
+    # ── Security scan ────────────────────────────────────────────
+
+    def _security_scan(self):
+        """Scan cloned repo at /tmp/absorb-scan/ for security threats."""
+        from .security import scan_directory, format_telegram_report
+
+        scan_path = Path("/tmp/absorb-scan")
+        if not scan_path.exists():
+            return None
+
+        self._report("*Security scan: scanning cloned repo for threats...*")
+        result = scan_directory(scan_path, label=self.target)
+        self._report(format_telegram_report(result))
+        return result
+
     # ── Stage 1: SCAN ────────────────────────────────────────────
 
     def stage_scan(self) -> dict:
@@ -377,6 +392,14 @@ class AbsorbOrchestrator:
 
         # Stage 1: Deep scan
         scan_result = self.stage_scan()
+
+        # Stage 1.5: Security scan (before any code execution or implementation)
+        security_result = self._security_scan()
+        if security_result and security_result.verdict == "BLOCKED":
+            from .security import format_telegram_report
+            report = format_telegram_report(security_result)
+            self._report(report)
+            return report, self._cost_total
 
         # Stage 2: Gap analysis against our system
         gap_result = self.stage_gap(scan_result)

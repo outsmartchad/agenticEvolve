@@ -748,13 +748,23 @@ class TelegramAdapter(BasePlatformAdapter):
             f"```\n\n"
         )
 
+        # Security scan for GitHub repos: clone first, scan, then proceed
+        if is_github:
+            self._report_sync = on_progress_sync
+            security_blocked = await self._security_prescan_github(target, chat_id, loop)
+            if security_blocked:
+                return
+
         if is_github:
             learn_prompt = (
                 system_context +
                 f"Deep-dive this GitHub repo: {target}\n\n"
-                f"1. Clone the repo to a temp directory (or use WebFetch/gh to read it)\n"
+                f"The repo has been pre-cloned to /tmp/learn-scan/ and passed security scan.\n"
+                f"1. Read the repo from /tmp/learn-scan/\n"
                 f"2. Read the README, key source files, and architecture\n"
                 f"3. Understand how it works — focus on the interesting engineering, not surface features\n\n"
+                f"SECURITY: Do NOT run any install scripts, build commands, or execute code from this repo. "
+                f"READ ONLY. Do not run npm install, pip install, make, or any setup scripts.\n\n"
                 + analysis_instructions +
                 f"Return: patterns extracted, operational verdict, and any skill/memory updates made."
             )
@@ -1271,6 +1281,50 @@ class TelegramAdapter(BasePlatformAdapter):
         """Extract meaningful URLs from text (not just any link)."""
         return self._URL_RE.findall(text)
 
+    async def _security_prescan_github(self, target: str, chat_id: str, loop) -> bool:
+        """Clone a GitHub repo and run security scan. Returns True if blocked."""
+        import subprocess as sp
+        from ..security import scan_directory, format_telegram_report
+
+        scan_path = Path("/tmp/learn-scan")
+
+        # Clone
+        try:
+            sp.run(["rm", "-rf", str(scan_path)], capture_output=True, timeout=10)
+            proc = sp.run(
+                ["git", "clone", "--depth", "1", target, str(scan_path)],
+                capture_output=True, text=True, timeout=120
+            )
+            if proc.returncode != 0:
+                # Clone failed — let claude -p handle it
+                return False
+        except Exception:
+            return False
+
+        # Security scan
+        result = scan_directory(scan_path, label=target)
+        report = format_telegram_report(result)
+
+        if result.verdict == "BLOCKED":
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id),
+                    text=report + "\n\n/learn aborted for safety.",
+                )
+            except Exception:
+                pass
+            # Clean up
+            sp.run(["rm", "-rf", str(scan_path)], capture_output=True, timeout=10)
+            return True
+
+        if result.verdict == "WARNING":
+            try:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=report)
+            except Exception:
+                pass
+
+        return False
+
     async def _offer_absorb_learn(self, update: Update, target: str, target_type: str = "link"):
         """Show inline keyboard asking user if they want to absorb/learn a target."""
         keyboard = InlineKeyboardMarkup([
@@ -1369,12 +1423,27 @@ class TelegramAdapter(BasePlatformAdapter):
             target_type = "github" if is_github else ("url" if is_url else "topic")
             model = self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet"
 
+            # Security prescan for GitHub repos
+            if is_github:
+                security_blocked = await self._security_prescan_github(target, chat_id, asyncio.get_running_loop())
+                if security_blocked:
+                    return
+
             try:
                 from ..agent import invoke_claude_streaming, build_system_prompt
+
+                clone_note = ""
+                if is_github:
+                    clone_note = (
+                        f"The repo has been pre-cloned to /tmp/learn-scan/ and passed security scan.\n"
+                        f"Read from /tmp/learn-scan/ instead of cloning again.\n"
+                        f"SECURITY: Do NOT run install scripts, build commands, or execute any code from this repo.\n\n"
+                    )
 
                 prompt = (
                     f"Deep-dive this target and extract patterns our system can learn from:\n\n"
                     f"Target: {target}\n\n"
+                    f"{clone_note}"
                     f"Focus on: what patterns can we steal, what would benefit our development workflow, "
                     f"and whether we should ADOPT (use it) / STEAL (take patterns, skip dep) / SKIP (not useful).\n\n"
                     f"At the END return a JSON block:\n"
