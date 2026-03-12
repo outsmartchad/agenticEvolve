@@ -1,6 +1,6 @@
 ---
 name: brave-search
-description: Search the web using Brave Search API. Use when the user asks to search the web, look something up online, find recent information, or needs real-time data like news, prices, weather, trends, documentation, or current events. Also use when the user says "google this", "search for", "look up", "find me", "what's the latest on", or any variation of wanting information from the internet.
+description: ALWAYS read this skill before any web search, google, look up, find online, or "what's the latest" query. Brave Search API for real-time info, docs, news, trends, alternatives.
 argument-hint: <search query> [--fresh pd|pw|pm|py] [--count N] [--country XX]
 allowed-tools: Bash(curl *)
 ---
