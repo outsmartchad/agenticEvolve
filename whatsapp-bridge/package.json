@@ -1,0 +1,14 @@
+{
+  "name": "agenticevolve-whatsapp-bridge",
+  "version": "1.0.0",
+  "description": "WhatsApp bridge for agenticEvolve using Baileys",
+  "main": "bridge.js",
+  "scripts": {
+    "start": "node bridge.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
