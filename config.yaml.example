@@ -1,0 +1,34 @@
+# agenticEvolve v2 configuration
+# Secrets (tokens) go in .env, not here.
+
+model: sonnet
+
+# Cost limits (USD)
+daily_cost_cap: 5.0
+weekly_cost_cap: 25.0
+
+# Session reset after N minutes of inactivity
+session_idle_minutes: 120
+
+# Platform configuration
+# Enable a platform by setting its token in .env
+platforms:
+  telegram:
+    enabled: false
+    # token: set TELEGRAM_BOT_TOKEN in .env
+    allowed_users: []      # empty = allow all (not recommended)
+    home_channel: ""       # set TELEGRAM_CHAT_ID in .env for cron delivery
+
+  discord:
+    enabled: false
+    # token: set DISCORD_BOT_TOKEN in .env
+    allowed_users: []
+    home_channel: ""       # set DISCORD_HOME_CHANNEL in .env
+
+  whatsapp:
+    enabled: false
+    allowed_users: []      # phone numbers, e.g. ["85212345678@s.whatsapp.net"]
+
+# Cron scheduler
+cron:
+  enabled: true

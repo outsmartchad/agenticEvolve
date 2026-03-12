@@ -10,9 +10,21 @@ archive/
 !skills-queue/.gitkeep
 !archive/.gitkeep
 
+# v2 runtime data
+memory/sessions.db
+memory/sessions.db-wal
+memory/sessions.db-shm
+cron/output/
+gateway.pid
+
+# WhatsApp bridge runtime
+whatsapp-bridge/node_modules/
+whatsapp-bridge/auth/
+
 # OS
 .DS_Store
 
 # Secrets (never commit)
 .env
 *.key
+config.yaml
