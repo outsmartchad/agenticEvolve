@@ -82,11 +82,14 @@ class TelegramAdapter(BasePlatformAdapter):
             "*Memory*\n"
             "/memory — Show bounded memory\n\n"
             "*Evolution*\n"
-            "/evolve — Run signal scan + skill building now\n\n"
-            "*Cron*\n"
-            "/loop `<interval>` `<prompt>` — Create recurring job\n"
+            "/evolve — Scan signals + build skills now\n\n"
+            "*Scheduling*\n"
+            "/loop `<interval>` `<prompt>` — Recurring job\n"
             "/loops — List active loops\n"
-            "/unloop `<id>` — Cancel a loop\n\n"
+            "/unloop `<id>` — Cancel a loop\n"
+            "/notify `<delay>` `<msg>` — One-shot reminder\n\n"
+            "*Health*\n"
+            "/heartbeat — Check if bot is alive\n\n"
             "Or just send any message to chat with Claude.",
             parse_mode="Markdown"
         )
@@ -414,6 +417,106 @@ class TelegramAdapter(BasePlatformAdapter):
         CRON_JOBS_FILE.write_text(json.dumps(new_jobs, indent=2))
         await update.message.reply_text(f"Loop `{job_id}` removed.", parse_mode="Markdown")
 
+    # ── /heartbeat — check if bot is alive ─────────────────────
+
+    async def _handle_heartbeat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        import time
+        uptime = "unknown"
+        if self._gateway and hasattr(self._gateway, '_start_time'):
+            elapsed = time.time() - self._gateway._start_time
+            hours, rem = divmod(int(elapsed), 3600)
+            minutes, seconds = divmod(rem, 60)
+            uptime = f"{hours}h {minutes}m {seconds}s"
+
+        pid = os.getpid()
+        from ..agent import get_today_cost
+        cost = get_today_cost()
+
+        await update.message.reply_text(
+            f"*Heartbeat*\n\n"
+            f"Status: alive\n"
+            f"PID: {pid}\n"
+            f"Uptime: {uptime}\n"
+            f"Cost today: ${cost:.2f}",
+            parse_mode="Markdown"
+        )
+
+    # ── /notify — send a reminder to yourself later ──────────────
+
+    async def _handle_notify(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Schedule a one-shot reminder. Usage: /notify <delay> <message>"""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        args = " ".join(context.args) if context.args else ""
+        if not args:
+            await update.message.reply_text(
+                "*Usage:* `/notify <delay> <message>`\n\n"
+                "*Examples:*\n"
+                "`/notify 30m check deployment status`\n"
+                "`/notify 2h review PR feedback`\n"
+                "`/notify 1d renew API key`",
+                parse_mode="Markdown"
+            )
+            return
+
+        parts = args.split(None, 1)
+        if len(parts) < 2:
+            return await update.message.reply_text("Need delay and message. Example: `/notify 30m check the build`", parse_mode="Markdown")
+
+        delay_str, message = parts[0], parts[1].strip()
+        match = re.fullmatch(r"(\d+)(m|h|d)", delay_str.lower())
+        if not match:
+            return await update.message.reply_text(f"Invalid delay `{delay_str}`. Use `30m`, `2h`, `1d`.", parse_mode="Markdown")
+
+        value, unit = int(match.group(1)), match.group(2)
+        multipliers = {"m": 60, "h": 3600, "d": 86400}
+        delay_seconds = value * multipliers[unit]
+
+        CRON_DIR.mkdir(parents=True, exist_ok=True)
+        jobs = []
+        if CRON_JOBS_FILE.exists():
+            try:
+                jobs = json.loads(CRON_JOBS_FILE.read_text())
+            except Exception:
+                jobs = []
+
+        job_id = uuid.uuid4().hex[:8]
+        chat_id = str(update.message.chat_id)
+        now = datetime.now(timezone.utc)
+        run_at = now + timedelta(seconds=delay_seconds)
+
+        job = {
+            "id": job_id,
+            "prompt": f"Send this reminder to the user: {message}",
+            "schedule_type": "once",
+            "interval_seconds": 0,
+            "deliver_to": "telegram",
+            "deliver_chat_id": chat_id,
+            "created_at": now.isoformat(),
+            "next_run_at": run_at.isoformat(),
+            "run_count": 0,
+            "paused": False,
+            "last_run_at": None,
+        }
+        jobs.append(job)
+        CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+
+        unit_names = {"m": "minutes", "h": "hours", "d": "days"}
+        await update.message.reply_text(
+            f"Reminder set: `{job_id}`\n"
+            f"In {value} {unit_names[unit]}: {message}\n"
+            f"Will fire at: {run_at.strftime('%H:%M UTC')}",
+            parse_mode="Markdown"
+        )
+
     # ── Regular messages ─────────────────────────────────────────
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -459,6 +562,8 @@ class TelegramAdapter(BasePlatformAdapter):
             "loop": self._handle_loop,
             "loops": self._handle_loops,
             "unloop": self._handle_unloop,
+            "heartbeat": self._handle_heartbeat,
+            "notify": self._handle_notify,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -474,14 +579,18 @@ class TelegramAdapter(BasePlatformAdapter):
         try:
             await self.app.bot.set_my_commands([
                 BotCommand("help", "Show available commands"),
+                BotCommand("evolve", "Scan signals + build skills"),
                 BotCommand("status", "System status"),
-                BotCommand("evolve", "Run signal scan + skill building"),
+                BotCommand("heartbeat", "Check if bot is alive"),
                 BotCommand("memory", "Show bounded memory"),
                 BotCommand("sessions", "Recent sessions"),
                 BotCommand("newsession", "Start new session"),
                 BotCommand("cost", "Today's cost"),
                 BotCommand("model", "Current model"),
+                BotCommand("loop", "Create recurring job"),
                 BotCommand("loops", "List active loops"),
+                BotCommand("unloop", "Cancel a loop"),
+                BotCommand("notify", "Set a reminder"),
             ])
         except Exception as e:
             log.warning(f"Failed to set bot commands: {e}")

@@ -49,6 +49,7 @@ class GatewayRunner:
         self._session_msg_count: dict[str, int] = {}  # session_key -> message count (for title)
         self._locks: dict[str, asyncio.Lock] = {}  # session_key -> lock
         self._shutdown_event = asyncio.Event()
+        self._start_time = 0.0
         self._session_cleanup_task: Optional[asyncio.Task] = None
         self._cron_task: Optional[asyncio.Task] = None
 
@@ -365,6 +366,8 @@ class GatewayRunner:
         log.info(f"Gateway running: {', '.join(started)}")
 
         PID_FILE.write_text(str(os.getpid()))
+        import time
+        self._start_time = time.time()
 
         # Start background tasks
         self._session_cleanup_task = asyncio.create_task(self._session_cleanup_loop())
