@@ -86,6 +86,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "/evolve — Scan signals + build skills now\n"
             "/evolve `--dry-run` — Preview what would be built\n"
             "/absorb `<target>` — Deep scan + implement improvements\n"
+            "/absorb `--dry-run <target>` — Preview gaps only\n"
             "/learn `<target>` — Deep-dive + extract patterns (read-only)\n"
             "/learnings — View past findings (or search)\n\n"
             "*Skills Queue*\n"
@@ -830,17 +831,29 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        target = " ".join(context.args) if context.args else ""
+        # Parse --dry-run flag from args
+        dry_run = False
+        raw_args = list(context.args) if context.args else []
+        for flag in ("--dry-run", "dry-run", "dry", "preview"):
+            if flag in raw_args:
+                dry_run = True
+                raw_args.remove(flag)
+                break
+
+        target = " ".join(raw_args)
         if not target:
             await update.message.reply_text(
                 "*Usage:* `/absorb <repo-url or tech/architecture>`\n\n"
+                "*Options:*\n"
+                "`/absorb --dry-run <target>` — scan + gap analysis only\n\n"
                 "*Examples:*\n"
                 "`/absorb https://github.com/NousResearch/hermes-agent`\n"
                 "`/absorb persistent memory protocol for ai agents`\n"
-                "`/absorb https://github.com/langchain-ai/langgraph`\n"
+                "`/absorb --dry-run https://github.com/langchain-ai/langgraph`\n"
                 "`/absorb bounded context window management`\n\n"
                 "This will deep scan the target, compare against our system, "
-                "identify gaps, and *actually implement improvements*.",
+                "identify gaps, and *actually implement improvements*.\n"
+                "Use `--dry-run` to preview gaps without implementing.",
                 parse_mode="Markdown"
             )
             return
@@ -849,13 +862,21 @@ class TelegramAdapter(BasePlatformAdapter):
         is_github = "github.com" in target
         target_type = "github" if is_github else ("url" if is_url else "topic")
 
-        await update.message.reply_text(
-            f"*Absorbing:* `{target}`\n\n"
-            f"Stages: SCAN → GAP → PLAN → IMPLEMENT → REPORT\n\n"
-            f"This will analyze the target, find what our system is missing, "
-            f"and implement improvements. Progress below.",
-            parse_mode="Markdown"
-        )
+        if dry_run:
+            await update.message.reply_text(
+                f"*Absorb dry run:* `{target}`\n\n"
+                f"Stages: SCAN → GAP (then stop)\n"
+                f"Will show gaps without implementing changes.",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"*Absorbing:* `{target}`\n\n"
+                f"Stages: SCAN → GAP → PLAN → IMPLEMENT → REPORT\n\n"
+                f"This will analyze the target, find what our system is missing, "
+                f"and implement improvements. Progress below.",
+                parse_mode="Markdown"
+            )
 
         chat_id = str(update.message.chat_id)
         loop = asyncio.get_running_loop()
@@ -888,7 +909,9 @@ class TelegramAdapter(BasePlatformAdapter):
                 on_progress=on_progress_sync,
             )
 
-            summary, cost = await loop.run_in_executor(None, orchestrator.run)
+            summary, cost = await loop.run_in_executor(
+                None, lambda: orchestrator.run(dry_run=dry_run)
+            )
 
             # Flush remaining progress
             remaining = len(msg_buffer) % 3
@@ -1016,7 +1039,17 @@ class TelegramAdapter(BasePlatformAdapter):
         chat_id = str(update.message.chat_id)
         text = update.message.text
 
-        await update.message.chat.send_action("typing")
+        # Keep typing indicator alive while Claude processes
+        typing_active = True
+        async def keep_typing():
+            while typing_active:
+                try:
+                    await update.message.chat.send_action("typing")
+                except Exception:
+                    pass
+                await asyncio.sleep(4)
+
+        typing_task = asyncio.create_task(keep_typing())
 
         try:
             response = await self.on_message("telegram", chat_id, str(user_id), text)
@@ -1026,6 +1059,9 @@ class TelegramAdapter(BasePlatformAdapter):
         except Exception as e:
             log.error(f"Telegram handler error: {e}")
             await update.message.reply_text(f"Error: {e}")
+        finally:
+            typing_active = False
+            typing_task.cancel()
 
     # ── Lifecycle ────────────────────────────────────────────────
 

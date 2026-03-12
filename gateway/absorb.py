@@ -297,10 +297,65 @@ class AbsorbOrchestrator:
 
     # ── Full pipeline ────────────────────────────────────────────
 
-    def run(self) -> tuple[str, float]:
-        """Run the full absorb pipeline. Returns (summary, total_cost)."""
-        self._report(f"*Absorbing: {self.target}*")
-        self._report("Stages: SCAN → GAP → PLAN → IMPLEMENT → REPORT")
+    def _dry_run_report(self, scan_result: dict, gap_result: dict) -> str:
+        """Report for dry run — shows gaps found without planning/implementing."""
+        lines = [f"*Absorb dry run: {self.target}*\n"]
+
+        # Parse gaps
+        gap_text = gap_result.get("text", "")
+        gaps = []
+        try:
+            json_start = gap_text.rfind("```json")
+            json_end = gap_text.rfind("```", json_start + 7) if json_start >= 0 else -1
+            if json_start >= 0 and json_end > json_start:
+                gaps = json.loads(gap_text[json_start + 7:json_end].strip())
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        if gaps:
+            high = [g for g in gaps if g.get("priority") == "high"]
+            medium = [g for g in gaps if g.get("priority") == "medium"]
+            low = [g for g in gaps if g.get("priority") == "low"]
+
+            if high:
+                lines.append(f"*High priority gaps ({len(high)}):*")
+                for g in high:
+                    lines.append(f"  {g.get('gap', '?')}")
+                    if g.get('why'):
+                        lines.append(f"    ↳ {g['why']}")
+                    if g.get('files_affected'):
+                        lines.append(f"    Files: {', '.join(g['files_affected'])}")
+                lines.append("")
+
+            if medium:
+                lines.append(f"*Medium priority gaps ({len(medium)}):*")
+                for g in medium:
+                    lines.append(f"  {g.get('gap', '?')}")
+                    if g.get('why'):
+                        lines.append(f"    ↳ {g['why']}")
+                lines.append("")
+
+            if low:
+                lines.append(f"*Low priority gaps ({len(low)}):*")
+                for g in low:
+                    lines.append(f"  {g.get('gap', '?')}")
+                lines.append("")
+        else:
+            lines.append("No gaps identified. Our system may already cover this well.")
+            lines.append("")
+
+        lines.append(f"*Cost so far:* ${self._cost_total:.2f}")
+        lines.append(f"\nRun `/absorb {self.target}` to execute PLAN → IMPLEMENT.")
+        return "\n".join(lines)
+
+    def run(self, dry_run: bool = False) -> tuple[str, float]:
+        """Run the absorb pipeline. If dry_run, stops after GAP analysis."""
+        mode = "DRY RUN" if dry_run else "full"
+        self._report(f"*Absorbing ({mode}): {self.target}*")
+        if dry_run:
+            self._report("Stages: SCAN → GAP (then stop)")
+        else:
+            self._report("Stages: SCAN → GAP → PLAN → IMPLEMENT → REPORT")
         self._cost_total = 0.0
 
         # Stage 1: Deep scan
@@ -308,6 +363,11 @@ class AbsorbOrchestrator:
 
         # Stage 2: Gap analysis against our system
         gap_result = self.stage_gap(scan_result)
+
+        if dry_run:
+            summary = self._dry_run_report(scan_result, gap_result)
+            self._report("*Dry run complete. Run `/absorb` without --dry-run to implement.*")
+            return summary, self._cost_total
 
         # Stage 3: Concrete plan
         plan_result = self.stage_plan(gap_result)
