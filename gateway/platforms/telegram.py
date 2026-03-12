@@ -85,7 +85,8 @@ class TelegramAdapter(BasePlatformAdapter):
             "*Evolution*\n"
             "/evolve — Scan signals + build skills now\n"
             "/evolve `--dry-run` — Preview what would be built\n"
-            "/learn `<repo-url or tech>` — Deep-dive a repo or tech\n"
+            "/absorb `<target>` — Deep scan + implement improvements\n"
+            "/learn `<target>` — Deep-dive + extract patterns (read-only)\n"
             "/learnings — View past findings (or search)\n\n"
             "*Skills Queue*\n"
             "/queue — Skills pending approval\n"
@@ -820,6 +821,113 @@ class TelegramAdapter(BasePlatformAdapter):
             log.error(f"Learn error: {e}")
             await self.app.bot.send_message(chat_id=int(chat_id), text=f"Learn failed: {e}")
 
+    # ── /absorb — deep scan + implement improvements ───────────
+
+    async def _handle_absorb(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Deep scan a target, analyze gaps in our system, and implement improvements."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        target = " ".join(context.args) if context.args else ""
+        if not target:
+            await update.message.reply_text(
+                "*Usage:* `/absorb <repo-url or tech/architecture>`\n\n"
+                "*Examples:*\n"
+                "`/absorb https://github.com/NousResearch/hermes-agent`\n"
+                "`/absorb persistent memory protocol for ai agents`\n"
+                "`/absorb https://github.com/langchain-ai/langgraph`\n"
+                "`/absorb bounded context window management`\n\n"
+                "This will deep scan the target, compare against our system, "
+                "identify gaps, and *actually implement improvements*.",
+                parse_mode="Markdown"
+            )
+            return
+
+        is_url = target.startswith("http://") or target.startswith("https://")
+        is_github = "github.com" in target
+        target_type = "github" if is_github else ("url" if is_url else "topic")
+
+        await update.message.reply_text(
+            f"*Absorbing:* `{target}`\n\n"
+            f"Stages: SCAN → GAP → PLAN → IMPLEMENT → REPORT\n\n"
+            f"This will analyze the target, find what our system is missing, "
+            f"and implement improvements. Progress below.",
+            parse_mode="Markdown"
+        )
+
+        chat_id = str(update.message.chat_id)
+        loop = asyncio.get_running_loop()
+
+        # Progress bridge
+        msg_buffer = []
+        async def send_progress(text: str):
+            msg_buffer.append(text)
+            if len(msg_buffer) % 3 == 0:
+                batch = "\n".join(msg_buffer[-3:])
+                try:
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=batch, parse_mode="Markdown")
+                except Exception:
+                    pass
+
+        def on_progress_sync(text: str):
+            asyncio.run_coroutine_threadsafe(send_progress(text), loop)
+
+        model = "sonnet"
+        if self._gateway:
+            model = self._gateway.config.get("model", "sonnet")
+
+        try:
+            from ..absorb import AbsorbOrchestrator
+
+            orchestrator = AbsorbOrchestrator(
+                target=target,
+                target_type=target_type,
+                model=model,
+                on_progress=on_progress_sync,
+            )
+
+            summary, cost = await loop.run_in_executor(None, orchestrator.run)
+
+            # Flush remaining progress
+            remaining = len(msg_buffer) % 3
+            if remaining > 0:
+                batch = "\n".join(msg_buffer[-remaining:])
+                try:
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=batch, parse_mode="Markdown")
+                except Exception:
+                    pass
+
+            # Send final summary
+            for i in range(0, len(summary), 4000):
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=summary[i:i+4000], parse_mode="Markdown"
+                )
+
+            if cost > 0 and self._gateway:
+                self._gateway._log_cost("telegram", "absorb", cost)
+
+            # Store in learnings DB
+            try:
+                from ..session_db import add_learning
+                add_learning(
+                    target=target,
+                    target_type=target_type,
+                    verdict="ABSORBED",
+                    patterns=f"Absorbed via 5-stage pipeline. See full report.",
+                    operational_benefit=f"System improvements implemented. Cost: ${cost:.2f}",
+                    skill_created="",
+                    full_report=summary[:8000],
+                    cost=cost,
+                )
+            except Exception as e:
+                log.warning(f"[absorb] Failed to store learning: {e}")
+
+        except Exception as e:
+            log.error(f"Absorb error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"Absorb failed: {e}")
+
     # ── /learnings — view past learnings ────────────────────────
 
     async def _handle_learnings(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -948,6 +1056,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "reject": self._handle_reject,
             "learn": self._handle_learn,
             "gc": self._handle_gc,
+            "absorb": self._handle_absorb,
             "learnings": self._handle_learnings,
         }
         for cmd, handler in commands.items():
@@ -965,6 +1074,7 @@ class TelegramAdapter(BasePlatformAdapter):
             await self.app.bot.set_my_commands([
                 BotCommand("help", "Show available commands"),
                 BotCommand("evolve", "Scan signals + build skills"),
+                BotCommand("absorb", "Deep scan + implement improvements"),
                 BotCommand("learn", "Deep-dive a repo or tech"),
                 BotCommand("status", "System status"),
                 BotCommand("heartbeat", "Check if bot is alive"),
