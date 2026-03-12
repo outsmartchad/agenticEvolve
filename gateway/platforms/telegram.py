@@ -1327,7 +1327,7 @@ class TelegramAdapter(BasePlatformAdapter):
     # ── Photo/image handler ──────────────────────────────────────
 
     async def _handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle photos sent to the bot."""
+        """Handle photos sent to the bot — download and pass to Claude."""
         if not update.message:
             return
         if not self._is_allowed(update.message.from_user.id):
@@ -1341,11 +1341,67 @@ class TelegramAdapter(BasePlatformAdapter):
             await self._offer_absorb_learn(update, urls[0], "link in image caption")
             return
 
-        # Otherwise just acknowledge — we can't process images directly via claude -p
-        await update.message.reply_text(
-            "I received your image but I can't process images directly through the gateway yet.\n\n"
-            "If you have a URL to share, send it as text and I'll offer to absorb or learn from it."
+        # Download the photo (get highest resolution)
+        photo = update.message.photo[-1]  # largest size
+        img_dir = EXODIR / "tmp" / "images"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        img_path = img_dir / f"{timestamp}_{photo.file_id[:8]}.jpg"
+
+        try:
+            file = await context.bot.get_file(photo.file_id)
+            await file.download_to_drive(str(img_path))
+            log.info(f"Photo saved: {img_path}")
+        except Exception as e:
+            log.error(f"Failed to download photo: {e}")
+            await update.message.reply_text(f"Failed to download image: {e}")
+            return
+
+        # Build prompt for Claude with the image path
+        chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+        prompt = (
+            f"The user sent an image saved at: {img_path}\n"
+            f"Read this image file and analyze it.\n"
         )
+        if caption:
+            prompt += f"Caption: {caption}\n"
+        prompt += (
+            "\nDescribe what you see. If it's a screenshot of a tool, library, repo, "
+            "or technical content, extract the key info (name, URL, purpose). "
+            "If it contains code, transcribe and explain it."
+        )
+
+        # Keep typing indicator alive
+        typing_active = True
+        async def keep_typing():
+            while typing_active:
+                try:
+                    await update.message.chat.send_action("typing")
+                except Exception:
+                    pass
+                await asyncio.sleep(4)
+
+        typing_task = asyncio.create_task(keep_typing())
+
+        try:
+            response = await self.on_message("telegram", chat_id, user_id, prompt)
+            if response:
+                # Check if response mentions a URL or tool — offer absorb/learn
+                resp_urls = self._extract_urls(response)
+                if resp_urls:
+                    for i in range(0, len(response), 4000):
+                        await update.message.reply_text(response[i:i+4000])
+                    await self._offer_absorb_learn(update, resp_urls[0], "tool/repo detected in image")
+                else:
+                    for i in range(0, len(response), 4000):
+                        await update.message.reply_text(response[i:i+4000])
+        except Exception as e:
+            log.error(f"Photo processing error: {e}")
+            await update.message.reply_text(f"Error processing image: {e}")
+        finally:
+            typing_active = False
+            typing_task.cancel()
 
     # ── Regular text messages ────────────────────────────────────
 
