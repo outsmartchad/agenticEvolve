@@ -84,6 +84,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "/memory — Show bounded memory\n\n"
             "*Evolution*\n"
             "/evolve — Scan signals + build skills now\n"
+            "/evolve `--dry-run` — Preview what would be built\n"
             "/learn `<repo-url or tech>` — Deep-dive a repo or tech\n\n"
             "*Skills Queue*\n"
             "/queue — Skills pending approval\n"
@@ -248,13 +249,25 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
+        dry_run = False
+        if context.args and context.args[0].lower() in ("--dry-run", "dry-run", "dry", "preview"):
+            dry_run = True
+
         chat_id = str(update.message.chat_id)
-        await update.message.reply_text(
-            "*Starting evolution pipeline...*\n\n"
-            "Stages: COLLECT → ANALYZE → BUILD → REVIEW → REPORT\n"
-            "Progress updates will appear below.",
-            parse_mode="Markdown"
-        )
+        if dry_run:
+            await update.message.reply_text(
+                "*Evolution dry run*\n\n"
+                "Stages: COLLECT → ANALYZE (then stop)\n"
+                "Will show what would be built without actually building.",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                "*Starting evolution pipeline...*\n\n"
+                "Stages: COLLECT → ANALYZE → BUILD → REVIEW → REPORT\n"
+                "Progress updates will appear below.",
+                parse_mode="Markdown"
+            )
 
         loop = asyncio.get_running_loop()
 
@@ -283,8 +296,10 @@ class TelegramAdapter(BasePlatformAdapter):
 
             orchestrator = EvolveOrchestrator(model=model, on_progress=on_progress_sync)
 
-            # Run full pipeline in executor
-            summary, cost = await loop.run_in_executor(None, orchestrator.run)
+            # Run pipeline in executor
+            summary, cost = await loop.run_in_executor(
+                None, lambda: orchestrator.run(dry_run=dry_run)
+            )
 
             # Send remaining buffered progress
             remaining = len(msg_buffer) % 3

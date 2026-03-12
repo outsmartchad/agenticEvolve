@@ -327,9 +327,10 @@ class EvolveOrchestrator:
 
     # ── Full pipeline ────────────────────────────────────────────
 
-    def run(self) -> tuple[str, float]:
-        """Run the full evolve pipeline. Returns (summary, total_cost)."""
-        self._report("*Starting evolution cycle...*")
+    def run(self, dry_run: bool = False) -> tuple[str, float]:
+        """Run the evolve pipeline. If dry_run=True, stops after ANALYZE and shows what would happen."""
+        mode = "DRY RUN" if dry_run else "full"
+        self._report(f"*Starting evolution cycle ({mode})...*")
         self._cost_total = 0.0
 
         # Stage 1
@@ -337,6 +338,11 @@ class EvolveOrchestrator:
 
         # Stage 2
         analyze_result = self.stage_analyze(collect_result)
+
+        if dry_run:
+            summary = self._dry_run_report(collect_result, analyze_result)
+            self._report("*Dry run complete. Run `/evolve` to execute.*")
+            return summary, self._cost_total
 
         # Stage 3
         build_result = self.stage_build(analyze_result)
@@ -350,6 +356,48 @@ class EvolveOrchestrator:
 
         self._report("*Pipeline complete.*")
         return summary, self._cost_total
+
+    def _dry_run_report(self, collect_result: dict, analyze_result: dict) -> str:
+        """Report for dry run — shows what WOULD happen without building/reviewing."""
+        lines = ["*Evolution dry run — preview only*\n"]
+
+        # Collect stats
+        collectors = collect_result.get("collectors", {})
+        for name, info in collectors.items():
+            status = "ok" if info.get("success") else "failed"
+            lines.append(f"  {name}: {status}")
+        lines.append(f"  Total signals: {collect_result.get('signal_count', 0)}")
+        lines.append("")
+
+        # Candidates that would be built
+        candidates = analyze_result.get("candidates", [])
+        if candidates:
+            lines.append(f"*Would build {min(len(candidates), 3)} skill(s):*")
+            for c in candidates[:3]:
+                name = c.get("name", "?")
+                score = c.get("score", "?")
+                summary = c.get("summary", "")
+                url = c.get("url", "")
+                lines.append(f"  *{name}* (score {score})")
+                lines.append(f"    {summary}")
+                if url:
+                    lines.append(f"    {url}")
+                skill_idea = c.get("skill_idea", "")
+                if skill_idea:
+                    lines.append(f"    Skill: {skill_idea}")
+                lines.append("")
+
+            skipped = len(candidates) - 3
+            if skipped > 0:
+                lines.append(f"  ({skipped} more candidates below threshold)")
+                lines.append("")
+        else:
+            lines.append("No candidates scored >= 7.0. Nothing would be built.")
+            lines.append("")
+
+        lines.append(f"Cost so far: ${self._cost_total:.2f}")
+        lines.append(f"\nRun `/evolve` to execute BUILD → REVIEW → REPORT.")
+        return "\n".join(lines)
 
 
 def approve_skill(name: str) -> tuple[bool, str]:
