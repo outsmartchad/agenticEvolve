@@ -1,165 +1,321 @@
 #!/bin/bash
-# ae — agenticEvolve CLI
+# ae — agenticEvolve CLI (v2)
 # Single entrypoint for humans and agents.
 set -euo pipefail
 
 EXODIR="$HOME/.agenticEvolve"
-source "$EXODIR/config.sh"
+
+# Load v1 config if it exists (backward compat)
+[ -f "$EXODIR/config.sh" ] && source "$EXODIR/config.sh" || true
 
 CMD="${1:-help}"
 shift 2>/dev/null || true
 
 case "$CMD" in
 
-    # --- Setup ---
-    init)
-        echo "Running agenticEvolve initializer..."
-        claude -p "$(cat $EXODIR/prompts/initialize.md)" \
-            --model sonnet \
-            --dangerously-skip-permissions
-        ;;
+    # ── v2: Gateway ─────────────────────────────────────────────
 
-    # --- Core loop ---
-    cycle)
-        bash "$EXODIR/run-cycle.sh"
-        ;;
-
-    # --- Status ---
-    status)
-        echo "=== agenticEvolve status ==="
-        echo ""
-
-        # Last cycle
-        LAST_LOG=$(ls -t "$LOGS"/2*.log 2>/dev/null | head -1 || true)
-        if [ -n "$LAST_LOG" ]; then
-            echo "Last cycle: $(basename "$LAST_LOG" .log)"
-            LAST_LINE=$(tail -1 "$LAST_LOG" 2>/dev/null || echo "unknown")
-            echo "Result: $LAST_LINE"
-        else
-            echo "Last cycle: never run"
-        fi
-        echo ""
-
-        # Action items
-        PENDING=$(grep -c '^\- \[ \]' "$MEMORY/action-items.md" 2>/dev/null) || PENDING=0
-        DONE=$(grep -c '^\- \[x\]' "$MEMORY/action-items.md" 2>/dev/null) || DONE=0
-        echo "Action items: $PENDING pending, $DONE completed"
-
-        # Skills queue
-        QUEUED=$(ls "$QUEUE/" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-        echo "Skills in queue: $QUEUED"
-
-        # Cost
-        TODAY_DATE=$(date +%Y-%m-%d)
-        TODAY_COST=$(grep "$TODAY_DATE" "$LOGS/cost.log" 2>/dev/null | awk '{sum+=$3} END{printf "%.2f", sum+0}') || TODAY_COST="0.00"
-        [ -s "$LOGS/cost.log" ] && TOTAL_COST=$(tail -1 "$LOGS/cost.log" | awk '{printf "%.2f", $4+0}') || TOTAL_COST="0.00"
-        echo "Cost today: \$$TODAY_COST / \$$DAILY_CAP"
-        echo "Cost total: \$$TOTAL_COST"
-        echo ""
-
-        # Signals today
-        TODAY_SIGNALS=$(ls "$SIGNALS/$TODAY_DATE/" 2>/dev/null | wc -l | tr -d ' ') || TODAY_SIGNALS=0
-        echo "Signal files today: $TODAY_SIGNALS"
-        ;;
-
-    # --- Review ---
-    review)
-        FOUND=0
-        for skill_dir in "$QUEUE"/*/; do
-            [ -d "$skill_dir" ] || continue
-            FOUND=1
-            name=$(basename "$skill_dir")
-            echo "━━━ $name ━━━"
-            cat "$skill_dir/SKILL.md" 2>/dev/null || echo "(no SKILL.md)"
-            echo ""
-            read -p "[a]pprove / [r]eject / [s]kip? " choice </dev/tty
-            case "$choice" in
-                a|approve)
-                    mkdir -p "$SKILLS/$name"
-                    mv "$skill_dir"* "$SKILLS/$name/" 2>/dev/null
-                    rmdir "$skill_dir" 2>/dev/null || true
-                    echo "## $(date -Iseconds) — Approved: $name" >> "$MEMORY/log.md"
-                    echo "---" >> "$MEMORY/log.md"
-                    echo "✅ Approved: $name → ~/.claude/skills/$name/"
-                    ;;
-                r|reject)
-                    read -p "Reason (optional): " reason </dev/tty
-                    echo "## $(date -Iseconds) — Rejected: $name — ${reason:-no reason}" >> "$MEMORY/log.md"
-                    echo "---" >> "$MEMORY/log.md"
-                    rm -rf "$skill_dir"
-                    echo "❌ Rejected: $name"
-                    ;;
-                *)
-                    echo "Skipped"
-                    ;;
-            esac
-            echo ""
-        done
-        [ "$FOUND" -eq 0 ] && echo "Queue is empty."
-        ;;
-
-    approve)
-        SKILL="${1:?Usage: ae approve <skill-name>}"
-        if [ -d "$QUEUE/$SKILL" ]; then
-            mkdir -p "$SKILLS/$SKILL"
-            mv "$QUEUE/$SKILL/"* "$SKILLS/$SKILL/"
-            rmdir "$QUEUE/$SKILL" 2>/dev/null || true
-            echo "## $(date -Iseconds) — Approved: $SKILL" >> "$MEMORY/log.md"
-            echo "---" >> "$MEMORY/log.md"
-            echo "✅ Approved: $SKILL → ~/.claude/skills/$SKILL/"
-        else
-            echo "Not found: $QUEUE/$SKILL"
-            exit 1
-        fi
-        ;;
-
-    reject)
-        SKILL="${1:?Usage: ae reject <skill-name>}"
-        REASON="${3:-no reason given}"
-        # Handle --reason flag
-        if [ "${2:-}" = "--reason" ]; then
-            REASON="${3:-no reason given}"
-        fi
-        if [ -d "$QUEUE/$SKILL" ]; then
-            echo "## $(date -Iseconds) — Rejected: $SKILL — $REASON" >> "$MEMORY/log.md"
-            echo "---" >> "$MEMORY/log.md"
-            rm -rf "$QUEUE/$SKILL"
-            echo "❌ Rejected: $SKILL ($REASON)"
-        else
-            echo "Not found: $QUEUE/$SKILL"
-            exit 1
-        fi
-        ;;
-
-    # --- Watchlist ---
-    watchlist)
-        SUB="${1:-show}"
+    gateway)
+        SUB="${1:-start}"
+        shift 2>/dev/null || true
         case "$SUB" in
-            show)
-                cat "$MEMORY/watchlist.md"
+            start)
+                echo "Starting agenticEvolve gateway..."
+                python3 -m gateway.run
                 ;;
-            add)
-                TYPE="${2:?Usage: ae watchlist add <type> <value>}"
-                VALUE="${3:?Usage: ae watchlist add <type> <value>}"
-                echo "- $VALUE" >> "$MEMORY/watchlist.md"
-                echo "Added to watchlist: $VALUE"
-                ;;
-            rm)
-                VALUE="${3:?Usage: ae watchlist rm <type> <value>}"
-                if [[ "$OSTYPE" == "darwin"* ]]; then
-                    sed -i '' "/$VALUE/d" "$MEMORY/watchlist.md"
+            stop)
+                if [ -f "$EXODIR/gateway.pid" ]; then
+                    PID=$(cat "$EXODIR/gateway.pid")
+                    if kill -0 "$PID" 2>/dev/null; then
+                        kill "$PID"
+                        echo "Gateway stopped (PID $PID)"
+                    else
+                        echo "Gateway not running (stale PID $PID)"
+                        rm -f "$EXODIR/gateway.pid"
+                    fi
                 else
-                    sed -i "/$VALUE/d" "$MEMORY/watchlist.md"
+                    echo "No PID file — gateway not running"
                 fi
-                echo "Removed from watchlist: $VALUE"
+                ;;
+            status)
+                if [ -f "$EXODIR/gateway.pid" ]; then
+                    PID=$(cat "$EXODIR/gateway.pid")
+                    if kill -0 "$PID" 2>/dev/null; then
+                        echo "Gateway running (PID $PID)"
+                    else
+                        echo "Gateway not running (stale PID)"
+                        rm -f "$EXODIR/gateway.pid"
+                    fi
+                else
+                    echo "Gateway not running"
+                fi
+                ;;
+            install)
+                echo "Installing gateway as launchd service..."
+                PLIST="$HOME/Library/LaunchAgents/com.agenticevolve.gateway.plist"
+                cat > "$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agenticevolve.gateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$(which python3)</string>
+        <string>-m</string>
+        <string>gateway.run</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$EXODIR</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$EXODIR/logs/gateway-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>$EXODIR/logs/gateway-stderr.log</string>
+</dict>
+</plist>
+PLIST_EOF
+                launchctl load "$PLIST"
+                echo "Installed: $PLIST"
+                echo "Use 'launchctl unload $PLIST' to remove"
                 ;;
             *)
-                echo "Usage: ae watchlist [show|add|rm] [type] [value]"
+                echo "Usage: ae gateway [start|stop|status|install]"
                 ;;
         esac
         ;;
 
-    # --- Collectors ---
+    # ── v2: Memory ──────────────────────────────────────────────
+
+    memory)
+        SUB="${1:-show}"
+        shift 2>/dev/null || true
+        case "$SUB" in
+            show)
+                echo "=== MEMORY.md ($(wc -c < "$EXODIR/memory/MEMORY.md" | tr -d ' ')/2200 chars) ==="
+                cat "$EXODIR/memory/MEMORY.md"
+                echo ""
+                echo "=== USER.md ($(wc -c < "$EXODIR/memory/USER.md" | tr -d ' ')/1375 chars) ==="
+                cat "$EXODIR/memory/USER.md"
+                ;;
+            reset)
+                read -p "Reset all memory? This cannot be undone. [y/N] " confirm </dev/tty
+                if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+                    echo "" > "$EXODIR/memory/MEMORY.md"
+                    echo "" > "$EXODIR/memory/USER.md"
+                    echo "Memory cleared."
+                else
+                    echo "Cancelled."
+                fi
+                ;;
+            *)
+                echo "Usage: ae memory [show|reset]"
+                ;;
+        esac
+        ;;
+
+    # ── v2: Sessions ────────────────────────────────────────────
+
+    sessions)
+        SUB="${1:-list}"
+        shift 2>/dev/null || true
+        case "$SUB" in
+            list)
+                python3 -c "
+import sys; sys.path.insert(0, '$EXODIR')
+from gateway.session_db import list_sessions
+rows = list_sessions(limit=20)
+if not rows:
+    print('No sessions.')
+else:
+    for r in rows:
+        msgs = r.get('message_count', 0)
+        src = r.get('source', '?')
+        ts = r.get('started_at', '?')[:19]
+        sid = r.get('id', '?')
+        print(f'  {ts}  {src:10s}  {msgs:3d} msgs  {sid}')
+"
+                ;;
+            search)
+                QUERY="${1:?Usage: ae sessions search <query>}"
+                python3 -c "
+import sys, json; sys.path.insert(0, '$EXODIR')
+from gateway.session_db import search_sessions
+results = search_sessions('$QUERY', limit=5)
+if not results:
+    print('No results.')
+else:
+    for r in results:
+        print(f'--- {r[\"session_id\"]} ({r[\"source\"]}) ---')
+        for m in r.get('matches', [])[:3]:
+            role = m['role']
+            text = m['content'][:200]
+            print(f'  [{role}] {text}')
+        print()
+"
+                ;;
+            stats)
+                python3 -c "
+import sys; sys.path.insert(0, '$EXODIR')
+from gateway.session_db import stats
+s = stats()
+print(f'Sessions: {s[\"total_sessions\"]}')
+print(f'Messages: {s[\"total_messages\"]}')
+for src, cnt in s.get('sources', {}).items():
+    print(f'  {src}: {cnt}')
+print(f'DB size: {s[\"db_size_mb\"]} MB')
+"
+                ;;
+            *)
+                echo "Usage: ae sessions [list|search <query>|stats]"
+                ;;
+        esac
+        ;;
+
+    # ── v2: Config ──────────────────────────────────────────────
+
+    config)
+        SUB="${1:-show}"
+        shift 2>/dev/null || true
+        case "$SUB" in
+            show)
+                if [ -f "$EXODIR/config.yaml" ]; then
+                    cat "$EXODIR/config.yaml"
+                else
+                    echo "No config.yaml found. Run 'ae setup' first."
+                fi
+                ;;
+            edit)
+                "${EDITOR:-vim}" "$EXODIR/config.yaml"
+                ;;
+            *)
+                echo "Usage: ae config [show|edit]"
+                ;;
+        esac
+        ;;
+
+    # ── v2: Setup ───────────────────────────────────────────────
+
+    setup)
+        echo "=== agenticEvolve v2 setup ==="
+        echo ""
+
+        # Ensure directories
+        mkdir -p "$EXODIR/memory" "$EXODIR/logs" "$EXODIR/gateway/platforms"
+
+        # config.yaml
+        if [ ! -f "$EXODIR/config.yaml" ]; then
+            echo "Creating default config.yaml..."
+            # Handled by the file we already wrote
+        else
+            echo "config.yaml exists."
+        fi
+
+        # .env
+        if [ ! -f "$EXODIR/.env" ]; then
+            if [ -f "$EXODIR/.env.example" ]; then
+                cp "$EXODIR/.env.example" "$EXODIR/.env"
+                echo "Created .env from template. Edit it: $EXODIR/.env"
+            fi
+        else
+            echo ".env exists."
+        fi
+
+        # Check Claude Code
+        if command -v claude &>/dev/null; then
+            echo "Claude Code: $(claude --version 2>/dev/null || echo 'installed')"
+        else
+            echo "WARNING: Claude Code not found. Install: npm install -g @anthropic-ai/claude-code"
+        fi
+
+        # Check Python deps
+        echo ""
+        echo "Checking Python dependencies..."
+        python3 -c "import yaml; print('  pyyaml: OK')" 2>/dev/null || echo "  pyyaml: MISSING (pip install pyyaml)"
+        python3 -c "import telegram; print('  python-telegram-bot: OK')" 2>/dev/null || echo "  python-telegram-bot: MISSING (optional)"
+        python3 -c "import discord; print('  discord.py: OK')" 2>/dev/null || echo "  discord.py: MISSING (optional)"
+
+        echo ""
+        echo "Setup complete. Next steps:"
+        echo "  1. Edit $EXODIR/.env with your bot tokens"
+        echo "  2. Edit $EXODIR/config.yaml to enable platforms"
+        echo "  3. Run: ae gateway start"
+        ;;
+
+    # ── v2: Doctor ──────────────────────────────────────────────
+
+    doctor)
+        echo "=== agenticEvolve doctor ==="
+        echo ""
+
+        # Claude Code
+        if command -v claude &>/dev/null; then
+            echo "[OK] Claude Code installed"
+        else
+            echo "[!!] Claude Code not found"
+        fi
+
+        # Python
+        if command -v python3 &>/dev/null; then
+            echo "[OK] Python $(python3 --version 2>&1 | awk '{print $2}')"
+        else
+            echo "[!!] Python 3 not found"
+        fi
+
+        # Node (for WhatsApp)
+        if command -v node &>/dev/null; then
+            echo "[OK] Node.js $(node --version)"
+        else
+            echo "[--] Node.js not found (needed for WhatsApp only)"
+        fi
+
+        # Config files
+        [ -f "$EXODIR/config.yaml" ] && echo "[OK] config.yaml" || echo "[!!] config.yaml missing"
+        [ -f "$EXODIR/.env" ] && echo "[OK] .env" || echo "[--] .env missing (no platform tokens)"
+        [ -f "$EXODIR/SOUL.md" ] && echo "[OK] SOUL.md" || echo "[--] SOUL.md missing"
+
+        # Memory
+        [ -f "$EXODIR/memory/MEMORY.md" ] && echo "[OK] MEMORY.md ($(wc -c < "$EXODIR/memory/MEMORY.md" | tr -d ' ')/2200)" || echo "[!!] MEMORY.md missing"
+        [ -f "$EXODIR/memory/USER.md" ] && echo "[OK] USER.md ($(wc -c < "$EXODIR/memory/USER.md" | tr -d ' ')/1375)" || echo "[!!] USER.md missing"
+
+        # Gateway
+        if [ -f "$EXODIR/gateway.pid" ]; then
+            PID=$(cat "$EXODIR/gateway.pid")
+            kill -0 "$PID" 2>/dev/null && echo "[OK] Gateway running (PID $PID)" || echo "[--] Gateway not running (stale PID)"
+        else
+            echo "[--] Gateway not running"
+        fi
+
+        # Skills
+        SKILL_COUNT=$(ls -d "$HOME/.claude/skills"/*/SKILL.md 2>/dev/null | wc -l | tr -d ' ')
+        echo "[OK] $SKILL_COUNT Claude Code skills installed"
+        ;;
+
+    # ── v1 Legacy Commands ──────────────────────────────────────
+
+    init)
+        if [ -f "$EXODIR/prompts/initialize.md" ]; then
+            echo "Running agenticEvolve initializer..."
+            claude -p "$(cat "$EXODIR/prompts/initialize.md")" \
+                --model sonnet \
+                --dangerously-skip-permissions
+        else
+            echo "v1 init prompt not found. Use 'ae setup' for v2."
+        fi
+        ;;
+
+    cycle)
+        if [ -f "$EXODIR/run-cycle.sh" ]; then
+            bash "$EXODIR/run-cycle.sh"
+        else
+            echo "v1 run-cycle.sh not found."
+        fi
+        ;;
+
     collect)
         SOURCE="${1:-all}"
         if [ "$SOURCE" = "all" ]; then
@@ -175,142 +331,104 @@ case "$CMD" in
         fi
         ;;
 
-    # --- Memory ---
-    state)
-        cat "$MEMORY/state.md"
+    status)
+        echo "=== agenticEvolve status ==="
+        echo ""
+
+        # Gateway status
+        if [ -f "$EXODIR/gateway.pid" ]; then
+            PID=$(cat "$EXODIR/gateway.pid")
+            kill -0 "$PID" 2>/dev/null && echo "Gateway: running (PID $PID)" || echo "Gateway: not running"
+        else
+            echo "Gateway: not running"
+        fi
+        echo ""
+
+        # Memory
+        if [ -f "$EXODIR/memory/MEMORY.md" ]; then
+            MEM_CHARS=$(wc -c < "$EXODIR/memory/MEMORY.md" | tr -d ' ')
+            echo "Memory: ${MEM_CHARS}/2200 chars"
+        fi
+        echo ""
+
+        # Sessions
+        python3 -c "
+import sys; sys.path.insert(0, '$EXODIR')
+try:
+    from gateway.session_db import stats
+    s = stats()
+    print(f'Sessions: {s[\"total_sessions\"]} total, {s[\"total_messages\"]} messages')
+except Exception:
+    print('Sessions: DB not initialized')
+" 2>/dev/null || echo "Sessions: unavailable"
+
+        # Cost
+        if [ -f "$EXODIR/logs/cost.log" ]; then
+            TODAY_DATE=$(date +%Y-%m-%d)
+            TODAY_COST=$(grep "$TODAY_DATE" "$EXODIR/logs/cost.log" 2>/dev/null | awk -F'\t' '{gsub(/\$/, "", $4); sum+=$4} END{printf "%.2f", sum+0}') || TODAY_COST="0.00"
+            echo "Cost today: \$$TODAY_COST"
+        fi
         ;;
 
-    log)
-        LINES="${1:-50}"
-        tail -"$LINES" "$MEMORY/log.md"
-        ;;
-
-    # --- Cost ---
     cost)
-        SUB="${1:-summary}"
-        case "$SUB" in
-            summary)
-                echo "=== Cost ==="
-                TODAY_DATE=$(date +%Y-%m-%d)
-                TODAY_COST=$(grep "$TODAY_DATE" "$LOGS/cost.log" 2>/dev/null | awk '{sum+=$3} END{printf "%.2f", sum+0}') || TODAY_COST="0.00"
-                WEEK_COST=$(grep "$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d)\|$(date +%Y-%m-%d)" "$LOGS/cost.log" 2>/dev/null | awk '{sum+=$3} END{printf "%.2f", sum+0}') || WEEK_COST="0.00"
-                [ -s "$LOGS/cost.log" ] && TOTAL=$(tail -1 "$LOGS/cost.log" | awk '{printf "%.2f", $4+0}') || TOTAL="0.00"
-                echo "Today:      \$$TODAY_COST / \$$DAILY_CAP"
-                echo "This week:  \$$WEEK_COST / \$$WEEKLY_CAP"
-                echo "All time:   \$$TOTAL"
-                ;;
-            check)
-                TODAY_DATE=$(date +%Y-%m-%d)
-                TODAY_COST=$(grep "$TODAY_DATE" "$LOGS/cost.log" 2>/dev/null | awk '{sum+=$3} END{print sum+0}') || TODAY_COST="0"
-                if awk "BEGIN{exit ($TODAY_COST >= $DAILY_CAP)}"; then
-                    exit 0  # under cap
-                else
-                    echo "Daily cap exceeded: \$$TODAY_COST >= \$$DAILY_CAP"
-                    exit 1
-                fi
-                ;;
-        esac
+        if [ -f "$EXODIR/logs/cost.log" ]; then
+            TODAY_DATE=$(date +%Y-%m-%d)
+            TODAY_COST=$(grep "$TODAY_DATE" "$EXODIR/logs/cost.log" 2>/dev/null | awk -F'\t' '{gsub(/\$/, "", $4); sum+=$4} END{printf "%.2f", sum+0}') || TODAY_COST="0.00"
+            TOTAL_LINES=$(wc -l < "$EXODIR/logs/cost.log" | tr -d ' ')
+            echo "Today: \$$TODAY_COST"
+            echo "Total entries: $TOTAL_LINES"
+            echo ""
+            echo "Last 10 entries:"
+            tail -10 "$EXODIR/logs/cost.log"
+        else
+            echo "No cost data yet."
+        fi
         ;;
 
-    # --- Queue ---
-    queue)
-        SUB="${1:-ls}"
-        case "$SUB" in
-            ls)
-                ITEMS=$(ls "$QUEUE/" 2>/dev/null)
-                if [ -z "$ITEMS" ]; then
-                    echo "Queue is empty."
-                else
-                    echo "Skills in queue:"
-                    for d in "$QUEUE"/*/; do
-                        [ -d "$d" ] && echo "  - $(basename "$d")"
-                    done
-                fi
-                ;;
-            *)
-                mkdir -p "$QUEUE/$SUB"
-                echo "Created queue entry: $SUB"
-                ;;
-        esac
-        ;;
-
-    # --- GC ---
-    gc)
-        bash "$EXODIR/run-gc.sh"
-        ;;
-
-    # --- Cron ---
-    start)
-        # Add cron jobs (idempotent)
-        EXISTING=$(crontab -l 2>/dev/null || true)
-        NEW="$EXISTING"
-        echo "$EXISTING" | grep -q "run-cycle.sh" || NEW="$NEW
-0 */2 * * * $EXODIR/run-cycle.sh >> $LOGS/cron.log 2>&1"
-        echo "$EXISTING" | grep -q "run-gc.sh" || NEW="$NEW
-0 3 * * 0 $EXODIR/run-gc.sh >> $LOGS/cron-gc.log 2>&1"
-        echo "$NEW" | crontab -
-        echo "✅ Cron jobs enabled:"
-        echo "  - Cycle: every 2 hours"
-        echo "  - GC: Sunday 3am"
-        ;;
-
-    stop)
-        crontab -l 2>/dev/null | grep -v "agenticEvolve" | crontab - 2>/dev/null || true
-        echo "🛑 Cron jobs disabled."
-        ;;
-
-    pause)
-        N="${1:-1}"
-        PAUSE_UNTIL=$(date -v+${N}H +%Y-%m-%dT%H:%M 2>/dev/null || date -d "+$N hours" +%Y-%m-%dT%H:%M)
-        echo "$PAUSE_UNTIL" > "$EXODIR/logs/.pause_until"
-        echo "⏸ Paused for $N hours (until $PAUSE_UNTIL)"
-        ;;
-
-    # --- Telegram ---
     notify)
         MSG="${1:?Usage: ae notify <message>}"
-        bash "$EXODIR/notify.sh" "$MSG"
+        if [ -f "$EXODIR/notify.sh" ]; then
+            bash "$EXODIR/notify.sh" "$MSG"
+        else
+            echo "v1 notify.sh not found. Use 'ae gateway' for v2 messaging."
+        fi
         ;;
 
-    listen)
-        bash "$EXODIR/telegram-listener.sh"
-        ;;
+    # ── Help ────────────────────────────────────────────────────
 
-    # --- Help ---
     help|*)
         cat <<'EOF'
-ae — agenticEvolve CLI
+ae — agenticEvolve CLI (v2)
 
-SETUP
-  ae init                  First-time setup (run once)
-  ae start                 Enable cron jobs (cycle + gc)
-  ae stop                  Disable cron jobs
-  ae pause [hours]         Pause for N hours
-
-CORE
-  ae cycle                 Run one full cycle
-  ae collect [source]      Run collectors (github, hackernews, x-search, or all)
-  ae gc                    Run garbage collection
-
-REVIEW
-  ae status                System status
-  ae review                Interactive skill review
-  ae approve <skill>       Approve a queued skill
-  ae reject <skill>        Reject a queued skill
-  ae queue [ls|name]       List or create queue entries
+GATEWAY
+  ae gateway [start]     Start the messaging gateway
+  ae gateway stop        Stop the gateway
+  ae gateway status      Check if gateway is running
+  ae gateway install     Install as launchd service
 
 MEMORY
-  ae state                 Show curated learnings
-  ae log [N]               Tail last N lines of log (default 50)
-  ae watchlist             Show watchlist
-  ae watchlist add <t> <v> Add to watchlist
-  ae watchlist rm <t> <v>  Remove from watchlist
-  ae cost                  Cost breakdown
-  ae cost check            Check if daily cap reached
+  ae memory              Show bounded memory state
+  ae memory reset        Clear all memory
 
-TELEGRAM
-  ae notify <msg>          Send Telegram message
-  ae listen                Start Telegram callback listener
+SESSIONS
+  ae sessions list       Browse past sessions
+  ae sessions search Q   FTS5 search across conversations
+  ae sessions stats      Session statistics
+
+CONFIG
+  ae config              Show config.yaml
+  ae config edit         Open config.yaml in editor
+  ae setup               First-time setup wizard
+  ae doctor              Diagnose issues
+
+STATUS & COST
+  ae status              System status overview
+  ae cost                Cost breakdown
+
+LEGACY (v1)
+  ae cycle               Run one v1 signal cycle
+  ae collect [source]    Run collectors
+  ae notify <msg>        Send Telegram notification (v1)
 EOF
         ;;
 esac
