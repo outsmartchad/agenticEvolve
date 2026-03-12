@@ -664,62 +664,66 @@ class TelegramAdapter(BasePlatformAdapter):
         is_url = target.startswith("http://") or target.startswith("https://")
         is_github = "github.com" in target
 
+        # Common context about our system for the learn agent
+        system_context = (
+            f"You are the LEARN agent for agenticEvolve — Vincent's personal closed-loop agent system.\n\n"
+            f"Our system: Python asyncio gateway → Claude Code (claude -p) → Telegram. "
+            f"Bounded memory (MEMORY.md/USER.md), SQLite+FTS5 sessions, agent-managed cron, "
+            f"skills in ~/.claude/skills/, safety-gated skill queue.\n\n"
+            f"Vincent builds AI agents, onchain infrastructure, and developer tools. "
+            f"Stack: TypeScript/React frontends, Python for infra/agents.\n\n"
+        )
+
+        # The core of /learn: extract patterns, evaluate operational benefit
+        analysis_instructions = (
+            f"EXTRACT PATTERNS:\n"
+            f"- What design patterns, architectural decisions, or techniques does this use?\n"
+            f"- What can we steal and apply to our own system — even if we don't use this tool directly?\n"
+            f"- Are there code patterns that would improve our gateway, memory system, cron, or agent invocation?\n\n"
+            f"EVALUATE OPERATIONAL BENEFIT:\n"
+            f"- Does this solve a real problem we have right now? Be specific.\n"
+            f"- Would adopting this speed up our development workflow or make our agent system more capable?\n"
+            f"- What's the cost/effort vs benefit? Is it worth the integration work?\n"
+            f"- Verdict: ADOPT (use it) / STEAL (take patterns, skip the dep) / SKIP (not useful for us)\n\n"
+            f"IF VERDICT IS ADOPT OR STEAL:\n"
+            f"- Create a skill in ~/.agenticEvolve/skills-queue/<name>/SKILL.md with concrete instructions\n"
+            f"- Include a Source: <url> line at the bottom of the SKILL.md\n"
+            f"- The skill goes to queue for review, NOT auto-installed\n\n"
+            f"MEMORY UPDATE:\n"
+            f"- Add a concise entry about what we learned to ~/.agenticEvolve/memory/MEMORY.md\n"
+            f"- Focus on the extractable pattern, not a description of the tool\n"
+            f"- Use § as separator, respect the 2200 char limit\n\n"
+        )
+
         if is_github:
             learn_prompt = (
-                f"You are the LEARN agent for agenticEvolve.\n\n"
+                system_context +
                 f"Deep-dive this GitHub repo: {target}\n\n"
-                f"Do the following:\n"
                 f"1. Clone the repo to a temp directory (or use WebFetch/gh to read it)\n"
                 f"2. Read the README, key source files, and architecture\n"
-                f"3. Understand what it does, how it works, and what problems it solves\n\n"
-                f"Then analyze for Vincent (@outsmartchad) who builds AI agents, onchain infrastructure, and developer tools:\n\n"
-                f"4. HOW WE BENEFIT:\n"
-                f"   - What specific problems does this solve for us?\n"
-                f"   - Can we integrate it into our existing projects?\n"
-                f"   - What patterns/techniques can we steal even if we don't use the library directly?\n\n"
-                f"5. ARCHITECTURE ANALYSIS:\n"
-                f"   - Key design patterns used\n"
-                f"   - How it compares to alternatives\n"
-                f"   - Strengths and weaknesses\n\n"
-                f"6. SKILL RECOMMENDATION:\n"
-                f"   - Should we build a Claude Code skill for this? (yes/no with reasoning)\n"
-                f"   - If yes, create the skill in ~/.agenticEvolve/skills-queue/<name>/SKILL.md\n"
-                f"   - The skill goes to queue for review, NOT auto-installed\n\n"
-                f"7. MEMORY UPDATE:\n"
-                f"   - Add a concise entry about this tool to ~/.agenticEvolve/memory/MEMORY.md\n"
-                f"   - Use § as separator, respect the 2200 char limit\n\n"
-                f"Return a structured analysis report."
+                f"3. Understand how it works — focus on the interesting engineering, not surface features\n\n"
+                + analysis_instructions +
+                f"Return: patterns extracted, operational verdict, and any skill/memory updates made."
             )
         elif is_url:
             learn_prompt = (
-                f"You are the LEARN agent for agenticEvolve.\n\n"
+                system_context +
                 f"Research this URL: {target}\n\n"
                 f"1. Fetch the page content using WebFetch\n"
-                f"2. Understand what technology/tool/library it describes\n"
-                f"3. Research further if needed (search for docs, GitHub repo, examples)\n\n"
-                f"Then analyze for Vincent who builds AI agents, onchain infrastructure, and developer tools:\n\n"
-                f"4. HOW WE BENEFIT: What problems does this solve? Can we use it?\n"
-                f"5. PRACTICAL EXAMPLES: Show how we'd actually use this in our workflow\n"
-                f"6. SKILL RECOMMENDATION: Should we build a Claude Code skill? If yes, create in ~/.agenticEvolve/skills-queue/<name>/SKILL.md\n"
-                f"7. MEMORY UPDATE: Add entry to ~/.agenticEvolve/memory/MEMORY.md (§ separator, 2200 char limit)\n\n"
-                f"Return a structured analysis report."
+                f"2. Find the source repo if it exists\n"
+                f"3. Understand the core idea and how it's implemented\n\n"
+                + analysis_instructions +
+                f"Return: patterns extracted, operational verdict, and any skill/memory updates made."
             )
         else:
             learn_prompt = (
-                f"You are the LEARN agent for agenticEvolve.\n\n"
+                system_context +
                 f"Research this technology/concept: {target}\n\n"
-                f"1. Search the web for the latest information about '{target}'\n"
-                f"2. Find the official repo, docs, and key resources\n"
-                f"3. Understand what it is, how it works, and the ecosystem around it\n\n"
-                f"Then analyze for Vincent who builds AI agents, onchain infrastructure, and developer tools:\n\n"
-                f"4. HOW WE BENEFIT:\n"
-                f"   - What specific problems does this solve for us?\n"
-                f"   - How does it compare to what we currently use?\n"
-                f"   - Is it mature enough to adopt?\n\n"
-                f"5. QUICK START: The fastest way to try it out (3-5 commands)\n"
-                f"6. SKILL RECOMMENDATION: Should we build a Claude Code skill? If yes, create in ~/.agenticEvolve/skills-queue/<name>/SKILL.md\n"
-                f"7. MEMORY UPDATE: Add entry to ~/.agenticEvolve/memory/MEMORY.md (§ separator, 2200 char limit)\n\n"
-                f"Return a structured analysis report."
+                f"1. Search the web for '{target}' — find the repo, docs, key resources\n"
+                f"2. Understand how it works and what problem it solves\n"
+                f"3. Look at the source code if available — the patterns matter more than the docs\n\n"
+                + analysis_instructions +
+                f"Return: patterns extracted, operational verdict, and any skill/memory updates made."
             )
 
         model = "sonnet"
