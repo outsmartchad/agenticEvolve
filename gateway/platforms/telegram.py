@@ -94,6 +94,9 @@ class TelegramAdapter(BasePlatformAdapter):
             "/loops — List active loops\n"
             "/unloop `<id>` — Cancel a loop\n"
             "/notify `<delay>` `<msg>` — One-shot reminder\n\n"
+            "*Maintenance*\n"
+            "/gc — Garbage collection + health check\n"
+            "/gc `dry` — Preview without deleting\n\n"
             "Or just send any message to chat with Claude.",
             parse_mode="Markdown"
         )
@@ -760,6 +763,39 @@ class TelegramAdapter(BasePlatformAdapter):
             log.error(f"Learn error: {e}")
             await self.app.bot.send_message(chat_id=int(chat_id), text=f"Learn failed: {e}")
 
+    # ── /gc — garbage collection ────────────────────────────────
+
+    async def _handle_gc(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Run garbage collection — clean stale sessions, orphan skills, check memory health."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        dry_run = False
+        if context.args and context.args[0].lower() in ("dry", "dry-run", "preview"):
+            dry_run = True
+
+        mode = "preview" if dry_run else "cleanup"
+        await update.message.reply_text(f"Running GC ({mode})...", parse_mode="Markdown")
+
+        chat_id = str(update.message.chat_id)
+        loop = asyncio.get_running_loop()
+
+        try:
+            from ..gc import run_gc, format_gc_report
+
+            report = await loop.run_in_executor(None, lambda: run_gc(dry_run=dry_run))
+            text = format_gc_report(report)
+
+            for i in range(0, len(text), 4000):
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=text[i:i+4000], parse_mode="Markdown"
+                )
+        except Exception as e:
+            log.error(f"GC error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"GC failed: {e}")
+
     # ── Regular messages ─────────────────────────────────────────
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -811,6 +847,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "approve": self._handle_approve,
             "reject": self._handle_reject,
             "learn": self._handle_learn,
+            "gc": self._handle_gc,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -842,6 +879,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("queue", "Skills pending approval"),
                 BotCommand("approve", "Install a queued skill"),
                 BotCommand("reject", "Remove a queued skill"),
+                BotCommand("gc", "Garbage collection + health check"),
             ])
         except Exception as e:
             log.warning(f"Failed to set bot commands: {e}")
