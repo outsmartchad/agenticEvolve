@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import load_config, config_changed, reload_config
-from .agent import invoke_claude, get_today_cost, generate_title
+from .agent import invoke_claude, get_today_cost, generate_title, consolidate_session
 from .session_db import (
     create_session, generate_session_id, add_message,
     end_session, list_sessions, get_session_messages, set_title
@@ -217,6 +217,9 @@ class GatewayRunner:
                     if sid:
                         end_session(sid)
                         log.info(f"Cleaned up idle session: {sid}")
+                        # Fire silent consolidation in background thread
+                        loop = asyncio.get_running_loop()
+                        loop.run_in_executor(None, consolidate_session, sid)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -473,6 +476,7 @@ class GatewayRunner:
 
         for key, sid in self._active_sessions.items():
             end_session(sid)
+            consolidate_session(sid)
         self._active_sessions.clear()
 
         if PID_FILE.exists():

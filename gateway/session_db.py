@@ -240,8 +240,19 @@ def end_session(session_id: str, handoff_note: str = ""):
         snapshot_session(session_id, handoff_note=handoff_note)
 
 
-def search_sessions(query: str, limit: int = 5) -> list[dict]:
-    """FTS5 search across all messages. Returns matching sessions with context."""
+def search_sessions(query: str, limit: int = 5,
+                    time_decay_days: int = 30) -> list[dict]:
+    """FTS5 search across all messages with time-decay weighting.
+
+    Recent sessions are ranked higher. The decay weight halves every
+    ``time_decay_days`` days, so a session from today scores 1.0 and one
+    from 30 days ago scores ~0.5.
+
+    Args:
+        query: FTS5 query string.
+        limit: Maximum number of unique sessions to return.
+        time_decay_days: Half-life in days for recency weighting.
+    """
     conn = _connect()
     rows = conn.execute("""
         SELECT m.session_id, m.role, m.content, m.timestamp,
@@ -253,28 +264,55 @@ def search_sessions(query: str, limit: int = 5) -> list[dict]:
         WHERE messages_fts MATCH ?
         ORDER BY rank
         LIMIT ?
-    """, (query, limit * 3)).fetchall()  # over-fetch then dedupe by session
+    """, (query, limit * 5)).fetchall()  # over-fetch — will re-rank after decay
     conn.close()
 
-    # Group by session, take top N unique sessions
-    seen = {}
+    import math
+    now = datetime.now(timezone.utc)
+
+    # Group by session, apply time-decay to FTS rank
+    seen: dict[str, dict] = {}
     for row in rows:
         sid = row["session_id"]
+
+        # Parse session age and compute decay multiplier
+        try:
+            started = datetime.fromisoformat(row["started_at"])
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            days_ago = max(0.0, (now - started).total_seconds() / 86400)
+        except (ValueError, TypeError):
+            days_ago = time_decay_days  # treat unparseable as old
+
+        # Decay: score * 2^(-days_ago / half_life) — higher is better
+        # FTS5 rank is negative (lower = better match), so negate before applying decay
+        decay = math.pow(2.0, -days_ago / time_decay_days)
+        fts_score = -(row["rank"] or 0)  # negate so higher = better
+        decayed_score = fts_score * decay
+
         if sid not in seen:
             seen[sid] = {
                 "session_id": sid,
                 "source": row["source"],
                 "title": row["title"],
                 "started_at": row["started_at"],
-                "matches": []
+                "score": decayed_score,
+                "matches": [],
             }
+        else:
+            seen[sid]["score"] = max(seen[sid]["score"], decayed_score)
+
         seen[sid]["matches"].append({
             "role": row["role"],
             "content": row["content"][:500],
-            "timestamp": row["timestamp"]
+            "timestamp": row["timestamp"],
         })
 
-    results = list(seen.values())[:limit]
+    # Sort by decayed score descending, take top N
+    results = sorted(seen.values(), key=lambda x: x["score"], reverse=True)[:limit]
+    # Remove internal score key before returning
+    for r in results:
+        r.pop("score", None)
     return results
 
 
@@ -525,6 +563,82 @@ def get_promotable_instincts(min_conf: float = 0.8,
             results.append(d)
 
     return results
+
+
+def score_and_route_observation(pattern: str, context: str = "",
+                                project_id: str = "") -> str:
+    """Score an observation by importance and route to the right store.
+
+    Importance scale:
+      5 — critical cross-project insight → upsert instinct + promote to MEMORY.md
+      4 — strong single-project insight  → upsert instinct with high delta
+      3 — useful pattern                 → upsert instinct with standard delta
+      2 — weak/tentative signal          → upsert instinct with low delta
+      1 — noise                          → discard
+
+    Scoring heuristics (keyword-based, no LLM required):
+      - High-signal words → score 4-5
+      - Standard patterns → score 3
+      - Short/vague → score 2
+      - Single-word or filler → score 1
+
+    Args:
+        pattern: Observed behaviour pattern text.
+        context: Optional context label (stage, tool, session type).
+        project_id: Hash of git remote for project-scoped tracking.
+
+    Returns:
+        Routing decision: 'memory', 'instinct', 'instinct_weak', or 'discard'.
+    """
+    if not pattern or len(pattern.strip()) < 10:
+        return "discard"
+
+    text = pattern.lower()
+
+    # High-signal keywords → score 4+
+    high_signal = [
+        "always", "never", "critical", "required", "must", "regression",
+        "root cause", "workaround", "breaking", "security", "performance",
+        "cross-project", "universal", "pattern",
+    ]
+    # Standard keywords → score 3
+    standard_signal = [
+        "prefer", "avoid", "when", "instead", "better", "useful",
+        "workflow", "convention", "format", "output",
+    ]
+
+    score = 2  # default: weak
+    if len(pattern.strip()) < 20:
+        score = 1
+    elif any(k in text for k in high_signal):
+        score = 4 + (1 if sum(1 for k in high_signal if k in text) >= 3 else 0)
+    elif any(k in text for k in standard_signal):
+        score = 3
+
+    if score <= 1:
+        return "discard"
+    elif score == 2:
+        upsert_instinct(pattern, context=context, project_id=project_id,
+                        confidence_delta=0.02)
+        return "instinct_weak"
+    elif score == 3:
+        upsert_instinct(pattern, context=context, project_id=project_id,
+                        confidence_delta=0.05)
+        return "instinct"
+    else:  # 4 or 5
+        upsert_instinct(pattern, context=context, project_id=project_id,
+                        confidence_delta=0.1)
+        # Append high-importance observations to MEMORY.md
+        mem_path = Path.home() / ".agenticEvolve" / "memory" / "MEMORY.md"
+        if mem_path.exists():
+            existing = mem_path.read_text()
+            marker = "<!-- auto-instincts -->"
+            entry = f"\n§\n{pattern}"
+            if marker in existing:
+                mem_path.write_text(existing.replace(marker, entry + "\n" + marker))
+            else:
+                mem_path.write_text(existing + entry)
+        return "memory"
 
 
 def mark_instinct_promoted(instinct_id: int, promoted_to: str) -> None:

@@ -476,6 +476,87 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         return {"text": f"Error: {e}", "cost": 0, "success": False}
 
 
+def consolidate_session(session_id: str, project_id: str = "") -> int:
+    """Silent end-of-session consolidation pass.
+
+    Fires a Haiku call to extract key patterns from the session and routes
+    each through score_and_route_observation(). No output is returned to the
+    user — this runs silently after the session ends.
+
+    Args:
+        session_id: Session to consolidate.
+        project_id: Hash of git remote for project-scoped instinct tracking.
+
+    Returns:
+        Number of observations routed (0 on any failure).
+    """
+    try:
+        from .session_db import get_session_messages, score_and_route_observation
+
+        msgs = get_session_messages(session_id)
+        if len(msgs) < 4:
+            return 0
+
+        # Build a compact transcript (last 20 messages, 1500 chars each)
+        transcript_lines = []
+        for m in msgs[-20:]:
+            role = m.get("role", "")
+            content = (m.get("content") or "")[:1500]
+            transcript_lines.append(f"[{role}]: {content}")
+        transcript = "\n\n".join(transcript_lines)
+
+        extract_prompt = (
+            "You are a silent memory extractor. Read this session transcript and "
+            "extract 3-7 concrete, reusable behaviour patterns, preferences, or "
+            "lessons learned. Each pattern must be actionable and ≥15 words. "
+            "Output ONLY a JSON array of strings. No explanation. No preamble.\n\n"
+            f"Transcript:\n{transcript}"
+        )
+
+        result = invoke_claude(
+            extract_prompt,
+            model="haiku",
+            allowed_tools=[],  # read-only — no tools needed
+        )
+
+        if not result.get("success"):
+            return 0
+
+        import json as _json
+        text = result.get("text", "").strip()
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        text = text.strip()
+
+        try:
+            patterns = _json.loads(text)
+        except (_json.JSONDecodeError, ValueError):
+            return 0
+
+        if not isinstance(patterns, list):
+            return 0
+
+        routed = 0
+        for p in patterns:
+            if isinstance(p, str) and p.strip():
+                score_and_route_observation(
+                    p.strip(),
+                    context=f"consolidation:{session_id}",
+                    project_id=project_id,
+                )
+                routed += 1
+
+        log.debug(f"consolidate_session {session_id}: routed {routed} observations")
+        return routed
+
+    except Exception as e:
+        log.warning(f"consolidate_session failed silently: {e}")
+        return 0
+
+
 def generate_title(message: str) -> str:
     """Generate a short session title from the first message.
 
