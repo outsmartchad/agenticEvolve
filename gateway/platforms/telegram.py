@@ -108,6 +108,8 @@ class TelegramAdapter(BasePlatformAdapter):
             "Maintenance\n"
             "/gc — Garbage collection + health check\n"
             "/gc dry — Preview without deleting\n\n"
+            "Natural Language\n"
+            "/do <instruction> — Parse intent + run command\n\n"
             "Or just send any message to chat with Claude."
         )
 
@@ -1603,6 +1605,258 @@ class TelegramAdapter(BasePlatformAdapter):
             typing_active = False
             typing_task.cancel()
 
+    # ── /do — natural language command ─────────────────────────────
+
+    async def _handle_do(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Parse natural language into a structured command, then execute it in background."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        text = " ".join(context.args) if context.args else ""
+        if not text:
+            await update.message.reply_text(
+                "*Usage:* `/do <natural language instruction>`\n\n"
+                "*Examples:*\n"
+                "`/do absorb this repo https://github.com/foo/bar and skip the security scan`\n"
+                "`/do learn about htmx`\n"
+                "`/do preview what evolve would build`\n"
+                "`/do search for memory management in past sessions`\n"
+                "`/do show me the cost so far`\n"
+                "`/do schedule absorb langchain every day at 9am`\n\n"
+                "I'll parse your intent, show the mapped command, and run it.",
+                parse_mode="Markdown"
+            )
+            return
+
+        await update.message.reply_text("Parsing intent...")
+
+        intent = await self._parse_intent(text)
+        if not intent:
+            await update.message.reply_text(
+                "Couldn't map that to a known command. Try rephrasing, or use a command directly.\n\n"
+                "Send `/help` for available commands."
+            )
+            return
+
+        cmd = intent["command"]
+        confidence = intent.get("confidence", 0)
+        await update.message.reply_text(
+            f"Parsed: `{cmd}` (confidence: {confidence:.0%})\nRunning..."
+        )
+        await self._run_command_background(update, context, cmd)
+
+    # ── Intent parser (natural language → command) ─────────────────
+
+    # Commands the intent parser knows about
+    _COMMAND_SCHEMA = """Available commands:
+/absorb <repo-url or topic> [--dry-run] [--skip-security-scan]
+  Absorb patterns from a repo/topic into our system.
+/learn <repo-url or topic> [--skip-security-scan]
+  Deep-dive a repo/tech, extract patterns, evaluate benefit.
+/evolve [--dry-run] [--skip-security-scan]
+  Run the evolution pipeline (collect signals, build skills).
+/search <query>
+  Full-text search across past sessions.
+/sessions
+  List recent sessions.
+/newsession
+  Start a fresh session.
+/memory
+  View bounded memory.
+/cost
+  View cost usage.
+/status
+  System status.
+/skills
+  List installed skills.
+/learnings
+  List stored learnings.
+/model <name>
+  Switch model (e.g. sonnet, opus, haiku).
+/gc [dry]
+  Run garbage collection.
+/loop <cron-expr> <command> [--tz=<timezone>]
+  Schedule a recurring command.
+/loops
+  List scheduled loops.
+/unloop <id>
+  Remove a scheduled loop.
+/pause <id>
+  Pause a scheduled loop.
+/unpause <id>
+  Unpause a scheduled loop.
+/queue
+  List skills pending approval.
+/approve <name> [force]
+  Approve a queued skill.
+/reject <name>
+  Reject a queued skill.
+/soul
+  View SOUL.md personality.
+/config
+  View runtime config.
+/heartbeat
+  Check if gateway is alive.
+/notify <duration> <message>
+  Set a one-time reminder.
+/help
+  Show help.
+"""
+
+    async def _parse_intent(self, text: str) -> dict | None:
+        """Parse natural language into a structured command using a lightweight Claude call.
+
+        Returns dict with {command, display} or None if no command matched.
+        """
+        import subprocess as sp
+
+        prompt = (
+            "You are a command parser. The user sent a natural language message to an AI agent system.\n"
+            "Your job: determine if this message maps to one of the available commands below.\n\n"
+            f"{self._COMMAND_SCHEMA}\n"
+            "Rules:\n"
+            "- If the message clearly maps to a command, return the exact command string.\n"
+            "- If the message is general chat/question NOT related to any command, return null.\n"
+            "- Preserve URLs and arguments exactly as the user provided them.\n"
+            "- Map synonyms: 'study'/'research'/'dive into' → /learn, 'integrate'/'absorb'/'steal from' → /absorb, "
+            "'scan'/'evolve'/'find new tools' → /evolve, 'find'/'search for' → /search\n"
+            "- Map flags from natural language: 'skip security'/'no security scan'/'skip scan' → --skip-security-scan, "
+            "'preview'/'just check'/'dry run' → --dry-run\n\n"
+            "Return ONLY a JSON object, nothing else:\n"
+            '{"command": "/absorb https://... --skip-security-scan", "confidence": 0.95}\n'
+            'or\n'
+            '{"command": null, "confidence": 0.0}\n\n'
+            f"User message: {text}"
+        )
+
+        try:
+            proc = sp.run(
+                ["claude", "-p", "--model", "haiku", prompt],
+                capture_output=True, text=True, timeout=30,
+            )
+            if proc.returncode != 0:
+                return None
+
+            output = proc.stdout.strip()
+            # Extract JSON from response
+            start = output.find("{")
+            end = output.rfind("}") + 1
+            if start < 0 or end <= start:
+                return None
+
+            parsed = json.loads(output[start:end])
+            cmd = parsed.get("command")
+            confidence = parsed.get("confidence", 0)
+
+            if not cmd or confidence < 0.7:
+                return None
+
+            return {"command": cmd, "display": cmd, "confidence": confidence}
+
+        except Exception as e:
+            log.warning(f"Intent parse failed: {e}")
+            return None
+
+    async def _run_command_background(self, update: Update, context: ContextTypes.DEFAULT_TYPE, command_str: str):
+        """Parse a command string and dispatch it to the appropriate handler as a background task
+        with periodic progress reports."""
+
+        chat_id = int(update.message.chat_id)
+
+        # Parse command string into parts
+        parts = command_str.strip().split()
+        if not parts:
+            return
+        cmd_name = parts[0].lstrip("/")
+        cmd_args = parts[1:]
+
+        # Map command names to handlers
+        handler_map = {
+            "absorb": self._handle_absorb,
+            "learn": self._handle_learn,
+            "evolve": self._handle_evolve,
+            "search": self._handle_search,
+            "sessions": self._handle_sessions,
+            "newsession": self._handle_newsession,
+            "memory": self._handle_memory,
+            "cost": self._handle_cost,
+            "status": self._handle_status,
+            "skills": self._handle_skills,
+            "learnings": self._handle_learnings,
+            "model": self._handle_model,
+            "gc": self._handle_gc,
+            "loop": self._handle_loop,
+            "loops": self._handle_loops,
+            "unloop": self._handle_unloop,
+            "pause": self._handle_pause,
+            "unpause": self._handle_unpause,
+            "queue": self._handle_queue,
+            "approve": self._handle_approve,
+            "reject": self._handle_reject,
+            "soul": self._handle_soul,
+            "config": self._handle_config,
+            "heartbeat": self._handle_heartbeat,
+            "notify": self._handle_notify,
+            "help": self._handle_help,
+        }
+
+        handler = handler_map.get(cmd_name)
+        if not handler:
+            await self.app.bot.send_message(chat_id=chat_id, text=f"Unknown command: /{cmd_name}")
+            return
+
+        # For long-running commands, run in background with 1-min progress reports
+        long_running = {"absorb", "learn", "evolve", "gc"}
+
+        if cmd_name in long_running:
+            # Inject args into context so the handler sees them
+            context.args = cmd_args
+            start_time = datetime.now(timezone.utc)
+            done = False
+
+            # Progress reporter — sends a heartbeat every 60s
+            async def progress_reporter():
+                minute = 1
+                while not done:
+                    await asyncio.sleep(60)
+                    if done:
+                        break
+                    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+                    try:
+                        await self.app.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"[`{command_str}`] Still running... ({int(elapsed)}s elapsed, ~{minute} min)",
+                        )
+                    except Exception:
+                        pass
+                    minute += 1
+
+            reporter = asyncio.create_task(progress_reporter())
+
+            try:
+                await handler(update, context)
+            except Exception as e:
+                log.error(f"Background command error: {e}")
+                await self.app.bot.send_message(chat_id=chat_id, text=f"Command failed: {e}")
+            finally:
+                done = True
+                reporter.cancel()
+
+            elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+            try:
+                await self.app.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"[`{command_str}`] Completed in {int(elapsed)}s.",
+                )
+            except Exception:
+                pass
+        else:
+            # Short commands — run directly
+            context.args = cmd_args
+            await handler(update, context)
+
     # ── Regular text messages ────────────────────────────────────
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1627,7 +1881,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 await self._offer_absorb_learn(update, urls[0], "link")
                 return
 
-        # Keep typing indicator alive while Claude processes
+        # General chat via Claude (use /do for intent parsing)
         typing_active = True
         async def keep_typing():
             while typing_active:
@@ -1688,6 +1942,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "config": self._handle_config,
             "pause": self._handle_pause,
             "unpause": self._handle_unpause,
+            "do": self._handle_do,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
