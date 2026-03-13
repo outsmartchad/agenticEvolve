@@ -13,6 +13,21 @@
     "last_run_at": null
   },
   {
+    "id": "evolve-daily",
+    "description": "Daily agenticEvolve pipeline — collect signals, analyze, build skills, push to repo",
+    "prompt": "Run the full agenticEvolve evolve pipeline now.\n\nDo the following in order:\n\n1. Use the Bash tool to run: bash ~/.agenticEvolve/collectors/github.sh\n2. Use the Bash tool to run: bash ~/.agenticEvolve/collectors/hackernews.sh\n3. Use the Bash tool to run: bash ~/.agenticEvolve/collectors/x-search.sh\n4. Read all signal files from ~/.agenticEvolve/signals/<today's date>/ and score each on RELEVANCE, NOVELTY, and ACTIONABILITY (0-9 each). Keep only candidates with composite score >= 7.0.\n5. For each top candidate (up to 3), build a Claude Code skill in ~/.agenticEvolve/skills-queue/<name>/SKILL.md following the skill-creator quality standards (YAML frontmatter with 'Use when...' description, under 100 lines, no secrets).\n6. Review each built skill for security (no hardcoded secrets), quality (clear instructions, valid YAML), and correctness (no placeholder values). Approve or reject each.\n7. Use the Bash tool to run: cd ~/Desktop/projects/agenticEvolve && git add -A && git commit -m 'chore: evolve cycle $(date +%Y-%m-%d)' && git push origin main\n8. Return a concise summary: signals collected, candidates found, skills built, skills approved/rejected, git push status.",
+    "schedule_type": "cron",
+    "cron": "0 6 * * *",
+    "timezone": "Asia/Hong_Kong",
+    "deliver_to": "telegram",
+    "deliver_chat_id": "934847281",
+    "created_at": "2026-03-14T00:00:00Z",
+    "next_run_at": "2026-03-14T22:00:00Z",
+    "run_count": 0,
+    "paused": false,
+    "last_run_at": null
+  },
+  {
     "id": "daily-ux-review",
     "prompt": "Daily UX refinement review for agenticEvolve Telegram gateway.\n\nDo the following:\n\n1. Read ~/.agenticEvolve/memory/MEMORY.md and ~/.agenticEvolve/memory/USER.md for user context\n2. Read the last 30 messages from today in the SQLite DB at ~/.agenticEvolve/memory/sessions.db (query: SELECT role, content, timestamp FROM messages ORDER BY timestamp DESC LIMIT 30)\n3. Read ~/Desktop/projects/agenticEvolve/gateway/platforms/telegram.py (focus on _handle_evolve, _handle_learn, _handle_absorb, _make_progress_tracker, _handle_help, _handle_status)\n4. Read ~/Desktop/projects/agenticEvolve/gateway/agent.py (focus on build_system_prompt, invoke_claude_streaming)\n5. Analyze: What friction points exist in today's conversations? Where did the user wait without feedback? Were any responses too long, too short, confusing, or unhelpful?\n6. Identify the top 3 highest-impact UX improvements. For each:\n   - File path + line number\n   - What to change\n   - Why it improves the experience\n7. Implement the changes directly (edit the files)\n8. Send a concise summary of what was changed and why.",
     "schedule_type": "cron",
