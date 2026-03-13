@@ -1307,6 +1307,15 @@ class TelegramAdapter(BasePlatformAdapter):
 
         model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
 
+        # Security prescan for GitHub repos (Layer 1 — before handing to absorb pipeline)
+        is_github = target.startswith("https://github.com/") or target.startswith("git@github.com:")
+        if is_github and not skip_security_scan:
+            security_blocked = await self._security_prescan_github(target, chat_id, asyncio.get_running_loop())
+            if security_blocked:
+                return
+        elif is_github and skip_security_scan:
+            on_progress_sync("*Security scan: skipped (--skip-security-scan)*")
+
         start_reporter()
         try:
             from ..absorb import AbsorbOrchestrator
@@ -1978,8 +1987,8 @@ class TelegramAdapter(BasePlatformAdapter):
                     from ..session_db import add_learning
                     learning_data = {}
                     if "```json" in response:
-                        json_start = response.index("```json")
-                        json_end = response.index("```", json_start + 7)
+                        json_start = response.find("```json")
+                        json_end = response.find("```", json_start + 7) if json_start >= 0 else -1
                         json_str = response[json_start + 7:json_end].strip()
                         try:
                             learning_data = json.loads(json_str)
@@ -2144,7 +2153,7 @@ class TelegramAdapter(BasePlatformAdapter):
             return
 
         # Parse --voice flag
-        flags = self._parse_flags(raw_args, {"--voice": {"type": "str"}})
+        flags = self._parse_flags(raw_args, {"--voice": {"type": "value"}})
         voice = flags.get("--voice") or None
         text = " ".join(raw_args)
 

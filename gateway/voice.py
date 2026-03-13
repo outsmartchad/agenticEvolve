@@ -1,13 +1,13 @@
-"""Voice module — TTS (edge-tts) and STT (Groq/OpenAI whisper) for agenticEvolve.
+"""Voice module — TTS (edge-tts) and STT (local whisper.cpp) for agenticEvolve.
 
 Adapted from openclaw's voice pipeline patterns:
 - TTS: edge-tts (free, 300+ neural voices, no API key)
-- STT: Groq whisper (free tier) → OpenAI whisper → local whisper-cli
+- STT: local whisper-cli (whisper.cpp, ~500ms on Apple Silicon)
 - Audio conversion via ffmpeg
+- Language auto-detection with CJK/Cantonese heuristics
 """
 import asyncio
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -26,13 +26,7 @@ DEFAULT_TTS_RATE = "+0%"
 DEFAULT_TTS_VOLUME = "+0%"
 MAX_TTS_CHARS = 4000  # edge-tts handles long text fine, but cap for sanity
 
-# ── STT provider chain ───────────────────────────────────────
-# Groq free: 7,000 req/day on whisper-large-v3-turbo
-GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-GROQ_STT_MODEL = "whisper-large-v3-turbo"
-
-OPENAI_STT_URL = "https://api.openai.com/v1/audio/transcriptions"
-OPENAI_STT_MODEL = "whisper-1"
+    
 
 
 def _ensure_dirs():
@@ -138,12 +132,10 @@ async def speech_to_text(
     audio_path: str | Path,
     language: str = "zh",
 ) -> str | None:
-    """Transcribe audio file to text. Tries providers in order:
-    1. Groq whisper (free, GROQ_API_KEY)
-    2. OpenAI whisper (paid, OPENAI_API_KEY)
-    3. Local whisper-cli (if installed)
+    """Transcribe audio file to text using local whisper-cli (whisper.cpp).
 
     Returns transcript string or None on failure.
+    Requires: brew install whisper-cpp + model at ~/.agenticEvolve/models/ggml-small.bin
     """
     audio_path = Path(audio_path)
     if not audio_path.exists():
@@ -166,48 +158,11 @@ async def speech_to_text(
     return None
 
 
-async def _whisper_api(
-    audio_path: Path,
-    api_url: str,
-    api_key: str,
-    model: str,
-    language: str,
-) -> str | None:
-    """Call OpenAI-compatible whisper API."""
-    try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            with open(audio_path, "rb") as f:
-                response = await client.post(
-                    api_url,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    files={"file": (audio_path.name, f, "audio/mpeg")},
-                    data={
-                        "model": model,
-                        "language": language,
-                        "response_format": "text",
-                    },
-                )
-
-            if response.status_code == 200:
-                transcript = response.text.strip()
-                log.info(f"STT: Transcribed {len(transcript)} chars via {model}")
-                return transcript
-            else:
-                log.warning(f"STT API error ({response.status_code}): {response.text[:200]}")
-                return None
-
-    except Exception as e:
-        log.error(f"STT API exception: {e}")
-        return None
-
-
 WHISPER_MODEL_PATH = EXODIR / "models" / "ggml-small.bin"  # multilingual small model (better CJK/Cantonese accuracy)
 
 
 async def _local_whisper(audio_path: Path, language: str) -> str | None:
-    """Run local whisper-cli (whisper.cpp). Requires model at ~/.agenticEvolve/models/ggml-base.en.bin"""
+    """Run local whisper-cli (whisper.cpp). Requires model at ~/.agenticEvolve/models/ggml-small.bin"""
     cmd_name = shutil.which("whisper-cli")
     if not cmd_name:
         return None
@@ -237,7 +192,7 @@ async def _local_whisper(audio_path: Path, language: str) -> str | None:
             lines = [l.strip() for l in transcript.splitlines() if l.strip()]
             transcript = " ".join(lines)
             if transcript:
-                log.info(f"STT: Local whisper-cli transcribed {len(transcript)} chars in ~{getattr(proc, '_duration', '?')}ms")
+                log.info(f"STT: Local whisper-cli transcribed {len(transcript)} chars")
                 return transcript
 
         log.warning(f"Local whisper-cli failed (rc={proc.returncode}): {stderr.decode()[:300]}")

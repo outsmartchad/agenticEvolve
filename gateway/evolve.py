@@ -122,6 +122,7 @@ class EvolveOrchestrator:
             if not path.exists():
                 self._report(f"  Skipped {collector} (not found)")
                 continue
+            name = collector.replace(".sh", "")
             try:
                 self._report(f"  Running `{collector}`...")
                 proc = subprocess.run(
@@ -130,7 +131,6 @@ class EvolveOrchestrator:
                     cwd=str(EXODIR),
                     env={**os.environ, "SIGNALS_DIR": str(SIGNALS_DIR)}
                 )
-                name = collector.replace(".sh", "")
                 results[name] = {
                     "success": proc.returncode == 0,
                     "output": proc.stdout[:500] if proc.stdout else "",
@@ -141,10 +141,10 @@ class EvolveOrchestrator:
                 else:
                     self._report(f"  {collector} failed (exit {proc.returncode})")
             except subprocess.TimeoutExpired:
-                results[collector] = {"success": False, "error": "timeout"}
+                results[name] = {"success": False, "error": "timeout"}
                 self._report(f"  {collector} timed out")
             except Exception as e:
-                results[collector] = {"success": False, "error": str(e)}
+                results[name] = {"success": False, "error": str(e)}
 
         # Count signal files
         signal_files = list(signals_today.glob("*.json")) if signals_today.exists() else []
@@ -641,7 +641,10 @@ def approve_skill(name: str) -> tuple[bool, str]:
     for f in (QUEUE_DIR / name).iterdir():
         if f.name.startswith("."):
             continue  # skip .rejected marker
-        shutil.copy2(str(f), str(install_dir / f.name))
+        if f.is_dir():
+            shutil.copytree(str(f), str(install_dir / f.name), dirs_exist_ok=True)
+        else:
+            shutil.copy2(str(f), str(install_dir / f.name))
 
     # Write SHA256 hash of SKILL.md for integrity verification
     skill_md = install_dir / "SKILL.md"

@@ -335,6 +335,12 @@ def scan_file(path: str | Path, label: str = "") -> ScanResult:
             if re.search(pattern, line, re.IGNORECASE):
                 findings.append(Finding("warning", rel_path, line_num, desc, line_stripped[:200]))
 
+        # Check prompt injection patterns for doc/text files
+        if path.suffix.lower() in PROMPT_INJECTION_EXTENSIONS:
+            for pattern, desc in PROMPT_INJECTION_PATTERNS:
+                if re.search(pattern, line, re.IGNORECASE):
+                    findings.append(Finding("warning", rel_path, line_num, desc, line_stripped[:200]))
+
     critical_count = sum(1 for f in findings if f.severity == "critical")
     warning_count = sum(1 for f in findings if f.severity == "warning")
 
