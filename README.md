@@ -1,6 +1,6 @@
 # agenticEvolve
 
-**A self-evolving personal agent. Learns from the internet. Remembers everything. Runs on Claude Code.**
+**A personal agent that helps you succeed on the internet.**
 
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
@@ -9,25 +9,49 @@
 
 ---
 
-A persistent Claude Code agent accessible via Telegram. Maintains bounded memory across sessions, scans GitHub trending and Hacker News for relevant signals, synthesizes new skills autonomously, and queues them for human approval. No custom agent loop — Claude Code is the runtime.
+agenticEvolve is a persistent AI agent that lives in your Telegram. It runs Claude Code under the hood — so it can write code, run commands, search the web, read files, and use 16 installed skills. But what makes it different is that it learns. It remembers every conversation. It scans the internet daily for new tools, patterns, and opportunities relevant to your work. It absorbs the best ideas from any codebase you point it at. And it gets better every single day — without you lifting a finger.
+
+Whether you're shipping a product, building an audience, researching competitors, writing content, or automating your workflow — this is your agent.
 
 ---
 
-## Interface
+## What It Looks Like
 
 ```
-> deploy the staging branch and run the migration
-  [pulls branch, runs deploy script, executes migration]
-  Deployed. Migration applied — 3 tables updated, 0 errors.
+> research the top 5 competitors in the AI code editor space and summarize their pricing
+  [searches web, reads pricing pages, compiles data]
+  Here's the breakdown: Cursor ($20/mo), Windsurf ($15/mo)...
 
-> /absorb https://github.com/some-cool-project
-  [clones, scans architecture, diffs patterns]
-  Implementing retry logic, health checks, and graceful shutdown.
+> /absorb https://github.com/trending-project
+  [clones repo, scans architecture, finds patterns we're missing]
+  Implemented 3 improvements: retry logic, health checks, graceful shutdown.
 
 > /evolve
-  [scans GitHub trending, HN — scores 12 signals]
-  2 skills built. Queued. /approve to install.
+  [scans GitHub trending, Hacker News — scores 12 signals]
+  2 new skills built: api-rate-limiting, structured-logging
+  Queued for review. /approve to install.
+
+> write a twitter thread about why developers should use AI agents
+  [drafts thread with hook, insights, CTA]
+  Done. 8 tweets. Want me to adjust the tone?
+
+> /learn https://github.com/some-saas-boilerplate
+  [deep-dives codebase, extracts patterns]
+  ADOPT: their auth flow. STEAL: the webhook retry pattern. SKIP: their ORM choice.
 ```
+
+---
+
+## Capabilities
+
+- **Build** — Write code, debug, refactor, deploy, run terminal commands. Full Claude Code power from your phone.
+- **Research** — Deep-dive any topic, repo, or market. Web search, competitor analysis, technology evaluation. Findings are saved and searchable.
+- **Create** — Draft articles, threads, newsletters, documentation. Distinctive voice, not AI slop.
+- **Evolve** — Scans GitHub trending and Hacker News daily. Finds tools relevant to your stack. Builds new skills. Queues for your approval. Gets smarter on autopilot.
+- **Absorb** — Point it at any repo. It clones, analyzes, finds what you're missing, and implements the improvements.
+- **Remember** — Every conversation indexed with full-text search. Bounded notes about you and your projects. Context carries across sessions.
+- **Automate** — Built-in cron scheduler. `/loop every 6h /evolve` and it runs on its own. Set reminders. Schedule anything.
+- **Stay Safe** — Security scanner on all external code. Skills need your approval. Cost caps. Autonomy levels.
 
 ---
 
@@ -56,32 +80,20 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ---
 
-## Capabilities
-
-- **Chat** — Full Claude Code from Telegram. Terminal, file ops, web search, MCP, 16 skills.
-- **Memory** — SQLite + FTS5 session persistence. Bounded agent notes. Context carries across sessions.
-- **Evolve** — Scans GitHub trending + HN, scores signals, builds skills, queues for approval. Schedule on cron for autonomous growth.
-- **Absorb** — Deep-scans any repo, diffs patterns against self, implements improvements.
-- **Learn** — Extracts actionable patterns from repos or technologies. ADOPT / STEAL / SKIP verdicts.
-- **Cron** — Built-in scheduler. `/loop every 6h /evolve` runs pipelines autonomously.
-- **Security** — Static analysis on external code. Approval gates. Cost caps. Autonomy levels. Deny-by-default auth.
-
----
-
 ## Commands
 
 | Command | Function |
 |---------|----------|
-| _(text)_ | Claude Code chat |
-| `/evolve` | Scan signals, build skills |
-| `/absorb <url>` | Absorb patterns from repo |
-| `/learn <target>` | Deep-dive extraction |
-| `/memory` | Agent memory state |
-| `/search <query>` | FTS5 across all sessions |
-| `/skills` | Installed skills |
-| `/cost` | Usage and spend |
-| `/loop <cron> <cmd>` | Schedule recurring execution |
-| `/approve <name>` | Install queued skill |
+| _(any message)_ | Chat — code, research, write, automate |
+| `/evolve` | Scan the internet, build new skills |
+| `/absorb <url>` | Absorb patterns from any repo |
+| `/learn <target>` | Deep-dive a repo or topic |
+| `/memory` | What the agent knows about you |
+| `/search <query>` | Search all past conversations |
+| `/skills` | List installed skills |
+| `/cost` | Check spend |
+| `/loop <interval> <cmd>` | Schedule recurring tasks |
+| `/approve <name>` | Install a queued skill |
 
 [All 29 commands ->](docs/commands.md)
 
@@ -93,7 +105,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 Telegram -> Gateway (asyncio) -> Session + Cost Gate -> claude -p -> Stream -> SQLite
 ```
 
-[Details ->](docs/architecture.md)
+No custom agent loop. Claude Code is the agent. The gateway handles routing, memory, sessions, cron, and safety. [Details ->](docs/architecture.md)
 
 ---
 
