@@ -91,6 +91,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "/absorb <target> — Deep scan + implement improvements\n"
             "/absorb --dry-run <target> — Preview gaps only\n"
             "/learn <target> — Deep-dive + extract patterns\n"
+            "Add --skip-security-scan to /learn, /evolve, /absorb to bypass scan\n"
             "/learnings — View past findings (or search)\n\n"
             "Skills\n"
             "/skills — List installed skills\n"
@@ -281,8 +282,16 @@ class TelegramAdapter(BasePlatformAdapter):
             return await self._deny(update)
 
         dry_run = False
-        if context.args and context.args[0].lower() in ("--dry-run", "dry-run", "dry", "preview"):
-            dry_run = True
+        skip_security_scan = False
+        raw_args = list(context.args) if context.args else []
+        for flag in ("--dry-run", "dry-run", "dry", "preview"):
+            if flag in raw_args:
+                dry_run = True
+                raw_args.remove(flag)
+                break
+        if "--skip-security-scan" in raw_args:
+            skip_security_scan = True
+            raw_args.remove("--skip-security-scan")
 
         chat_id = str(update.message.chat_id)
         if dry_run:
@@ -325,7 +334,11 @@ class TelegramAdapter(BasePlatformAdapter):
         try:
             from ..evolve import EvolveOrchestrator
 
-            orchestrator = EvolveOrchestrator(model=model, on_progress=on_progress_sync)
+            orchestrator = EvolveOrchestrator(
+                model=model,
+                on_progress=on_progress_sync,
+                skip_security_scan=skip_security_scan,
+            )
 
             # Run pipeline in executor
             summary, cost = await loop.run_in_executor(
@@ -670,7 +683,13 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        target = " ".join(context.args) if context.args else ""
+        raw_args = list(context.args) if context.args else []
+        skip_security_scan = False
+        if "--skip-security-scan" in raw_args:
+            skip_security_scan = True
+            raw_args.remove("--skip-security-scan")
+
+        target = " ".join(raw_args)
         if not target:
             await update.message.reply_text(
                 "*Usage:* `/learn <repo-url or tech name>`\n\n"
@@ -749,11 +768,13 @@ class TelegramAdapter(BasePlatformAdapter):
         )
 
         # Security scan for GitHub repos: clone first, scan, then proceed
-        if is_github:
+        if is_github and not skip_security_scan:
             self._report_sync = on_progress_sync
             security_blocked = await self._security_prescan_github(target, chat_id, loop)
             if security_blocked:
                 return
+        elif is_github and skip_security_scan:
+            on_progress_sync("*Security scan: skipped (--skip-security-scan)*")
 
         if is_github:
             learn_prompt = (
@@ -868,14 +889,18 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        # Parse --dry-run flag from args
+        # Parse --dry-run and --skip-security-scan flags from args
         dry_run = False
+        skip_security_scan = False
         raw_args = list(context.args) if context.args else []
         for flag in ("--dry-run", "dry-run", "dry", "preview"):
             if flag in raw_args:
                 dry_run = True
                 raw_args.remove(flag)
                 break
+        if "--skip-security-scan" in raw_args:
+            skip_security_scan = True
+            raw_args.remove("--skip-security-scan")
 
         target = " ".join(raw_args)
         if not target:
@@ -944,6 +969,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 target_type=target_type,
                 model=model,
                 on_progress=on_progress_sync,
+                skip_security_scan=skip_security_scan,
             )
 
             summary, cost = await loop.run_in_executor(

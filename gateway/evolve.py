@@ -39,9 +39,11 @@ class EvolveOrchestrator:
     """Runs the evolve pipeline stage by stage, reporting progress."""
 
     def __init__(self, model: str = "sonnet",
-                 on_progress: Callable[[str], None] = None):
+                 on_progress: Callable[[str], None] = None,
+                 skip_security_scan: bool = False):
         self.model = model
         self.on_progress = on_progress or (lambda x: None)
+        self.skip_security_scan = skip_security_scan
         self._cost_total = 0.0
 
     def _report(self, msg: str):
@@ -284,25 +286,28 @@ class EvolveOrchestrator:
         from .security import scan_file, format_telegram_report
         blocked_names = set()
         reviewed = []
-        for skill in built:
-            sec_result = scan_file(skill["path"], label=skill["name"])
-            if sec_result.verdict == "BLOCKED":
-                self._report(f"*Security BLOCKED skill `{skill['name']}`*")
-                self._report(format_telegram_report(sec_result))
-                reject_file = Path(skill["path"]).parent / ".rejected"
-                reject_file.write_text(json.dumps({
-                    "name": skill["name"],
-                    "approved": False,
-                    "issues": [f.pattern_desc for f in sec_result.findings if f.severity == "critical"],
-                    "summary": "Blocked by security scan — potential malicious content"
-                }, indent=2))
-                reviewed.append({
-                    "name": skill["name"], "approved": False,
-                    "issues": ["SECURITY: " + f.pattern_desc for f in sec_result.findings if f.severity == "critical"],
-                    "summary": "Blocked by automated security scan",
-                    "skill_path": skill["path"],
-                })
-                blocked_names.add(skill["name"])
+        if self.skip_security_scan:
+            self._report("*Security scan: skipped (--skip-security-scan)*")
+        else:
+            for skill in built:
+                sec_result = scan_file(skill["path"], label=skill["name"])
+                if sec_result.verdict == "BLOCKED":
+                    self._report(f"*Security BLOCKED skill `{skill['name']}`*")
+                    self._report(format_telegram_report(sec_result))
+                    reject_file = Path(skill["path"]).parent / ".rejected"
+                    reject_file.write_text(json.dumps({
+                        "name": skill["name"],
+                        "approved": False,
+                        "issues": [f.pattern_desc for f in sec_result.findings if f.severity == "critical"],
+                        "summary": "Blocked by security scan — potential malicious content"
+                    }, indent=2))
+                    reviewed.append({
+                        "name": skill["name"], "approved": False,
+                        "issues": ["SECURITY: " + f.pattern_desc for f in sec_result.findings if f.severity == "critical"],
+                        "summary": "Blocked by automated security scan",
+                        "skill_path": skill["path"],
+                    })
+                    blocked_names.add(skill["name"])
 
         for skill in built:
             if skill["name"] in blocked_names:

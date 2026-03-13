@@ -67,11 +67,13 @@ class AbsorbOrchestrator:
 
     def __init__(self, target: str, target_type: str,
                  model: str = "sonnet",
-                 on_progress: Callable[[str], None] = None):
+                 on_progress: Callable[[str], None] = None,
+                 skip_security_scan: bool = False):
         self.target = target
         self.target_type = target_type  # "github", "url", "topic"
         self.model = model
         self.on_progress = on_progress or (lambda x: None)
+        self.skip_security_scan = skip_security_scan
         self._cost_total = 0.0
         self._changes_made = []
 
@@ -394,7 +396,11 @@ class AbsorbOrchestrator:
         scan_result = self.stage_scan()
 
         # Stage 1.5: Security scan (before any code execution or implementation)
-        security_result = self._security_scan()
+        if self.skip_security_scan:
+            self._report("*Security scan: skipped (--skip-security-scan)*")
+            security_result = None
+        else:
+            security_result = self._security_scan()
         if security_result and security_result.verdict == "BLOCKED":
             from .security import format_telegram_report
             report = format_telegram_report(security_result)
