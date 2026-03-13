@@ -69,6 +69,19 @@ def init_db():
         );
 
         CREATE INDEX IF NOT EXISTS idx_costs_timestamp ON costs(timestamp);
+
+        CREATE TABLE IF NOT EXISTS instincts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern TEXT NOT NULL,
+            context TEXT,
+            confidence REAL DEFAULT 0.3,
+            seen_count INTEGER DEFAULT 1,
+            project_ids TEXT DEFAULT '[]',
+            promoted_to TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_instincts_confidence ON instincts(confidence);
     """)
     # FTS5 — ignore errors if already exists
     for stmt in [
@@ -78,6 +91,9 @@ def init_db():
         """CREATE VIRTUAL TABLE learnings_fts USING fts5(
             target, patterns, operational_benefit, full_report,
             content=learnings, content_rowid=id
+        )""",
+        """CREATE VIRTUAL TABLE instincts_fts USING fts5(
+            pattern, context, content=instincts, content_rowid=id
         )""",
     ]:
         try:
@@ -139,14 +155,89 @@ def add_message(session_id: str, role: str, content: str, token_count: int = 0):
     conn.close()
 
 
-def end_session(session_id: str):
+HANDOFF_DIR = Path.home() / ".agenticEvolve" / "sessions"
+
+
+def snapshot_session(session_id: str, handoff_note: str = "") -> Path:
+    """Write a handoff snapshot for a session to a JSON file.
+
+    Captures the last 10 messages so the next session can resume deterministically
+    without relying on context that may have been compacted or lost.
+
+    Args:
+        session_id: Session to snapshot.
+        handoff_note: Optional note appended to the snapshot (e.g. what was in progress).
+
+    Returns:
+        Path to the written handoff file.
+    """
+    HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT role, content, timestamp FROM messages "
+        "WHERE session_id = ? ORDER BY id DESC LIMIT 10",
+        (session_id,)
+    ).fetchall()
+    conn.close()
+
+    # Reverse so messages are chronological
+    last_messages = [dict(r) for r in reversed(rows)]
+
+    payload = {
+        "session_id": session_id,
+        "ended_at": datetime.now(timezone.utc).isoformat(),
+        "last_messages": last_messages,
+        "handoff_note": handoff_note,
+    }
+
+    handoff_path = HANDOFF_DIR / f"{session_id}.handoff.json"
+    handoff_path.write_text(json.dumps(payload, indent=2))
+    return handoff_path
+
+
+def load_handoff(session_id: str) -> dict | None:
+    """Load a handoff snapshot for a session.
+
+    Args:
+        session_id: Session ID to load.
+
+    Returns:
+        Handoff dict, or None if no snapshot exists.
+    """
+    handoff_path = HANDOFF_DIR / f"{session_id}.handoff.json"
+    if not handoff_path.exists():
+        return None
+    try:
+        return json.loads(handoff_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def end_session(session_id: str, handoff_note: str = ""):
+    """End a session, stamping ended_at and writing a handoff snapshot if warranted.
+
+    A snapshot is written only when the session has more than 3 messages, to
+    avoid noise from short pings and health-checks.
+
+    Args:
+        session_id: Session to end.
+        handoff_note: Optional note captured in the handoff file.
+    """
     conn = _connect()
     conn.execute(
         "UPDATE sessions SET ended_at = ? WHERE id = ?",
         (datetime.now(timezone.utc).isoformat(), session_id)
     )
+    count_row = conn.execute(
+        "SELECT message_count FROM sessions WHERE id = ?",
+        (session_id,)
+    ).fetchone()
     conn.commit()
     conn.close()
+
+    # Write handoff snapshot for substantive sessions (> 3 messages)
+    if count_row and (count_row["message_count"] or 0) > 3:
+        snapshot_session(session_id, handoff_note=handoff_note)
 
 
 def search_sessions(query: str, limit: int = 5) -> list[dict]:
@@ -330,6 +421,127 @@ def get_cost_week() -> float:
     ).fetchone()
     conn.close()
     return float(row[0] or 0)
+
+
+# ── Instincts ────────────────────────────────────────────────
+
+def upsert_instinct(pattern: str, context: str = "", project_id: str = "",
+                    confidence_delta: float = 0.05) -> int:
+    """Insert or update an instinct, incrementing confidence on repeat observations.
+
+    If an instinct with the same pattern already exists, increments seen_count,
+    applies confidence_delta (capped at 1.0), and appends project_id if new.
+    Otherwise inserts a fresh instinct at confidence 0.3.
+
+    Args:
+        pattern: The observed behaviour pattern (used as the dedup key).
+        context: Optional context string (stage, tool, session type).
+        project_id: Hash of the git remote URL for the project this was seen in.
+        confidence_delta: How much to increase confidence on repeat observation.
+
+    Returns:
+        The instinct row ID.
+    """
+    conn = _connect()
+    ts = datetime.now(timezone.utc).isoformat()
+
+    existing = conn.execute(
+        "SELECT id, confidence, seen_count, project_ids FROM instincts WHERE pattern = ?",
+        (pattern,)
+    ).fetchone()
+
+    if existing:
+        row_id = existing["id"]
+        new_confidence = min(1.0, existing["confidence"] + confidence_delta)
+        new_seen = existing["seen_count"] + 1
+
+        # Append project_id if not already recorded
+        try:
+            projects = json.loads(existing["project_ids"] or "[]")
+        except json.JSONDecodeError:
+            projects = []
+        if project_id and project_id not in projects:
+            projects.append(project_id)
+
+        conn.execute(
+            "UPDATE instincts SET confidence=?, seen_count=?, project_ids=?, updated_at=? WHERE id=?",
+            (new_confidence, new_seen, json.dumps(projects), ts, row_id)
+        )
+        # Sync FTS content
+        conn.execute("DELETE FROM instincts_fts WHERE rowid=?", (row_id,))
+        conn.execute(
+            "INSERT INTO instincts_fts(rowid, pattern, context) VALUES (?, ?, ?)",
+            (row_id, pattern, context or existing["context"] or "")
+        )
+    else:
+        projects = [project_id] if project_id else []
+        cursor = conn.execute(
+            "INSERT INTO instincts (pattern, context, confidence, seen_count, "
+            "project_ids, created_at, updated_at) VALUES (?, ?, 0.3, 1, ?, ?, ?)",
+            (pattern, context, json.dumps(projects), ts, ts)
+        )
+        row_id = cursor.lastrowid
+        conn.execute(
+            "INSERT INTO instincts_fts(rowid, pattern, context) VALUES (?, ?, ?)",
+            (row_id, pattern, context or "")
+        )
+
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def get_promotable_instincts(min_conf: float = 0.8,
+                              min_projects: int = 2) -> list[dict]:
+    """Return instincts that meet the promotion threshold.
+
+    An instinct is promotable when it has been observed with sufficient
+    confidence across enough distinct projects, and has not yet been promoted.
+
+    Args:
+        min_conf: Minimum confidence score (0.0–1.0). Default 0.8.
+        min_projects: Minimum number of distinct projects. Default 2.
+
+    Returns:
+        List of instinct dicts ordered by confidence descending.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT * FROM instincts WHERE confidence >= ? AND promoted_to IS NULL "
+        "ORDER BY confidence DESC",
+        (min_conf,)
+    ).fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        d = dict(row)
+        try:
+            projects = json.loads(d.get("project_ids") or "[]")
+        except json.JSONDecodeError:
+            projects = []
+        if len(projects) >= min_projects:
+            d["project_ids"] = projects
+            results.append(d)
+
+    return results
+
+
+def mark_instinct_promoted(instinct_id: int, promoted_to: str) -> None:
+    """Stamp an instinct as promoted to a skill, command, or agent.
+
+    Args:
+        instinct_id: Row ID of the instinct to promote.
+        promoted_to: Promotion target label — 'skill', 'command', or 'agent'.
+    """
+    conn = _connect()
+    ts = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE instincts SET promoted_to=?, updated_at=? WHERE id=?",
+        (promoted_to, ts, instinct_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 # Initialize on import

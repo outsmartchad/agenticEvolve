@@ -13,8 +13,16 @@ log = logging.getLogger("agenticEvolve.agent")
 EXODIR = Path.home() / ".agenticEvolve"
 
 
-def build_system_prompt(config: dict | None = None) -> str:
-    """Assemble system prompt from SOUL.md + MEMORY.md + USER.md + autonomy rules."""
+def build_system_prompt(config: dict | None = None,
+                        context_mode: str | None = None) -> str:
+    """Assemble system prompt from SOUL.md + MEMORY.md + USER.md + autonomy rules.
+
+    Args:
+        config: Full gateway config for autonomy level resolution.
+        context_mode: Optional overlay name (e.g. 'review', 'absorb'). When set,
+            loads ~/.agenticEvolve/contexts/<context_mode>.md and appends it as a
+            focused constraint block. Falls back gracefully if the file is missing.
+    """
     parts = []
 
     # SOUL.md — personality
@@ -52,6 +60,17 @@ def build_system_prompt(config: dict | None = None) -> str:
         risk_prompt = build_risk_awareness_prompt(config)
         if risk_prompt:
             parts.append(risk_prompt)
+
+    # Context mode overlay — appended last so it takes precedence as a constraint layer.
+    # Overlays tighten behaviour for specific pipeline stages without touching SOUL.md.
+    if context_mode:
+        overlay_path = EXODIR / "contexts" / f"{context_mode}.md"
+        if overlay_path.exists():
+            overlay = overlay_path.read_text().strip()
+            parts.append(f"# Context Mode: {context_mode}\n{overlay}")
+            log.debug(f"Loaded context overlay: {context_mode}")
+        else:
+            log.debug(f"Context overlay '{context_mode}' not found at {overlay_path}, skipping")
 
     return "\n\n".join(parts)
 
@@ -297,7 +316,8 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                              cwd: str = None, session_context: str = "",
                              allowed_tools: list[str] | None = None,
                              max_seconds: int = 480,
-                             config: dict | None = None) -> dict:
+                             config: dict | None = None,
+                             context_mode: str | None = None) -> dict:
     """
     Invoke Claude Code with real-time progress reporting via on_progress callback.
 
@@ -308,10 +328,11 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         allowed_tools: If set, restricts Claude to these tools instead of --dangerously-skip-permissions
         max_seconds: Hard timeout; sends SIGTERM→SIGKILL if exceeded. Default 480s (8 min).
         config: Full gateway config for autonomy level resolution
+        context_mode: Optional overlay name passed to build_system_prompt (e.g. 'review', 'absorb').
 
     Returns dict with keys: text, cost, success, timed_out (optional)
     """
-    system_prompt = build_system_prompt(config)
+    system_prompt = build_system_prompt(config, context_mode=context_mode)
 
     # Resolve autonomy level if no explicit allowed_tools given
     if allowed_tools is None and config:

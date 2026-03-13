@@ -34,6 +34,14 @@ STAGE_TOOLS: dict[str, list[str]] = {
     "REVIEW": ["Read", "Glob", "Grep"],
 }
 
+# Per-stage model overrides — cheaper models for classification/read-only tasks.
+# ANALYZE and REVIEW are classification-only; Haiku handles them at ~20x lower cost.
+# BUILD uses the orchestrator's default model (sonnet). COLLECT has no LLM call.
+STAGE_MODELS: dict[str, str] = {
+    "ANALYZE": "claude-haiku-4-5-20251001",
+    "REVIEW":  "claude-haiku-4-5-20251001",
+}
+
 
 class EvolveOrchestrator:
     """Runs the evolve pipeline stage by stage, reporting progress."""
@@ -54,12 +62,18 @@ class EvolveOrchestrator:
         except Exception:
             pass
 
-    def _invoke(self, prompt: str, stage: str) -> dict:
+    def _invoke(self, prompt: str, stage: str,
+                model_override: str | None = None) -> dict:
         """Invoke Claude Code for a specific stage.
 
         Derives the stage key (text before first space or paren) and looks up
         STAGE_TOOLS to enforce per-stage tool allowlists. Stages not in STAGE_TOOLS
         run with full access (--dangerously-skip-permissions).
+
+        Model resolution order:
+          1. Explicit model_override argument
+          2. STAGE_MODELS lookup for the stage key
+          3. self.model (orchestrator default)
         """
         from .agent import invoke_claude_streaming
 
@@ -69,12 +83,21 @@ class EvolveOrchestrator:
         stage_key = stage.split("(")[0].split()[0].upper()
         allowed_tools = STAGE_TOOLS.get(stage_key)
 
+        # Resolve model: explicit override > stage map > orchestrator default
+        model = model_override or STAGE_MODELS.get(stage_key, self.model)
+        if model != self.model:
+            log.info(f"[evolve] Stage {stage_key}: using model override '{model}'")
+
+        # Pass context_mode if a matching overlay exists for this stage
+        context_mode = stage_key.lower()
+
         result = invoke_claude_streaming(
             prompt,
             on_progress=self.on_progress,
-            model=self.model,
+            model=model,
             session_context=f"[Evolve/{stage}]",
             allowed_tools=allowed_tools,
+            context_mode=context_mode,
         )
 
         cost = result.get("cost", 0)
