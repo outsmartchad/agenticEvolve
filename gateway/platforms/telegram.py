@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from .base import BasePlatformAdapter
-from ..voice import text_to_speech, speech_to_text, list_voices, maybe_tts_reply, get_tts_config, TtsMode
+from ..voice import text_to_speech, speech_to_text, list_voices, maybe_tts_reply, get_tts_config, TtsMode, parse_tts_directives, detect_language_voice
 
 log = logging.getLogger(__name__)
 
@@ -2289,13 +2289,13 @@ class TelegramAdapter(BasePlatformAdapter):
             if response:
                 # Check TTS auto-mode — if inbound, reply with voice too
                 config = self._gateway.config if self._gateway else {}
-                audio_reply = await maybe_tts_reply(response, config, inbound_was_voice=True)
+                audio_reply, clean_response = await maybe_tts_reply(response, config, inbound_was_voice=True)
 
                 if audio_reply and audio_reply.exists():
                     try:
-                        # Send text first, then voice
-                        for i in range(0, len(response), 4000):
-                            await update.message.reply_text(response[i:i+4000])
+                        # Send text first (with directives stripped), then voice
+                        for i in range(0, len(clean_response), 4000):
+                            await update.message.reply_text(clean_response[i:i+4000])
                         with open(audio_reply, "rb") as af:
                             await update.message.reply_voice(voice=af)
                     except Exception as e:
@@ -2303,8 +2303,8 @@ class TelegramAdapter(BasePlatformAdapter):
                     finally:
                         audio_reply.unlink(missing_ok=True)
                 else:
-                    for i in range(0, len(response), 4000):
-                        await update.message.reply_text(response[i:i+4000])
+                    for i in range(0, len(clean_response), 4000):
+                        await update.message.reply_text(clean_response[i:i+4000])
         except Exception as e:
             log.error(f"Voice processing error: {e}")
             await update.message.reply_text(f"Error: {e}")

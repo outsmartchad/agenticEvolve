@@ -8,6 +8,7 @@ Adapted from openclaw's voice pipeline patterns:
 import asyncio
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -326,27 +327,132 @@ def get_tts_config(config: dict) -> dict:
     }
 
 
+# ── TTS directive parsing (adapted from openclaw) ────────────
+
+# Pattern: [[tts:voice=zh-HK-WanLungNeural]] or [[tts:lang=zh-HK]]
+TTS_DIRECTIVE_RE = re.compile(r'\[\[tts:([^\]]+)\]\]', re.IGNORECASE)
+
+# Language → default voice mapping
+LANG_VOICE_MAP = {
+    "zh-HK": "zh-HK-WanLungNeural",       # Cantonese male
+    "zh-TW": "zh-TW-YunJheNeural",         # Taiwanese Mandarin male
+    "zh-CN": "zh-CN-YunxiNeural",          # Mandarin male
+    "ja-JP": "ja-JP-KeitaNeural",          # Japanese male
+    "ko-KR": "ko-KR-InJoonNeural",         # Korean male
+    "en-US": DEFAULT_TTS_VOICE,            # English
+    "en-GB": "en-GB-RyanNeural",           # British English
+    "fr-FR": "fr-FR-HenriNeural",          # French
+    "de-DE": "de-DE-ConradNeural",         # German
+    "es-ES": "es-ES-AlvaroNeural",         # Spanish
+}
+
+
+def parse_tts_directives(text: str) -> tuple[str, dict]:
+    """Extract [[tts:...]] directives from text, return (clean_text, overrides).
+
+    Supported directives:
+        [[tts:voice=zh-HK-WanLungNeural]]
+        [[tts:lang=zh-HK]]
+        [[tts:rate=+20%]]
+        [[tts:volume=+10%]]
+        [[tts:voice=zh-HK-WanLungNeural,rate=+10%]]
+    """
+    overrides = {}
+    matches = TTS_DIRECTIVE_RE.findall(text)
+    for match in matches:
+        for pair in match.split(","):
+            pair = pair.strip()
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                k, v = k.strip().lower(), v.strip()
+                if k == "lang" and v in LANG_VOICE_MAP:
+                    overrides["voice"] = LANG_VOICE_MAP[v]
+                elif k == "voice":
+                    overrides["voice"] = v
+                elif k in ("rate", "volume"):
+                    overrides[k] = v
+
+    clean = TTS_DIRECTIVE_RE.sub("", text).strip()
+    return clean, overrides
+
+
+def detect_language_voice(text: str) -> str | None:
+    """Simple heuristic to detect CJK language from response text and pick a voice.
+
+    Returns voice name or None to use default.
+    """
+    if not text:
+        return None
+
+    # Count character types in first 200 chars
+    sample = text[:200]
+    cjk_count = 0
+    jp_count = 0
+    kr_count = 0
+    total = 0
+
+    for ch in sample:
+        cp = ord(ch)
+        if cp > 127:
+            total += 1
+            # CJK Unified Ideographs
+            if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
+                cjk_count += 1
+            # Hiragana + Katakana
+            elif 0x3040 <= cp <= 0x30FF or 0x31F0 <= cp <= 0x31FF:
+                jp_count += 1
+            # Hangul
+            elif 0xAC00 <= cp <= 0xD7AF or 0x1100 <= cp <= 0x11FF:
+                kr_count += 1
+
+    if total < 5:
+        return None
+
+    if jp_count > 3:
+        return LANG_VOICE_MAP["ja-JP"]
+    if kr_count > 3:
+        return LANG_VOICE_MAP["ko-KR"]
+    if cjk_count > total * 0.3:
+        # CJK but not clearly Japanese/Korean — check for Cantonese markers
+        # Common Cantonese-specific characters: 嘅 係 唔 咁 咗 嘢 佢 嚟 噉 啲 冇
+        canto_chars = set("嘅係唔咁咗嘢佢嚟噉啲冇喺啱嗰")
+        canto_count = sum(1 for ch in sample if ch in canto_chars)
+        if canto_count >= 2:
+            return LANG_VOICE_MAP["zh-HK"]
+        return LANG_VOICE_MAP["zh-CN"]
+
+    return None
+
+
 async def maybe_tts_reply(
     text: str,
     config: dict,
     inbound_was_voice: bool = False,
-) -> Path | None:
+) -> tuple[Path | None, str]:
     """Check TTS mode and produce audio if appropriate.
 
-    Returns audio path if TTS should be sent, None otherwise.
+    Returns (audio_path, clean_text) — clean_text has TTS directives stripped.
     """
     tts_cfg = get_tts_config(config)
     mode = tts_cfg["mode"]
 
-    if mode == TtsMode.OFF:
-        return None
-    if mode == TtsMode.INBOUND and not inbound_was_voice:
-        return None
+    # Parse directives from Claude's response
+    clean_text, overrides = parse_tts_directives(text)
 
-    # mode is ALWAYS, or INBOUND and user sent voice
-    return await text_to_speech(
-        text=text,
-        voice=tts_cfg["voice"],
-        rate=tts_cfg["rate"],
-        volume=tts_cfg["volume"],
+    if mode == TtsMode.OFF and not overrides:
+        return None, text
+    if mode == TtsMode.INBOUND and not inbound_was_voice and not overrides:
+        return None, text
+
+    # Determine voice: directive override > language detection > config default
+    voice = overrides.get("voice") or detect_language_voice(clean_text) or tts_cfg["voice"]
+    rate = overrides.get("rate", tts_cfg["rate"])
+    volume = overrides.get("volume", tts_cfg["volume"])
+
+    audio = await text_to_speech(
+        text=clean_text,
+        voice=voice,
+        rate=rate,
+        volume=volume,
     )
+    return audio, clean_text
