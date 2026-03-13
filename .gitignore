@@ -28,3 +28,4 @@ whatsapp-bridge/auth/
 .env
 *.key
 config.yaml
+__pycache__/
