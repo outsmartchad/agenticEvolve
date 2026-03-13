@@ -386,12 +386,23 @@ class EvolveOrchestrator:
         reviewed = review_result.get("reviewed", [])
 
         if reviewed:
+            auto_installed = review_result.get("auto_installed", [])
             approved = [r for r in reviewed if r.get("approved")]
             rejected = [r for r in reviewed if not r.get("approved")]
 
-            if approved:
-                lines.append(f"*Skills pending approval ({len(approved)}):*")
-                for r in approved:
+            # Show auto-installed skills
+            installed_names = set(auto_installed)
+            if installed_names:
+                lines.append(f"*Auto-installed ({len(installed_names)}):*")
+                for name in installed_names:
+                    lines.append(f"  {name}")
+                lines.append("")
+
+            # Show remaining pending (if auto_approve is off)
+            pending = [r for r in approved if r["name"] not in installed_names]
+            if pending:
+                lines.append(f"*Skills pending approval ({len(pending)}):*")
+                for r in pending:
                     lines.append(f"  /approve {r['name']}")
                 lines.append("")
 
@@ -432,6 +443,21 @@ class EvolveOrchestrator:
 
         # Stage 4
         review_result = self.stage_review(build_result)
+
+        # Stage 4.5: Auto-install approved skills if config allows
+        from .config import load_config
+        cfg = load_config()
+        if cfg.get("auto_approve_skills", False):
+            auto_installed = []
+            for r in review_result.get("reviewed", []):
+                if r.get("approved"):
+                    ok, msg = approve_skill(r["name"])
+                    if ok:
+                        auto_installed.append(r["name"])
+                        self._report(f"  Auto-installed: {r['name']}")
+                    else:
+                        self._report(f"  Auto-install failed for {r['name']}: {msg}")
+            review_result["auto_installed"] = auto_installed
 
         # Stage 5
         summary = self.stage_report(collect_result, analyze_result,

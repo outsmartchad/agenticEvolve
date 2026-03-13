@@ -254,7 +254,7 @@ class AbsorbOrchestrator:
             f"- Do NOT break existing functionality — extend, don't rewrite\n"
             f"- Do NOT modify .env or config.yaml\n"
             f"- Do NOT restart the gateway\n"
-            f"- If creating a new skill, put it in ~/.agenticEvolve/skills-queue/ (NOT auto-install)\n\n"
+            f"- If creating a new skill, install it directly to ~/.claude/skills/<name>/SKILL.md\n\n"
 
             f"## Skill-Creator Standards (if creating or modifying skills):\n"
             f"When creating SKILL.md files, follow these quality standards:\n"

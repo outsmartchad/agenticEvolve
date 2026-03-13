@@ -28,8 +28,7 @@ Whether you're shipping a product, building an audience, researching competitors
 
 > /evolve
   [scans GitHub trending, Hacker News — scores 12 signals]
-  2 new skills built: api-rate-limiting, structured-logging
-  Queued for review. /approve to install.
+  2 new skills built and auto-installed: api-rate-limiting, structured-logging
 
 > write a twitter thread about why developers should use AI agents
   [drafts thread with hook, insights, CTA]
@@ -47,11 +46,11 @@ Whether you're shipping a product, building an audience, researching competitors
 - **Build** — Write code, debug, refactor, deploy, run terminal commands. Full Claude Code power from your phone.
 - **Research** — Deep-dive any topic, repo, or market. Web search, competitor analysis, technology evaluation. Findings are saved and searchable.
 - **Create** — Draft articles, threads, newsletters, documentation. Distinctive voice, not AI slop.
-- **Evolve** — Scans GitHub trending and Hacker News daily. Finds tools relevant to your stack. Builds new skills. Queues for your approval. Gets smarter on autopilot.
+- **Evolve** — Scans GitHub trending and Hacker News daily. Finds tools relevant to your stack. Builds new skills. Auto-installs them after review. Gets smarter on autopilot.
 - **Absorb** — Point it at any repo. It clones, analyzes, finds what you're missing, and implements the improvements.
 - **Remember** — Every conversation indexed with full-text search. Bounded notes about you and your projects. Context carries across sessions.
 - **Automate** — Built-in cron scheduler. `/loop every 6h /evolve` and it runs on its own. Set reminders. Schedule anything.
-- **Stay Safe** — Security scanner on all external code. Skills need your approval. Cost caps. Autonomy levels.
+- **Stay Safe** — Security scanner on all external code. Automated review agent validates skills before install. Cost caps. Autonomy levels.
 
 ---
 
@@ -93,7 +92,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/skills` | List installed skills |
 | `/cost` | Check spend |
 | `/loop <interval> <cmd>` | Schedule recurring tasks |
-| `/approve <name>` | Install a queued skill |
+| `/approve <name>` | Manually install a queued skill (when auto-approve is off) |
 
 [All 29 commands ->](docs/commands.md)
 

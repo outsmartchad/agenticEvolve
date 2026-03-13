@@ -19,14 +19,14 @@ When invoked via `claude -p`, the system prompt determines which "role" the agen
 ### Evolve Agent (`/evolve`)
 - Orchestrated by `gateway/evolve.py` — 5 stages: COLLECT → ANALYZE → BUILD → REVIEW → REPORT
 - Each stage is a separate `claude -p` call with a stage-specific prompt
-- BUILD stage creates skills in `~/.agenticEvolve/skills-queue/`, never auto-installs
-- REVIEW stage is a separate agent call that validates security, quality, correctness
-- Skills require human `/approve` before installation to `~/.claude/skills/`
+- BUILD stage creates skills, REVIEW stage validates security/quality/correctness
+- When `auto_approve_skills: true` (default), approved skills are auto-installed to `~/.claude/skills/`
+- When `auto_approve_skills: false`, skills go to `skills-queue/` and require human `/approve`
 
 ### Learn Agent (`/learn`)
 - Deep-dives a GitHub repo, URL, or technology
 - Analyzes how it benefits Vincent's work (AI agents, onchain infra, dev tools)
-- May produce a skill in `skills-queue/` (never auto-installed)
+- May produce and auto-install a skill to `~/.claude/skills/`
 - Updates MEMORY.md with findings
 
 ### Cron Agent
@@ -39,7 +39,7 @@ When invoked via `claude -p`, the system prompt determines which "role" the agen
 - **Gateway code**: `gateway/` — Python 3.11+, asyncio
 - **Platform adapters**: `gateway/platforms/` — each implements `BasePlatformAdapter`
 - **Memory**: `memory/MEMORY.md` (2200 char limit), `memory/USER.md` (1375 char limit)
-- **Skills queue**: `skills-queue/<name>/SKILL.md` — pending human review
+- **Skills queue**: `skills-queue/<name>/SKILL.md` — pending review (only when auto_approve_skills: false)
 - **Installed skills**: `~/.claude/skills/<name>/SKILL.md` — active
 - **Cron jobs**: `cron/jobs.json`
 - **Config**: `config.yaml` (settings) + `.env` (secrets)
@@ -56,7 +56,7 @@ When invoked via `claude -p`, the system prompt determines which "role" the agen
 
 ## Safety Rules
 
-- Skills NEVER auto-install — always go to `skills-queue/` first
+- Skills auto-install when `auto_approve_skills: true` (default). Set to `false` for manual approval gate
 - Cost cap enforced before every `claude -p` invocation
 - Only whitelisted user IDs can interact with the bot (config.yaml)
 - Memory has hard character limits to prevent unbounded growth

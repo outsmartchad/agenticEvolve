@@ -16,6 +16,9 @@ session_idle_minutes: 120
 # "readonly"   — read-only tools, no writes or bash
 autonomy: full
 
+# Closed-loop autonomy — auto-install skills after review passes
+auto_approve_skills: true
+
 # Explicit tool override (empty = use autonomy level defaults)
 allowed_tools: []
 
@@ -37,7 +40,7 @@ platforms:
   telegram:
     enabled: false
     # token: set TELEGRAM_BOT_TOKEN in .env
-    allowed_users: []      # empty = deny all (add your user ID)
+    allowed_users: [934847281]
     home_channel: ""       # set TELEGRAM_CHAT_ID in .env for cron delivery
 
   discord:
