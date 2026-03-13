@@ -1,13 +1,13 @@
 ---
 name: session-search
-description: ALWAYS read this skill when user says "we talked about", "remember when", "what did we decide", "find that session", or references any past conversation or prior discussion.
+description: Search past agenticEvolve conversations using SQLite FTS5. ALWAYS use this skill when the user says "we talked about", "remember when", "what did we decide", "find that session", "last time", "earlier today", "previous conversation", or references any past discussion, prior context, or historical decision — even if they don't explicitly say "search".
 argument-hint: /session-search "how to deploy"
 allowed-tools: Bash(python3 *), Read
 ---
 
 # Session Search
 
-Search across all past agenticEvolve conversations using SQLite FTS5.
+Search across all past agenticEvolve conversations using SQLite FTS5. This gives you recall over every session, decision, and discussion — the agent's long-term episodic memory.
 
 ## Usage
 
@@ -46,11 +46,16 @@ print(json.dumps(msgs, indent=2))
 "
 ```
 
-4. Summarize the relevant findings concisely.
+4. Summarize the relevant findings concisely. Lead with the answer, then cite the session.
 
-## Tips
+## Query Tips
 
-- FTS5 supports prefix queries: `deploy*` matches "deploy", "deployed", "deployment"
-- Use quotes for exact phrases: `"cost tracking"`
+FTS5 is powerful — use it:
+- Prefix queries: `deploy*` matches "deploy", "deployed", "deployment"
+- Exact phrases: `"cost tracking"`
 - Boolean operators: `deploy AND production`, `error NOT warning`
-- Column filters are not needed — all content is indexed
+- Combine for precision: `"daily evolve" AND cron`
+
+## Why This Matters
+
+Without session search, every conversation starts from zero. This skill gives the agent continuity — it can reference what was decided, what was tried, and what worked. That's the difference between a tool and a partner.

@@ -1,16 +1,20 @@
 ---
 name: agent-browser-protocol
-description: Add the agent-browser-protocol (ABP) MCP server to Claude Code for synchronized browser automation. ABP forks Chromium to freeze JS/rendering after each action and return fresh state + structured event log. Use when the user wants to automate browser tasks, scrape dynamic websites, fill out web forms, test web UIs, or needs Claude to interact with any website reliably.
+description: Add the Agent Browser Protocol (ABP) MCP server to Claude Code for deterministic browser automation (333+ stars, 90.5% on Online Mind2Web). ABP is a Chromium build that freezes JS between agent actions, returning settled screenshots + structured event logs per step. Use when the user wants to automate browser tasks, scrape dynamic websites, fill web forms, test web UIs, interact with any website reliably, order food, book flights, or do anything in a browser — even if they just say "go to" a URL or "check this website".
 argument-hint: [add | demo | remove]
 disable-model-invocation: true
-allowed-tools: Bash(claude mcp *), Bash(npx *)
+allowed-tools: Bash(claude mcp *), Bash(npx *), Bash(curl *)
 ---
 
-# agent-browser-protocol (ABP)
+# Agent Browser Protocol (ABP)
 
-A forked Chromium MCP server that keeps the agent synchronized with the browser at every step. After each action it freezes JS execution, captures a screenshot of the frozen state, and returns a structured event log (navigation, file pickers, permission prompts, alerts, downloads).
+A Chromium build with MCP + REST baked directly into the browser engine. ABP reformats web browsing — which is continuous and async — into the discrete, multimodal step format agents reason in.
 
-Scores 90.5% on Online Mind2Web benchmark with Opus 4.6.
+**90.53% on Online Mind2Web** — the highest published score for browser automation agents.
+
+## Why ABP Exists
+
+Most browser automation stacks force agents to race against a live browser, then patch over timing issues with waits and retries. ABP makes browsing a step machine: each request injects native input, waits for an engine-defined "settled" boundary, captures compositor output (with cursor), returns an event log, then freezes JavaScript until the next step. The agent never reasons from stale state.
 
 ## Add to Claude Code
 
@@ -18,11 +22,30 @@ Scores 90.5% on Online Mind2Web benchmark with Opus 4.6.
 claude mcp add browser -- npx -y agent-browser-protocol --mcp
 ```
 
-## Key Behaviors
+Then ask Claude to browse any website. If you have a Playwright MCP server configured, disable it first to avoid tool name conflicts.
 
-- **Freeze-then-capture**: After click/type/scroll, JS is frozen before screenshot — agent never reasons from stale state.
-- **Event log**: Each action returns structured events (e.g., `{type: "navigation", url: "..."}`, `{type: "download_started"}`).
-- **Multimodal loop**: Screenshot + event log = full context per step.
+## What You Get Per Action
+
+Every action returns everything the agent needs for the next decision:
+- **Before/after screenshots** (WebP, with virtual cursor)
+- **Structured event log** — navigation, dialogs, file choosers, downloads
+- **Scroll position** and page dimensions
+- **Cursor state** and type
+- **Timing data** (~100ms overhead per action)
+
+No need to call "take screenshot" after every action. No need to poll for events.
+
+## Key Capabilities
+
+| Feature | How It Works |
+|---------|-------------|
+| **Freeze-then-capture** | JS is frozen before screenshot — agent never reasons from stale state |
+| **Native input dispatch** | Real input events through Chromium's RenderWidgetHost, not DOM simulation |
+| **Element markup** | Request bounding boxes drawn around clickable/typeable elements in screenshots |
+| **Virtual cursor** | Compositor-layer cursor appears in screenshots — agent sees what a human would |
+| **Dialog handling** | `alert()`, `confirm()`, file choosers surfaced as events with dedicated endpoints |
+| **Session recording** | Every action recorded to SQLite — successful sessions become training data |
+| **Execution control** | JS + virtual time pause between actions (enabled by default) |
 
 ## Common Failures ABP Eliminates
 
@@ -35,10 +58,20 @@ claude mcp add browser -- npx -y agent-browser-protocol --mcp
 ## Usage Pattern
 
 When using ABP in an agent loop:
-
 1. Call `browser_navigate` or `browser_click` / `browser_type`
 2. Read the returned screenshot + event log
 3. Decide next action based on frozen current state — not a guess
+4. For element discovery, request markup: `{"screenshot": {"markup": ["clickable", "typeable"]}}`
+
+## REST API (No MCP)
+
+ABP also exposes a full REST API on `localhost:8222`:
+```bash
+curl -s http://localhost:8222/api/v1/tabs              # list tabs
+curl -s -X POST http://localhost:8222/api/v1/tabs/<ID>/navigate \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.com","screenshot":{"format":"webp"}}'
+```
 
 ## Remove
 

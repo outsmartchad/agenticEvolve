@@ -1,6 +1,6 @@
 ---
 name: cron-manager
-description: ALWAYS read this skill for cron, schedule, recurring job, reminder, periodic task, "run every", "set up automated", or "show my scheduled/active jobs". Manages all timed/repeating agent tasks.
+description: Manage agent-scheduled recurring tasks, reminders, and automations. ALWAYS use this skill for cron, schedule, recurring job, reminder, periodic task, "run every", "check daily", "remind me", "set up automated", "show my scheduled/active jobs", or any request involving timed or repeating agent work — even one-shot delayed tasks.
 argument-hint: /cron add "every 2h" "Scan GitHub trending for useful dev tools"
 disable-model-invocation: true
 allowed-tools: Bash(python3 *), Read, Write
@@ -8,7 +8,7 @@ allowed-tools: Bash(python3 *), Read, Write
 
 # Cron Manager
 
-Manage agent-scheduled recurring tasks. Jobs are stored in `~/.agenticEvolve/cron/jobs.json`.
+Manage agent-scheduled recurring tasks. Jobs are stored in `~/.agenticEvolve/cron/jobs.json` and executed by the gateway process.
 
 ## Commands
 
@@ -87,9 +87,9 @@ with open(path, 'w') as f:
 
 5. Report: "Scheduled: <summary>. Next run at <time>."
 
-### Self-contained prompts
+### Writing Good Cron Prompts
 
-Cron prompts run in fresh sessions with no conversation history. They must be fully self-contained:
+Cron prompts run in fresh sessions with no conversation history. They must be fully self-contained — include the project path, what to check, and how to report results.
 
 Bad: "Check on that deployment"
 Good: "Check the status of the API deployment at ~/projects/myapi. Run the health check endpoint and report any errors."

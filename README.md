@@ -189,7 +189,7 @@ Each incoming message:
 
 The cron scheduler runs inside the gateway process, ticking every 60 seconds to execute due jobs and deliver results to your platform. Supports standard 5-field cron expressions (`0 6 * * *`) with timezone awareness.
 
-## Skills (7 installed)
+## Skills (16 installed)
 
 Skills follow the [official skill-creator](https://github.com/anthropics/claude-plugins-official) quality standards — short imperative descriptions with "ALWAYS read this skill" framing, progressive disclosure, and proper frontmatter.
 
@@ -199,11 +199,22 @@ Skills follow the [official skill-creator](https://github.com/anthropics/claude-
 | **cron-manager** | Schedule recurring agent tasks | "cron", "schedule", "recurring job", "run every" |
 | **brave-search** | Web search via Brave API | "search for", "look up", "what's the latest on" |
 | **skill-creator** | Create, eval, benchmark, and optimize skills | "create a skill", "optimize this skill" |
+| **article-writing** | Write articles, blogs, newsletters in a distinctive voice | "write a blog post", "draft an article" |
+| **video-editing** | AI-assisted video editing (FFmpeg, Remotion, ElevenLabs) | "edit video", "cut footage", "make a vlog" |
+| **autonomous-loops** | Patterns for autonomous Claude Code loops | "set up a loop", "autonomous workflow" |
+| **continuous-learning-v2** | Instinct-based learning from sessions via hooks | "set up learning", "instinct", "observe patterns" |
+| **deep-research** | Multi-source cited research reports | "research", "deep dive", "investigate" |
+| **eval-harness** | Eval-driven development with pass@k metrics | "set up evals", "benchmark", "measure reliability" |
+| **market-research** | Market sizing, competitive analysis, investor diligence | "market research", "competitive analysis" |
+| **security-review** | Security best practices checklist for code | "security review", "check for vulnerabilities" |
+| **security-scan** | Scan Claude Code config for misconfigurations | "scan config", "security audit" |
 | **nah** | PreToolUse permission guard | Explicit invocation only |
 | **agent-browser-protocol** | Chromium browser automation MCP | Explicit invocation only |
 | **unf** | Auto file versioning daemon | Explicit invocation only |
 
 Skills with `disable-model-invocation: true` (nah, ABP, unf, cron-manager) only trigger when explicitly invoked — they're install/config tools, not general-purpose.
+
+9 skills adapted from [everything-claude-code](https://github.com/affaan-m/everything-claude-code) (73k+ stars) — refined for individual dev/creator workflows with pushy trigger descriptions, agenticEvolve integration notes, and builder-style voice.
 
 ## Project structure
 
