@@ -136,7 +136,7 @@ async def list_voices(language_filter: str = "en") -> list[dict]:
 
 async def speech_to_text(
     audio_path: str | Path,
-    language: str = "auto",
+    language: str = "zh",
 ) -> str | None:
     """Transcribe audio file to text. Tries providers in order:
     1. Groq whisper (free, GROQ_API_KEY)

@@ -380,6 +380,85 @@ class EvolveOrchestrator:
 
         return {"reviewed": reviewed}
 
+    # ── Stage 4.75: AgentShield scan (Layer 2) ────────────────────
+
+    def _agentshield_scan(self, auto_installed: list, review_result: dict):
+        """Run AgentShield (ecc-agentshield) on ~/.claude/ after skill install.
+
+        Layer 1: gateway/security.py regex scanner (runs on raw skill files before install)
+        Layer 2: AgentShield (runs on installed ~/.claude/ config — checks for injection,
+                 misconfiguration, and interaction risks between skills/config)
+        """
+        import subprocess as sp
+
+        self._report("*AgentShield scan: scanning ~/.claude/ config post-install...*")
+
+        try:
+            result = sp.run(
+                ["npx", "ecc-agentshield", "scan", "--path", str(Path.home() / ".claude"), "--format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            if result.returncode != 0 and not result.stdout:
+                self._report(f"*AgentShield scan: failed to run* ({result.stderr[:200]})")
+                return
+
+            output = result.stdout.strip()
+
+            # Parse JSON output
+            try:
+                scan_data = json.loads(output)
+                grade = scan_data.get("grade", "?")
+                score = scan_data.get("score", "?")
+                findings = scan_data.get("findings", [])
+                critical = [f for f in findings if f.get("severity") == "critical"]
+                high = [f for f in findings if f.get("severity") == "high"]
+
+                self._report(f"*AgentShield: Grade {grade} ({score}/100)*")
+
+                if critical:
+                    self._report(f"  CRITICAL findings: {len(critical)}")
+                    for f in critical[:3]:
+                        self._report(f"    - {f.get('message', '?')}")
+
+                    # Rollback: uninstall the skills that were just installed
+                    self._report("*Rolling back auto-installed skills due to critical findings...*")
+                    for name in auto_installed:
+                        skill_dir = Path.home() / ".claude" / "skills" / name
+                        if skill_dir.exists():
+                            import shutil
+                            shutil.rmtree(skill_dir)
+                            self._report(f"  Removed: {name}")
+                    review_result["auto_installed"] = []
+                    review_result["agentshield_rollback"] = True
+
+                elif high:
+                    self._report(f"  High findings: {len(high)}")
+                    for f in high[:3]:
+                        self._report(f"    - {f.get('message', '?')}")
+                    self._report("  Skills kept installed — review high findings manually.")
+
+                else:
+                    self._report("  No critical/high findings. All clear.")
+
+                review_result["agentshield"] = {"grade": grade, "score": score,
+                                                 "critical": len(critical), "high": len(high)}
+
+            except (json.JSONDecodeError, ValueError):
+                # Non-JSON output — just report the text summary
+                lines = output.splitlines()
+                summary = "\n".join(lines[:10])
+                self._report(f"*AgentShield output:*\n{summary}")
+
+        except sp.TimeoutExpired:
+            self._report("*AgentShield scan: timed out (120s)*")
+        except FileNotFoundError:
+            self._report("*AgentShield scan: npx not found — install Node.js*")
+        except Exception as e:
+            self._report(f"*AgentShield scan: error — {e}*")
+
     # ── Stage 5: Report ──────────────────────────────────────────
 
     def stage_report(self, collect_result: dict, analyze_result: dict,
@@ -481,6 +560,10 @@ class EvolveOrchestrator:
                     else:
                         self._report(f"  Auto-install failed for {r['name']}: {msg}")
             review_result["auto_installed"] = auto_installed
+
+            # Stage 4.75: AgentShield scan on ~/.claude/ after skill install (Layer 2 security)
+            if auto_installed and not self.skip_security_scan:
+                self._agentshield_scan(auto_installed, review_result)
 
         # Stage 5
         summary = self.stage_report(collect_result, analyze_result,

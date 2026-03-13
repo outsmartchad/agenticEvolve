@@ -421,8 +421,70 @@ class AbsorbOrchestrator:
         # Stage 4: Implement
         impl_result = self.stage_implement(plan_result)
 
+        # Stage 4.5: AgentShield scan (Layer 2) — check ~/.claude/ config after implementation
+        if not self.skip_security_scan:
+            self._agentshield_scan()
+
         # Stage 5: Report
         summary = self.generate_report(scan_result, gap_result, plan_result, impl_result)
 
         self._report("*Absorb pipeline complete.*")
         return summary, self._cost_total
+
+    def _agentshield_scan(self):
+        """Run AgentShield on ~/.claude/ after absorb implements changes.
+
+        Layer 1: gateway/security.py (pre-implementation repo scan)
+        Layer 2: AgentShield (post-implementation config scan)
+        """
+        import subprocess as sp
+
+        self._report("*AgentShield scan: scanning ~/.claude/ config post-implementation...*")
+
+        try:
+            result = sp.run(
+                ["npx", "ecc-agentshield", "scan", "--path", str(Path.home() / ".claude"), "--format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            if result.returncode != 0 and not result.stdout:
+                self._report(f"*AgentShield scan: failed to run* ({result.stderr[:200]})")
+                return
+
+            output = result.stdout.strip()
+
+            try:
+                import json
+                scan_data = json.loads(output)
+                grade = scan_data.get("grade", "?")
+                score = scan_data.get("score", "?")
+                findings = scan_data.get("findings", [])
+                critical = [f for f in findings if f.get("severity") == "critical"]
+                high = [f for f in findings if f.get("severity") == "high"]
+
+                self._report(f"*AgentShield: Grade {grade} ({score}/100)*")
+
+                if critical:
+                    self._report(f"  CRITICAL findings: {len(critical)}")
+                    for f in critical[:3]:
+                        self._report(f"    - {f.get('message', '?')}")
+                    self._report("  Review critical findings before using new skills.")
+                elif high:
+                    self._report(f"  High findings: {len(high)}")
+                    for f in high[:3]:
+                        self._report(f"    - {f.get('message', '?')}")
+                else:
+                    self._report("  No critical/high findings. All clear.")
+
+            except (json.JSONDecodeError, ValueError):
+                lines = output.splitlines()
+                self._report(f"*AgentShield:*\n" + "\n".join(lines[:10]))
+
+        except sp.TimeoutExpired:
+            self._report("*AgentShield scan: timed out (120s)*")
+        except FileNotFoundError:
+            self._report("*AgentShield scan: npx not found — install Node.js*")
+        except Exception as e:
+            self._report(f"*AgentShield scan: error — {e}*")

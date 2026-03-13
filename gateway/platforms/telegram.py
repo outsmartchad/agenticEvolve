@@ -2255,8 +2255,8 @@ class TelegramAdapter(BasePlatformAdapter):
         chat_id = str(update.message.chat_id)
         user_id = str(update.message.from_user.id)
 
-        # Prepend reply context if replying to something
-        full_text = transcript
+        # Prepend voice context so Claude knows this is a transcribed voice message
+        full_text = f"[The user sent a voice message. This is the transcript — treat it as if the user typed it directly]: {transcript}"
         reply_text, reply_urls = self._get_reply_context(update)
         if reply_text:
             full_text = f"[Replying to previous message: {reply_text[:1500]}]\n\n{transcript}"
