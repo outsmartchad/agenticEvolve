@@ -136,7 +136,7 @@ async def list_voices(language_filter: str = "en") -> list[dict]:
 
 async def speech_to_text(
     audio_path: str | Path,
-    language: str = "en",
+    language: str = "auto",
 ) -> str | None:
     """Transcribe audio file to text. Tries providers in order:
     1. Groq whisper (free, GROQ_API_KEY)
@@ -203,7 +203,7 @@ async def _whisper_api(
         return None
 
 
-WHISPER_MODEL_PATH = EXODIR / "models" / "ggml-base.en.bin"
+WHISPER_MODEL_PATH = EXODIR / "models" / "ggml-small.bin"  # multilingual small model (better CJK/Cantonese accuracy)
 
 
 async def _local_whisper(audio_path: Path, language: str) -> str | None:
@@ -218,12 +218,13 @@ async def _local_whisper(audio_path: Path, language: str) -> str | None:
         return None
 
     try:
+        args = [cmd_name, "-m", str(model_path), "-f", str(audio_path), "--no-timestamps"]
+        if language and language != "auto":
+            args.extend(["-l", language])
+        # else: whisper-cli auto-detects language
+
         proc = await asyncio.create_subprocess_exec(
-            cmd_name,
-            "-m", str(model_path),
-            "-f", str(audio_path),
-            "-l", language,
-            "--no-timestamps",
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
