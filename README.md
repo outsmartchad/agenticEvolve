@@ -1,6 +1,6 @@
 # agenticEvolve
 
-**A personal agent that helps you succeed on the internet.**
+**A self-evolving agent that actually helps you succeed on the internet.**
 
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
