@@ -35,6 +35,58 @@ class TelegramAdapter(BasePlatformAdapter):
         self.app = None
         self._gateway = None  # set by GatewayRunner after creation
 
+    async def _auto_sync_to_repo(self, pipeline: str):
+        """Auto-commit and push changes to the git repo after a pipeline run."""
+        import subprocess as sp
+        repo_dir = Path.home() / "Desktop" / "projects" / "agenticEvolve"
+        if not (repo_dir / ".git").exists():
+            return
+
+        try:
+            # Sync skills from ~/.claude/skills/ to repo
+            skills_src = Path.home() / ".claude" / "skills"
+            skills_dst = repo_dir / "skills"
+            if skills_src.exists():
+                import shutil
+                # Sync each skill dir
+                for skill_dir in skills_src.iterdir():
+                    if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+                        dst = skills_dst / skill_dir.name
+                        dst.mkdir(parents=True, exist_ok=True)
+                        for f in skill_dir.iterdir():
+                            if f.name.startswith("."):
+                                continue
+                            shutil.copy2(str(f), str(dst / f.name))
+
+            # Sync gateway code
+            gateway_src = Path.home() / ".agenticEvolve" / "gateway"
+            gateway_dst = repo_dir / "gateway"
+            if gateway_src.exists() and gateway_dst.exists():
+                import shutil
+                for f in gateway_src.glob("*.py"):
+                    shutil.copy2(str(f), str(gateway_dst / f.name))
+                platforms_src = gateway_src / "platforms"
+                platforms_dst = gateway_dst / "platforms"
+                if platforms_src.exists():
+                    platforms_dst.mkdir(parents=True, exist_ok=True)
+                    for f in platforms_src.glob("*.py"):
+                        shutil.copy2(str(f), str(platforms_dst / f.name))
+
+            # Git add, commit, push
+            sp.run(["git", "add", "-A"], cwd=str(repo_dir), capture_output=True, timeout=30)
+            diff = sp.run(["git", "diff", "--cached", "--stat"], cwd=str(repo_dir), capture_output=True, text=True, timeout=10)
+            if diff.stdout.strip():
+                sp.run(
+                    ["git", "commit", "-m", f"auto: sync after /{pipeline} pipeline"],
+                    cwd=str(repo_dir), capture_output=True, timeout=30
+                )
+                sp.run(["git", "push"], cwd=str(repo_dir), capture_output=True, timeout=60)
+                log.info(f"Auto-synced to repo after /{pipeline}")
+            else:
+                log.info(f"No changes to sync after /{pipeline}")
+        except Exception as e:
+            log.error(f"Auto-sync failed after /{pipeline}: {e}")
+
     def _is_allowed(self, user_id: int) -> bool:
         if not self.allowed_users:
             return False
@@ -574,12 +626,21 @@ class TelegramAdapter(BasePlatformAdapter):
         footer = f"\n\n({tools_used} steps, ${cost:.2f})"
         full_summary = summary + footer
         for i in range(0, len(full_summary), 4000):
-            await self.app.bot.send_message(
-                chat_id=int(chat_id), text=full_summary[i:i+4000], parse_mode="Markdown"
-            )
+            chunk = full_summary[i:i+4000]
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk
+                )
 
         if cost > 0 and self._gateway:
             self._gateway._log_cost("telegram", "evolve", cost)
+
+        # Auto-commit and push new skills to git repo
+        await self._auto_sync_to_repo("evolve")
 
     # ── /queue — list skills pending approval ────────────────────
 
@@ -1089,10 +1150,17 @@ class TelegramAdapter(BasePlatformAdapter):
         header = f"*Learn: {target}*\n({tools_used} steps, ${cost:.2f})\n\n"
         full = header + response
         for i in range(0, len(full), 4000):
-            await self.app.bot.send_message(chat_id=int(chat_id), text=full[i:i+4000], parse_mode="Markdown")
+            chunk = full[i:i+4000]
+            try:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk, parse_mode="Markdown")
+            except Exception:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
 
         if cost > 0 and self._gateway:
             self._gateway._log_cost("telegram", "learn", cost)
+
+        # Auto-sync to repo
+        await self._auto_sync_to_repo("learn")
 
         # Store learning in DB
         try:
@@ -1213,12 +1281,21 @@ class TelegramAdapter(BasePlatformAdapter):
         footer = f"\n\n({tools_used} steps, ${cost:.2f})"
         full_summary = summary + footer
         for i in range(0, len(full_summary), 4000):
-            await self.app.bot.send_message(
-                chat_id=int(chat_id), text=full_summary[i:i+4000], parse_mode="Markdown"
-            )
+            chunk = full_summary[i:i+4000]
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk
+                )
 
         if cost > 0 and self._gateway:
             self._gateway._log_cost("telegram", "absorb", cost)
+
+        # Auto-sync to repo
+        await self._auto_sync_to_repo("absorb")
 
         # Store in learnings DB
         try:
