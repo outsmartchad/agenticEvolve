@@ -53,6 +53,13 @@ platforms:
     enabled: false
     allowed_users: []      # phone numbers, e.g. ["85212345678@s.whatsapp.net"]
 
+# Voice / TTS / STT (adapted from openclaw)
+tts:
+  mode: inbound             # off = only /speak, always = every reply, inbound = reply with voice when user sends voice
+  voice: en-US-AndrewMultilingualNeural  # edge-tts voice (run /speak --voices to list)
+  rate: "+0%"               # speech rate adjustment
+  volume: "+0%"             # volume adjustment
+
 # Cron scheduler
 cron:
   enabled: true

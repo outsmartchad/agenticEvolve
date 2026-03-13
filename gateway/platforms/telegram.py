@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from .base import BasePlatformAdapter
+from ..voice import text_to_speech, speech_to_text, list_voices, maybe_tts_reply, get_tts_config, TtsMode
 
 log = logging.getLogger(__name__)
 
@@ -396,6 +397,11 @@ class TelegramAdapter(BasePlatformAdapter):
             "/pause <id|--all> — Pause loop(s)\n"
             "/unpause <id|--all> — Resume loop(s)\n"
             "/notify <delay> <msg> — One-shot reminder\n\n"
+            "Voice\n"
+            "/speak <text> [--voice <name>] — Text-to-speech\n"
+            "/speak --voices [lang] — List available voices\n"
+            "/speak --mode <off|always|inbound> — Auto-TTS mode\n"
+            "Send a voice message — auto-transcribe + reply\n\n"
             "Maintenance\n"
             "/gc [--dry-run] — Garbage collection\n\n"
             "Natural Language\n"
@@ -2077,6 +2083,236 @@ class TelegramAdapter(BasePlatformAdapter):
             typing_active = False
             typing_task.cancel()
 
+    # ── /speak — text-to-speech ───────────────────────────────────
+
+    async def _handle_speak(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Convert text to speech and send as Telegram voice message.
+
+        Usage:
+            /speak <text>           — convert text to voice (default voice)
+            /speak --voice <name>   — use a specific edge-tts voice
+            /speak --voices         — list available English voices
+            /speak --mode <mode>    — set auto-TTS mode (off/always/inbound)
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        raw_args = list(context.args) if context.args else []
+
+        # /speak --voices — list voices
+        if raw_args and raw_args[0] in ("--voices", "--list"):
+            lang = raw_args[1] if len(raw_args) > 1 else "en"
+            voices = await list_voices(lang)
+            if not voices:
+                await update.message.reply_text("No voices found.")
+                return
+            lines = [f"Edge TTS voices ({lang}):\n"]
+            for v in voices[:30]:
+                name = v.get("ShortName", "?")
+                gender = v.get("Gender", "?")
+                lines.append(f"  {name} ({gender})")
+            if len(voices) > 30:
+                lines.append(f"\n... and {len(voices) - 30} more")
+            await update.message.reply_text("\n".join(lines))
+            return
+
+        # /speak --mode <off|always|inbound>
+        if raw_args and raw_args[0] == "--mode":
+            if len(raw_args) < 2:
+                tts_cfg = get_tts_config(self._gateway.config if self._gateway else {})
+                await update.message.reply_text(
+                    f"Current TTS mode: {tts_cfg['mode']}\n"
+                    f"Voice: {tts_cfg['voice']}\n\n"
+                    "Modes:\n"
+                    "  off — only /speak\n"
+                    "  always — every reply gets voice\n"
+                    "  inbound — reply with voice when you send voice"
+                )
+                return
+            new_mode = raw_args[1].lower()
+            if not TtsMode.is_valid(new_mode):
+                await update.message.reply_text(f"Invalid mode: {new_mode}. Use: off, always, inbound")
+                return
+            # Update config in memory (hot-reload will persist on next config write)
+            if self._gateway:
+                if "tts" not in self._gateway.config:
+                    self._gateway.config["tts"] = {}
+                self._gateway.config["tts"]["mode"] = new_mode
+            await update.message.reply_text(f"TTS mode set to: {new_mode}")
+            return
+
+        # Parse --voice flag
+        flags = self._parse_flags(raw_args, {"--voice": {"type": "str"}})
+        voice = flags.get("--voice") or None
+        text = " ".join(raw_args)
+
+        # If replying to a message, use that text
+        if not text:
+            reply_text, _ = self._get_reply_context(update)
+            if reply_text:
+                text = reply_text
+
+        if not text:
+            await update.message.reply_text(
+                "*Usage:* `/speak <text>`\n\n"
+                "*Options:*\n"
+                "`--voice <name>` — use specific voice\n"
+                "`--voices [lang]` — list voices\n"
+                "`--mode <off|always|inbound>` — auto-TTS mode\n\n"
+                "*Examples:*\n"
+                "`/speak Hello, how are you today?`\n"
+                "`/speak --voice en-US-GuyNeural Hey there!`\n"
+                "`/speak --voices zh`\n\n"
+                "Or reply to any message with `/speak` to voice it.",
+                parse_mode="Markdown"
+            )
+            return
+
+        # Get voice from config if not specified
+        if not voice and self._gateway:
+            tts_cfg = get_tts_config(self._gateway.config)
+            voice = tts_cfg["voice"]
+
+        await update.message.chat.send_action("record_voice")
+
+        audio_path = await text_to_speech(text, voice=voice or "en-US-AndrewMultilingualNeural")
+
+        if audio_path and audio_path.exists():
+            try:
+                with open(audio_path, "rb") as audio_file:
+                    await update.message.reply_voice(
+                        voice=audio_file,
+                        caption=text[:200] if len(text) > 50 else None,
+                    )
+            except Exception as e:
+                log.error(f"Failed to send voice: {e}")
+                await update.message.reply_text(f"Failed to send voice message: {e}")
+            finally:
+                audio_path.unlink(missing_ok=True)
+        else:
+            await update.message.reply_text("TTS failed. Check logs.")
+
+    # ── Voice/audio message handler ────────────────────────────────
+
+    async def _handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle incoming voice messages — transcribe and process as text.
+
+        Adapted from openclaw's audio-preflight + STT pipeline:
+        1. Download voice/audio from Telegram
+        2. Transcribe via Groq/OpenAI whisper
+        3. Process transcript as regular message (with auto-TTS if mode=inbound)
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        # Get the voice or audio object
+        voice = update.message.voice
+        audio = update.message.audio
+        media = voice or audio
+
+        if not media:
+            return
+
+        duration = getattr(media, "duration", 0)
+        file_size = getattr(media, "file_size", 0)
+
+        # Download the audio file
+        audio_dir = EXODIR / "tmp" / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        ext = ".ogg" if voice else ".mp3"
+        audio_path = audio_dir / f"voice_{timestamp}_{media.file_id[:8]}{ext}"
+
+        try:
+            file = await context.bot.get_file(media.file_id)
+            await file.download_to_drive(str(audio_path))
+            log.info(f"Voice downloaded: {audio_path} ({file_size} bytes, {duration}s)")
+        except Exception as e:
+            log.error(f"Failed to download voice: {e}")
+            await update.message.reply_text(f"Failed to download voice message: {e}")
+            return
+
+        # Transcribe
+        await update.message.chat.send_action("typing")
+        transcript = await speech_to_text(audio_path)
+
+        if not transcript:
+            await update.message.reply_text(
+                "Could not transcribe voice message.\n"
+                "Set GROQ_API_KEY (free) or OPENAI_API_KEY in .env for speech-to-text."
+            )
+            audio_path.unlink(missing_ok=True)
+            return
+
+        # Show transcript
+        await update.message.reply_text(f"[Transcript]: {transcript}")
+
+        # Process as regular message
+        chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+
+        # Prepend reply context if replying to something
+        full_text = transcript
+        reply_text, reply_urls = self._get_reply_context(update)
+        if reply_text:
+            full_text = f"[Replying to previous message: {reply_text[:1500]}]\n\n{transcript}"
+
+        # Check for URLs — offer absorb/learn
+        urls = self._extract_urls(full_text)
+        if urls:
+            non_url_text = full_text
+            for url in urls:
+                non_url_text = non_url_text.replace(url, "").strip()
+            if len(non_url_text) < 30:
+                await self._offer_absorb_learn(update, urls[0], "link in voice")
+                audio_path.unlink(missing_ok=True)
+                return
+
+        # Regular chat with Claude
+        typing_active = True
+        async def keep_typing():
+            while typing_active:
+                try:
+                    await update.message.chat.send_action("typing")
+                except Exception:
+                    pass
+                await asyncio.sleep(4)
+
+        typing_task = asyncio.create_task(keep_typing())
+
+        try:
+            response = await self.on_message("telegram", chat_id, user_id, full_text)
+            if response:
+                # Check TTS auto-mode — if inbound, reply with voice too
+                config = self._gateway.config if self._gateway else {}
+                audio_reply = await maybe_tts_reply(response, config, inbound_was_voice=True)
+
+                if audio_reply and audio_reply.exists():
+                    try:
+                        # Send text first, then voice
+                        for i in range(0, len(response), 4000):
+                            await update.message.reply_text(response[i:i+4000])
+                        with open(audio_reply, "rb") as af:
+                            await update.message.reply_voice(voice=af)
+                    except Exception as e:
+                        log.warning(f"Failed to send TTS reply: {e}")
+                    finally:
+                        audio_reply.unlink(missing_ok=True)
+                else:
+                    for i in range(0, len(response), 4000):
+                        await update.message.reply_text(response[i:i+4000])
+        except Exception as e:
+            log.error(f"Voice processing error: {e}")
+            await update.message.reply_text(f"Error: {e}")
+        finally:
+            typing_active = False
+            typing_task.cancel()
+            audio_path.unlink(missing_ok=True)
+
     # ── /do — natural language command ─────────────────────────────
 
     async def _handle_do(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2451,6 +2687,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "pause": self._handle_pause,
             "unpause": self._handle_unpause,
             "do": self._handle_do,
+            "speak": self._handle_speak,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -2460,6 +2697,9 @@ class TelegramAdapter(BasePlatformAdapter):
 
         # Photo handler
         self.app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo))
+
+        # Voice/audio handler
+        self.app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, self._handle_voice))
 
         # Inline keyboard callback handler (absorb/learn/chat buttons)
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -2497,6 +2737,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("soul", "View agent personality"),
                 BotCommand("config", "View runtime config"),
                 BotCommand("autonomy", "View/change autonomy level"),
+                BotCommand("speak", "Text-to-speech voice message"),
                 BotCommand("pause", "Pause a cron job"),
                 BotCommand("unpause", "Resume a paused cron job"),
             ])
