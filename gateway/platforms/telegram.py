@@ -35,6 +35,38 @@ class TelegramAdapter(BasePlatformAdapter):
         self.app = None
         self._gateway = None  # set by GatewayRunner after creation
 
+    def _get_reply_context(self, update) -> tuple[str, list[str]]:
+        """Extract text and URLs from the message being replied to.
+
+        Returns (reply_text, urls). If not a reply, returns ("", []).
+        """
+        if not update.message or not update.message.reply_to_message:
+            return "", []
+        reply_msg = update.message.reply_to_message
+        reply_text = reply_msg.text or reply_msg.caption or ""
+        if not reply_text:
+            return "", []
+        import re
+        urls = re.findall(r'https?://[^\s<>\])\'"]+', reply_text)
+        return reply_text[:3000], urls
+
+    def _resolve_reply_target(self, args_text: str, update) -> str:
+        """If user said 'this'/'that'/'it' and replied to a message with URLs, inject the URL.
+
+        Returns the enriched args text.
+        """
+        reply_text, urls = self._get_reply_context(update)
+        if not urls:
+            return args_text
+        # Check if user is referencing the reply with a pronoun
+        pronouns = ["this", "that", "it", "the above", "above"]
+        if args_text and any(w in args_text.lower() for w in pronouns):
+            return args_text + " " + " ".join(urls)
+        # If no args at all but reply has URLs, use the first URL
+        if not args_text.strip():
+            return urls[0]
+        return args_text
+
     async def _auto_sync_to_repo(self, pipeline: str):
         """Auto-commit and push changes to the git repo after a pipeline run."""
         import subprocess as sp
@@ -479,6 +511,10 @@ class TelegramAdapter(BasePlatformAdapter):
             return await self._deny(update)
 
         title = " ".join(context.args) if context.args else ""
+        if not title:
+            reply_text, _ = self._get_reply_context(update)
+            if reply_text:
+                title = reply_text[:100]
 
         chat_id = str(update.message.chat_id)
         key = f"telegram:{chat_id}"
@@ -915,6 +951,10 @@ class TelegramAdapter(BasePlatformAdapter):
             return await self._deny(update)
 
         args = " ".join(context.args) if context.args else ""
+
+        # If replying to a message with just a delay, use the replied message as reminder text
+        reply_text, _ = self._get_reply_context(update)
+
         if not args:
             await update.message.reply_text(
                 "Usage: /notify <delay> <message>\n\n"
@@ -922,15 +962,21 @@ class TelegramAdapter(BasePlatformAdapter):
                 "/notify 60s check if build finished\n"
                 "/notify 30m check deployment status\n"
                 "/notify 2h review PR feedback\n"
-                "/notify 1d renew API key"
+                "/notify 1d renew API key\n\n"
+                "Tip: Reply to a message with `/notify 30m` to be reminded about it"
             )
             return
 
         parts = args.split(None, 1)
         if len(parts) < 2:
-            return await update.message.reply_text("Need delay and message. Example: `/notify 30m check the build`", parse_mode="Markdown")
-
-        delay_str, message = parts[0], parts[1].strip()
+            if reply_text:
+                # User replied to a message with just a delay — use replied text as reminder
+                delay_str = parts[0]
+                message = f"Reminder about: {reply_text[:500]}"
+            else:
+                return await update.message.reply_text("Need delay and message. Example: `/notify 30m check the build`", parse_mode="Markdown")
+        else:
+            delay_str, message = parts[0], parts[1].strip()
         match = re.fullmatch(r"(\d+)(s|m|h|d)", delay_str.lower())
         if not match:
             return await update.message.reply_text(f"Invalid delay `{delay_str}`. Use `60s`, `30m`, `2h`, `1d`.", parse_mode="Markdown")
@@ -994,7 +1040,7 @@ class TelegramAdapter(BasePlatformAdapter):
         model_override = flags["--model"]
         dry_run = flags["--dry-run"]
 
-        target = " ".join(raw_args)
+        target = self._resolve_reply_target(" ".join(raw_args), update)
         if not target:
             await update.message.reply_text(
                 "*Usage:* `/learn <repo-url or tech name>`\n\n"
@@ -1005,7 +1051,8 @@ class TelegramAdapter(BasePlatformAdapter):
                 "*Examples:*\n"
                 "`/learn https://github.com/vercel/ai`\n"
                 "`/learn --model opus anthropic tool-use patterns`\n"
-                "`/learn --dry-run https://github.com/nicepkg/aide`",
+                "`/learn --dry-run https://github.com/nicepkg/aide`\n\n"
+                "Tip: Reply to a message containing a URL and just send `/learn`",
                 parse_mode="Markdown"
             )
             return
@@ -1209,7 +1256,7 @@ class TelegramAdapter(BasePlatformAdapter):
         skip_security_scan = flags["--skip-security-scan"]
         model_override = flags["--model"]
 
-        target = " ".join(raw_args)
+        target = self._resolve_reply_target(" ".join(raw_args), update)
         if not target:
             await update.message.reply_text(
                 "*Usage:* `/absorb <repo-url or tech/architecture>`\n\n"
@@ -1220,7 +1267,8 @@ class TelegramAdapter(BasePlatformAdapter):
                 "*Examples:*\n"
                 "`/absorb https://github.com/NousResearch/hermes-agent`\n"
                 "`/absorb --model opus persistent memory protocol`\n"
-                "`/absorb --dry-run https://github.com/langchain-ai/langgraph`",
+                "`/absorb --dry-run https://github.com/langchain-ai/langgraph`\n\n"
+                "Tip: Reply to a message containing a URL and just send `/absorb`",
                 parse_mode="Markdown"
             )
             return
@@ -1325,7 +1373,7 @@ class TelegramAdapter(BasePlatformAdapter):
         raw_args = list(context.args) if context.args else []
         flags = self._parse_flags(raw_args, {"--limit": {"type": "value", "cast": int, "default": 10}})
         limit = min(flags["--limit"], 50)
-        query = " ".join(raw_args)
+        query = self._resolve_reply_target(" ".join(raw_args), update)
 
         from ..session_db import list_learnings, search_learnings
 
@@ -1406,14 +1454,15 @@ class TelegramAdapter(BasePlatformAdapter):
         raw_args = list(context.args) if context.args else []
         flags = self._parse_flags(raw_args, {"--limit": {"type": "value", "cast": int, "default": 5}})
         limit = min(flags["--limit"], 20)
-        query = " ".join(raw_args)
+        query = self._resolve_reply_target(" ".join(raw_args), update)
         if not query:
             await update.message.reply_text(
                 "Usage: /search <query> [--limit N]\n\n"
                 "Examples:\n"
                 "/search telegram rate limit\n"
                 "/search --limit 10 cost cap\n"
-                "/search absorb pipeline"
+                "/search absorb pipeline\n\n"
+                "Tip: Reply to a message and send /search to search for its content"
             )
             return
 
@@ -1993,6 +2042,11 @@ class TelegramAdapter(BasePlatformAdapter):
         preview = flags["--preview"]
         text = " ".join(raw_args)
 
+        # Resolve reply context — inject URLs if user said "this"/"that"/"it"
+        reply_text, reply_urls = self._get_reply_context(update)
+        text = self._resolve_reply_target(text, update)
+        reply_context = reply_text
+
         if not text:
             await update.message.reply_text(
                 "*Usage:* `/do <natural language instruction>`\n\n"
@@ -2012,7 +2066,7 @@ class TelegramAdapter(BasePlatformAdapter):
 
         await update.message.reply_text("Parsing intent...")
 
-        intent = await self._parse_intent(text)
+        intent = await self._parse_intent(text, reply_context=reply_context)
         if not intent:
             await update.message.reply_text(
                 "Couldn't map that to a known command. Try rephrasing, or use a command directly.\n\n"
@@ -2094,21 +2148,30 @@ class TelegramAdapter(BasePlatformAdapter):
   Show help.
 """
 
-    async def _parse_intent(self, text: str) -> dict | None:
+    async def _parse_intent(self, text: str, reply_context: str = "") -> dict | None:
         """Parse natural language into a structured command using a lightweight Claude call.
 
         Returns dict with {command, display} or None if no command matched.
         """
         import subprocess as sp
 
+        reply_section = ""
+        if reply_context:
+            reply_section = (
+                f"\nThe user is REPLYING to this previous message (use it to resolve 'this', 'that', 'it', etc.):\n"
+                f"---\n{reply_context[:1500]}\n---\n\n"
+            )
+
         prompt = (
             "You are a command parser. The user sent a natural language message to an AI agent system.\n"
             "Your job: determine if this message maps to one of the available commands below.\n\n"
             f"{self._COMMAND_SCHEMA}\n"
+            f"{reply_section}"
             "Rules:\n"
             "- If the message clearly maps to a command, return the exact command string.\n"
             "- If the message is general chat/question NOT related to any command, return null.\n"
             "- Preserve URLs and arguments exactly as the user provided them.\n"
+            "- If the user says 'this', 'that', 'it' and there is a replied-to message with a URL, use that URL as the target.\n"
             "- Map synonyms: 'study'/'research'/'dive into' → /learn, 'integrate'/'absorb'/'steal from' → /absorb, "
             "'scan'/'evolve'/'find new tools' → /evolve, 'find'/'search for' → /search\n"
             "- Map flags from natural language: 'skip security'/'no security scan'/'skip scan' → --skip-security-scan, "
@@ -2257,6 +2320,11 @@ class TelegramAdapter(BasePlatformAdapter):
 
         chat_id = str(update.message.chat_id)
         text = update.message.text
+
+        # Prepend reply context so Claude knows what's being referenced
+        reply_text, reply_urls = self._get_reply_context(update)
+        if reply_text:
+            text = f"[Replying to previous message: {reply_text[:1500]}]\n\n{text}"
 
         # Detect URLs — offer absorb/learn if the message is primarily a link
         urls = self._extract_urls(text)
