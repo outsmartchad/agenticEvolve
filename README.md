@@ -24,6 +24,7 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | **Auto-Recall** | `unified_search()` across 6 memory layers before every response. ~400 extra tokens/msg |
 | **Reply Context** | All commands resolve reply-to-message context. Pronouns ("this", "that") resolve to replied URLs |
 | **Cron** | Built-in scheduler. `/loop every 6h /evolve` for autonomous growth |
+| **Voice** | `/speak` TTS (edge-tts, 300+ voices). Voice-to-text via local whisper.cpp (~500ms on Apple Silicon). Auto-TTS inbound mode |
 | **Security** | Static analysis scanner. Automated review agent. Cost caps. Autonomy levels. Deny-by-default |
 
 ---
@@ -66,9 +67,11 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/memory` | View agent memory state |
 | `/skills` | List installed skills |
 | `/cost` | Usage and spend |
+| `/speak <text>` | Text-to-speech voice message |
 | `/loop <cron> <cmd>` | Schedule recurring execution |
+| _(voice message)_ | Auto-transcribe + reply (+ voice if mode=inbound) |
 
-[All 30 commands ->](docs/commands.md)
+[All 31 commands ->](docs/commands.md)
 
 ---
 
@@ -93,7 +96,7 @@ No custom agent loop. Claude Code is the runtime. The gateway handles routing, m
 | [Skills](docs/skills.md) | Installed skill catalog |
 | [Security](docs/security.md) | Scanner, autonomy levels, safety gates |
 | [Architecture](docs/architecture.md) | Message flow, project structure, design decisions |
-| [Roadmap](docs/roadmap.md) | Integration plan — Firecrawl, Cloudflare /crawl, vision, TTS, sandboxing |
+| [Roadmap](docs/roadmap.md) | Integration plan — Firecrawl, Cloudflare /crawl, vision, sandboxing |
 
 ---
 
@@ -105,6 +108,7 @@ No custom agent loop. Claude Code is the runtime. The gateway handles routing, m
 | [hermes-agent](https://github.com/NousResearch/hermes-agent) | Bounded memory, session persistence, messaging gateway |
 | [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | Autonomy levels, deny-by-default, hot config reload |
 | [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | Skill patterns, eval-driven development, hook-based observation |
+| [openclaw](https://github.com/openclaw/openclaw) | Voice pipeline patterns — TTS provider chain, STT fallback, auto-TTS modes |
 
 ---
 
