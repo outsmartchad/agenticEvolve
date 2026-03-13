@@ -221,6 +221,31 @@ def invoke_claude(message: str, model: str = "sonnet",
                 "just use it to understand what was discussed):\n\n" + formatted
             )
 
+    # Auto-recall: search all memory layers for context relevant to this message.
+    # This is what makes the agent "conscious" — it automatically retrieves
+    # past conversations, learnings, instincts, and notes before responding.
+    try:
+        from .session_db import unified_search, format_recall_context
+
+        # Extract search keywords from message (skip very short or command-like messages)
+        recall_query = message.strip()
+        if len(recall_query) > 15 and not recall_query.startswith("/"):
+            # Use first 200 chars as search query
+            session_id = ""
+            if session_context:
+                # Try to extract session ID from context string
+                for part in session_context.split():
+                    if part.startswith("20") and "_" in part:
+                        session_id = part
+                        break
+            results = unified_search(recall_query[:200], session_id=session_id,
+                                     limit_per_layer=2)
+            recall_block = format_recall_context(results, max_chars=1500)
+            if recall_block:
+                prompt_parts.append(recall_block)
+    except Exception as e:
+        log.debug(f"Auto-recall failed (non-fatal): {e}")
+
     prompt_parts.append(f"# Current message:\n\n{message}")
 
     full_prompt = "\n\n---\n\n".join(prompt_parts)

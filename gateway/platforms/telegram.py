@@ -1491,6 +1491,55 @@ class TelegramAdapter(BasePlatformAdapter):
             text = text[:3950] + "\n\n... [truncated]"
         await update.message.reply_text(text)
 
+    # ── /recall — cross-layer unified search ────────────────────
+
+    async def _handle_recall(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Search across ALL memory layers: sessions, learnings, instincts, memory, user profile."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        raw_args = list(context.args) if context.args else []
+        query = self._resolve_reply_target(" ".join(raw_args), update)
+        if not query:
+            await update.message.reply_text(
+                "Usage: /recall <query>\n\n"
+                "Searches ALL memory layers at once:\n"
+                "- Past conversations (sessions)\n"
+                "- Absorbed knowledge (learnings)\n"
+                "- Observed patterns (instincts)\n"
+                "- Agent notes (MEMORY.md)\n"
+                "- User profile (USER.md)\n\n"
+                "Tip: Reply to a message with /recall to search for its content"
+            )
+            return
+
+        from ..session_db import unified_search, format_recall_context
+
+        # Get active session ID if available
+        chat_id = str(update.message.chat_id)
+        key = f"telegram:{chat_id}"
+        session_id = ""
+        if self._gateway:
+            session_id = self._gateway._active_sessions.get(key, "")
+
+        results = unified_search(query, session_id=session_id, limit_per_layer=5)
+
+        if not results:
+            await update.message.reply_text(f"No results across any memory layer for: {query}")
+            return
+
+        # Format with source grouping
+        formatted = format_recall_context(results, max_chars=3800)
+        header = f"Recall: {query}\n{len(results)} results across {len(set(r.get('source','') for r in results))} layers\n"
+        text = header + "\n" + formatted
+
+        try:
+            await update.message.reply_text(text, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(text)
+
     # ── /skills — list installed skills ──────────────────────────
 
     async def _handle_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2394,6 +2443,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "absorb": self._handle_absorb,
             "learnings": self._handle_learnings,
             "search": self._handle_search,
+            "recall": self._handle_recall,
             "skills": self._handle_skills,
             "soul": self._handle_soul,
             "config": self._handle_config,
@@ -2442,6 +2492,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("learnings", "View past /learn findings"),
                 BotCommand("gc", "Garbage collection + health check"),
                 BotCommand("search", "Search past sessions (FTS5)"),
+                BotCommand("recall", "Search ALL memory layers at once"),
                 BotCommand("skills", "List installed skills"),
                 BotCommand("soul", "View agent personality"),
                 BotCommand("config", "View runtime config"),

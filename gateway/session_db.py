@@ -658,5 +658,305 @@ def mark_instinct_promoted(instinct_id: int, promoted_to: str) -> None:
     conn.close()
 
 
+# ── Running Sessions Search ──────────────────────────────────
+
+def search_active_session(session_id: str, query: str,
+                          limit: int = 10) -> list[dict]:
+    """Search messages within a specific active session.
+
+    Queries the raw messages table (not FTS) for the given session_id,
+    filtering by substring match. This gives real-time access to the
+    current conversation — including messages added seconds ago.
+
+    Args:
+        session_id: The session to search within.
+        query: Substring to match (case-insensitive).
+        limit: Max results to return.
+
+    Returns:
+        List of matching message dicts with role, content snippet, timestamp.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT role, content, timestamp FROM messages "
+        "WHERE session_id = ? AND content LIKE ? "
+        "ORDER BY id DESC LIMIT ?",
+        (session_id, f"%{query}%", limit)
+    ).fetchall()
+    conn.close()
+    return [{"role": r["role"], "content": r["content"][:500],
+             "timestamp": r["timestamp"], "source": "active_session"} for r in rows]
+
+
+def get_active_session_context(session_id: str, last_n: int = 5) -> list[dict]:
+    """Get the most recent messages from an active session.
+
+    Used for injecting current session awareness into search results.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT role, content, timestamp FROM messages "
+        "WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+        (session_id, last_n)
+    ).fetchall()
+    conn.close()
+    return [{"role": r["role"], "content": r["content"][:500],
+             "timestamp": r["timestamp"]} for r in reversed(rows)]
+
+
+# ── Memory Search ────────────────────────────────────────────
+
+def search_memory(query: str) -> list[dict]:
+    """Parse §-delimited entries from MEMORY.md and match by substring.
+
+    Memory is small enough (2200 chars max) that in-memory filtering
+    is faster than any index. Returns matching entries with their
+    position index.
+
+    Args:
+        query: Substring to match (case-insensitive).
+
+    Returns:
+        List of dicts with entry text, index, and source tag.
+    """
+    mem_path = Path.home() / ".agenticEvolve" / "memory" / "MEMORY.md"
+    if not mem_path.exists():
+        return []
+
+    content = mem_path.read_text()
+    entries = [e.strip() for e in content.split("§") if e.strip()]
+    query_lower = query.lower()
+
+    results = []
+    for i, entry in enumerate(entries):
+        if query_lower in entry.lower():
+            results.append({
+                "content": entry[:500],
+                "index": i,
+                "source": "memory",
+            })
+    return results
+
+
+def search_user_profile(query: str) -> list[dict]:
+    """Search USER.md entries by substring match."""
+    user_path = Path.home() / ".agenticEvolve" / "memory" / "USER.md"
+    if not user_path.exists():
+        return []
+
+    content = user_path.read_text()
+    lines = [l.strip() for l in content.split("\n") if l.strip()]
+    query_lower = query.lower()
+
+    results = []
+    for line in lines:
+        if query_lower in line.lower():
+            results.append({
+                "content": line[:300],
+                "source": "user_profile",
+            })
+    return results
+
+
+# ── Instincts Search ────────────────────────────────────────
+
+def search_instincts(query: str, limit: int = 10) -> list[dict]:
+    """FTS5 search across instincts table.
+
+    Args:
+        query: FTS5 query string.
+        limit: Max results.
+
+    Returns:
+        List of instinct dicts with source tag.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT i.id, i.pattern, i.context, i.confidence, i.seen_count, "
+        "i.project_ids, i.created_at, rank "
+        "FROM instincts_fts "
+        "JOIN instincts i ON instincts_fts.rowid = i.id "
+        "WHERE instincts_fts MATCH ? ORDER BY rank LIMIT ?",
+        (query, limit)
+    ).fetchall()
+    conn.close()
+    return [{
+        "content": r["pattern"],
+        "context": r["context"],
+        "confidence": r["confidence"],
+        "seen_count": r["seen_count"],
+        "source": "instinct",
+    } for r in rows]
+
+
+# ── Cross-Layer Unified Search ───────────────────────────────
+
+def unified_search(query: str, session_id: str = "",
+                   limit_per_layer: int = 3) -> list[dict]:
+    """Query all memory layers and merge results with source tags.
+
+    Searches five layers in parallel:
+      1. Sessions FTS (past conversations)
+      2. Learnings FTS (absorbed knowledge)
+      3. Instincts FTS (observed patterns)
+      4. MEMORY.md (agent notes, §-delimited)
+      5. USER.md (user profile)
+
+    Each result is tagged with its source so the caller (or the agent)
+    knows where the knowledge came from.
+
+    Args:
+        query: Search query string.
+        session_id: If provided, also searches the current active session.
+        limit_per_layer: Max results per layer (total will be up to 5x this).
+
+    Returns:
+        List of dicts, each with at minimum: content, source.
+        Sorted by relevance within each layer, then interleaved.
+    """
+    results = []
+
+    # 1. Sessions FTS — past conversations
+    try:
+        sessions = search_sessions(query, limit=limit_per_layer)
+        for s in sessions:
+            # Flatten session matches into individual results
+            best_match = s.get("matches", [{}])[0] if s.get("matches") else {}
+            results.append({
+                "content": best_match.get("content", "")[:400],
+                "session_title": s.get("title", ""),
+                "session_date": (s.get("started_at") or "")[:10],
+                "source": "session",
+            })
+    except Exception:
+        pass
+
+    # 2. Learnings FTS — absorbed knowledge
+    try:
+        learnings = search_learnings(query, limit=limit_per_layer)
+        for l in learnings:
+            results.append({
+                "content": (l.get("patterns") or l.get("operational_benefit") or "")[:400],
+                "target": l.get("target", ""),
+                "verdict": l.get("verdict", ""),
+                "source": "learning",
+            })
+    except Exception:
+        pass
+
+    # 3. Instincts FTS — observed patterns
+    try:
+        instincts = search_instincts(query, limit=limit_per_layer)
+        for inst in instincts:
+            results.append({
+                "content": inst["content"][:400],
+                "confidence": inst.get("confidence", 0),
+                "seen_count": inst.get("seen_count", 0),
+                "source": "instinct",
+            })
+    except Exception:
+        pass
+
+    # 4. MEMORY.md — agent notes
+    try:
+        mem_results = search_memory(query)
+        for m in mem_results[:limit_per_layer]:
+            results.append(m)
+    except Exception:
+        pass
+
+    # 5. USER.md — user profile
+    try:
+        user_results = search_user_profile(query)
+        for u in user_results[:limit_per_layer]:
+            results.append(u)
+    except Exception:
+        pass
+
+    # 6. Active session — current conversation (if session_id provided)
+    if session_id:
+        try:
+            active = search_active_session(session_id, query, limit=limit_per_layer)
+            results.extend(active)
+        except Exception:
+            pass
+
+    return results
+
+
+def format_recall_context(results: list[dict], max_chars: int = 2000) -> str:
+    """Format unified search results into a context block for the system prompt.
+
+    Groups results by source and formats them concisely. This is what gets
+    injected into the agent's prompt so it 'remembers' relevant knowledge.
+
+    Args:
+        results: Output from unified_search().
+        max_chars: Hard cap on total output length.
+
+    Returns:
+        Formatted string ready for prompt injection, or "" if no results.
+    """
+    if not results:
+        return ""
+
+    lines = ["# Recalled Context (auto-retrieved from your memory layers)\n"]
+
+    # Group by source
+    by_source: dict[str, list] = {}
+    for r in results:
+        src = r.get("source", "unknown")
+        by_source.setdefault(src, []).append(r)
+
+    source_labels = {
+        "session": "Past Conversations",
+        "learning": "Absorbed Knowledge",
+        "instinct": "Observed Patterns",
+        "memory": "Agent Notes",
+        "user_profile": "User Profile",
+        "active_session": "Current Session",
+    }
+
+    total = len(lines[0])
+    for src, items in by_source.items():
+        label = source_labels.get(src, src.title())
+        header = f"\n## {label}"
+        if total + len(header) > max_chars:
+            break
+        lines.append(header)
+        total += len(header)
+
+        for item in items:
+            content = item.get("content", "")
+            meta_parts = []
+            if item.get("session_title"):
+                meta_parts.append(f"session: {item['session_title']}")
+            if item.get("session_date"):
+                meta_parts.append(item["session_date"])
+            if item.get("target"):
+                meta_parts.append(f"from: {item['target']}")
+            if item.get("verdict"):
+                meta_parts.append(f"verdict: {item['verdict']}")
+            if item.get("confidence"):
+                meta_parts.append(f"conf: {item['confidence']:.1f}")
+            if item.get("seen_count") and item["seen_count"] > 1:
+                meta_parts.append(f"seen {item['seen_count']}x")
+
+            meta = f" ({', '.join(meta_parts)})" if meta_parts else ""
+            entry = f"- {content}{meta}"
+
+            if total + len(entry) + 1 > max_chars:
+                lines.append("- ... [truncated for context window]")
+                total = max_chars
+                break
+            lines.append(entry)
+            total += len(entry) + 1
+
+        if total >= max_chars:
+            break
+
+    return "\n".join(lines)
+
+
 # Initialize on import
 init_db()
