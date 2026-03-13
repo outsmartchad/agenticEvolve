@@ -25,8 +25,9 @@ class DiscordAdapter(BasePlatformAdapter):
         self._ready = asyncio.Event()
 
     def _is_allowed(self, user_id: int) -> bool:
+        # Deny-by-default (ZeroClaw pattern): empty allowlist = deny all
         if not self.allowed_users:
-            return True
+            return False
         return str(user_id) in self.allowed_users
 
     async def start(self):

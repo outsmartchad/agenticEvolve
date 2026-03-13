@@ -22,8 +22,9 @@ class WhatsAppAdapter(BasePlatformAdapter):
         self._reader_task = None
 
     def _is_allowed(self, user_id: str) -> bool:
+        # Deny-by-default (ZeroClaw pattern): empty allowlist = deny all
         if not self.allowed_users:
-            return True
+            return False
         return user_id in self.allowed_users
 
     async def start(self):

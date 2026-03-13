@@ -58,6 +58,17 @@ def init_db():
             cost REAL DEFAULT 0,
             created_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS costs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            platform TEXT,
+            session_id TEXT,
+            cost REAL NOT NULL,
+            pipeline TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_costs_timestamp ON costs(timestamp);
     """)
     # FTS5 — ignore errors if already exists
     for stmt in [
@@ -282,6 +293,43 @@ def list_learnings(limit: int = 20) -> list[dict]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── Cost tracking ────────────────────────────────────────────
+
+def log_cost(cost: float, platform: str = "", session_id: str = "",
+             pipeline: str = "") -> None:
+    """Dual-write cost entry to SQLite. Complements the cost.log file."""
+    conn = _connect()
+    ts = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO costs (timestamp, platform, session_id, cost, pipeline) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ts, platform, session_id, cost, pipeline)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_cost_today() -> float:
+    """Return total cost for the current UTC day from SQLite."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT SUM(cost) FROM costs WHERE date(timestamp) = date('now')"
+    ).fetchone()
+    conn.close()
+    return float(row[0] or 0)
+
+
+def get_cost_week() -> float:
+    """Return total cost for the current UTC week (Mon–Sun) from SQLite."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT SUM(cost) FROM costs "
+        "WHERE date(timestamp) >= date('now', 'weekday 1', '-7 days')"
+    ).fetchone()
+    conn.close()
+    return float(row[0] or 0)
 
 
 # Initialize on import

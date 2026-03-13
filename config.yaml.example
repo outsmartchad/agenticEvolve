@@ -10,13 +10,34 @@ weekly_cost_cap: 25.0
 # Session reset after N minutes of inactivity
 session_idle_minutes: 120
 
+# Autonomy level (ZeroClaw pattern)
+# "full"       — unrestricted (--dangerously-skip-permissions)
+# "supervised" — restricted tool set, risk-tier awareness
+# "readonly"   — read-only tools, no writes or bash
+autonomy: full
+
+# Explicit tool override (empty = use autonomy level defaults)
+allowed_tools: []
+
+# Paths the agent must never read/write
+forbidden_paths: []
+  # - ~/.ssh
+  # - ~/.aws
+  # - ~/.gnupg
+
+# Security settings (ZeroClaw deny-by-default pattern)
+security:
+  deny_by_default: false          # when true, empty allowed_users = deny all
+  filesystem_scoping: []          # allowed directory prefixes (empty = allow all)
+  block_symlink_escape: true      # prevent symlinks escaping filesystem scope
+
 # Platform configuration
 # Enable a platform by setting its token in .env
 platforms:
   telegram:
     enabled: false
     # token: set TELEGRAM_BOT_TOKEN in .env
-    allowed_users: []      # empty = allow all (not recommended)
+    allowed_users: []      # empty = deny all (add your user ID)
     home_channel: ""       # set TELEGRAM_CHAT_ID in .env for cron delivery
 
   discord:

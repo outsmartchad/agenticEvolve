@@ -17,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
-from .config import load_config
+from .config import load_config, config_changed, reload_config
 from .agent import invoke_claude, get_today_cost, generate_title
 from .session_db import (
     create_session, generate_session_id, add_message,
@@ -110,12 +110,17 @@ class GatewayRunner:
     # ── Message handler ──────────────────────────────────────────
 
     async def handle_message(self, platform: str, chat_id: str,
-                              user_id: str, text: str) -> str:
+                               user_id: str, text: str) -> str:
         """Core message handler — called by platform adapters."""
         key = self._session_key(platform, chat_id)
         lock = self._get_lock(key)
 
         async with lock:
+            # Hot config reload (ZeroClaw pattern — apply on next message)
+            if config_changed():
+                self.config, changes = reload_config()
+                log.info(f"Hot-reloaded config: {changes}")
+
             # Cost cap check
             allowed, reason = self._check_cost_cap()
             if not allowed:
@@ -148,13 +153,15 @@ class GatewayRunner:
 
             model = self.config.get("model", "sonnet")
 
-            # Run Claude Code in executor
+            # Run Claude Code in executor (config passed for autonomy resolution)
             loop = asyncio.get_running_loop()
+            cfg = self.config
             result = await loop.run_in_executor(
                 None,
                 lambda: invoke_claude(
                     text, model=model, history=history,
-                    session_context=session_context
+                    session_context=session_context,
+                    config=cfg
                 )
             )
 
@@ -173,13 +180,22 @@ class GatewayRunner:
 
     # ── Cost tracking ────────────────────────────────────────────
 
-    def _log_cost(self, platform: str, session_id: str, cost: float):
+    def _log_cost(self, platform: str, session_id: str, cost: float,
+                  pipeline: str = ""):
+        """Log cost to cost.log (file) and SQLite (indexed). Dual-write for migration safety."""
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         cost_file = LOG_DIR / "cost.log"
         ts = datetime.now(timezone.utc).isoformat()
         line = f"{ts}\t{platform}\t{session_id}\t${cost:.4f}\n"
         with open(cost_file, "a") as f:
             f.write(line)
+        # SQLite dual-write — O(1) indexed lookup replaces O(n) log scan
+        try:
+            from .session_db import log_cost as db_log_cost
+            db_log_cost(cost, platform=platform, session_id=session_id,
+                        pipeline=pipeline or platform)
+        except Exception as e:
+            log.warning(f"SQLite cost log failed (log file still written): {e}")
 
     # ── Session cleanup ──────────────────────────────────────────
 

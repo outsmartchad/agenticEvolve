@@ -91,6 +91,20 @@ WARNING_PATTERNS = [
     (r'chmod\s+[0-7]*7[0-7]*\s', "World-writable permissions"),
 ]
 
+# Prompt injection patterns — checked only for doc/text files to avoid false positives
+PROMPT_INJECTION_PATTERNS = [
+    (r'ignore (all )?(prior|previous|above) instructions', "Potential prompt injection: ignore instructions"),
+    (r'disregard (all )?(prior|previous|above)', "Potential prompt injection: disregard instructions"),
+    (r'you are now [a-z]', "Potential prompt injection: persona reassignment"),
+    (r'act as (a |an )?[a-z]', "Potential prompt injection: role override"),
+    (r'new (system )?prompt[:\s]', "Potential prompt injection: system prompt override"),
+    (r'<\s*(system|instructions?)\s*>', "Potential prompt injection: XML system tag"),
+    (r'STOP[.\s]+FROM NOW ON', "Potential prompt injection: instruction override"),
+]
+
+# Doc/text file extensions subject to prompt injection checks
+PROMPT_INJECTION_EXTENSIONS = {".md", ".txt", ".yaml", ".yml", ".rst"}
+
 # Files that should always be checked more carefully
 SUSPICIOUS_FILENAMES = [
     "postinstall", "preinstall", "postbuild", "prebuild",
@@ -223,6 +237,18 @@ def scan_directory(path: str | Path, label: str = "") -> ScanResult:
                         matched_text=line_stripped[:200],
                     ))
 
+            # Check prompt injection patterns — doc/text files only
+            if fpath.suffix.lower() in PROMPT_INJECTION_EXTENSIONS:
+                for pattern, desc in PROMPT_INJECTION_PATTERNS:
+                    if re.search(pattern, line, re.IGNORECASE):
+                        findings.append(Finding(
+                            severity="warning",
+                            file=rel_path,
+                            line=line_num,
+                            pattern_desc=desc,
+                            matched_text=line_stripped[:200],
+                        ))
+
     # Determine verdict
     critical_count = sum(1 for f in findings if f.severity == "critical")
     warning_count = sum(1 for f in findings if f.severity == "warning")
@@ -270,7 +296,14 @@ def scan_directory(path: str | Path, label: str = "") -> ScanResult:
             f"Scanned {files_scanned} files — no threats detected."
         )
 
-    log.info(f"[security] {verdict}: {target_label} — {critical_count} critical, {warning_count} warnings, {files_scanned} files")
+    injection_count = sum(
+        1 for f in findings
+        if f.severity == "warning" and f.pattern_desc.startswith("Potential prompt injection")
+    )
+    if injection_count > 0:
+        summary += f"\nPrompt injection patterns detected in docs: {injection_count} occurrence(s)."
+
+    log.info(f"[security] {verdict}: {target_label} — {critical_count} critical, {warning_count} warnings ({injection_count} injection), {files_scanned} files")
     return ScanResult(verdict, findings, files_scanned, summary)
 
 

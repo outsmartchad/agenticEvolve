@@ -13,7 +13,7 @@ Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as the ag
 │  │  (Python)   │→ │  (claude -p)   │→ │  MEMORY.md       │     │
 │  │            │  │  + skills (7)  │  │  USER.md         │     │
 │  │  Telegram  │  │  + MCP         │  │  SQLite+FTS5     │     │
-│  │  Discord   │  │  + subagents   │  │  Learnings DB    │     │
+│  │  Discord   │  │  + autonomy    │  │  Learnings DB    │     │
 │  │  WhatsApp  │  └────────────────┘  └──────────────────┘     │
 │  │  CLI       │         ↑                     ↑                │
 │  └────────────┘         │                     │                │
@@ -38,6 +38,8 @@ Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as the ag
 - **Absorbs from the wild** — deep-scans any repo/URL/topic, compares against itself, identifies gaps, and implements improvements to its own codebase
 - **Learns and remembers** — extracts patterns from repos and tools, stores structured findings with verdicts (ADOPT/STEAL/SKIP) in a searchable learnings DB
 - **Security-first** — automated security scanner checks all external repos for credential exfiltration, reverse shells, malicious install hooks, obfuscated payloads, and macOS persistence before any code touches the system
+- **Autonomy levels** — `readonly` / `supervised` / `full` config toggle (inspired by [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)) controls what tools the agent can use, with risk-tier classification and filesystem scoping
+- **Hot config reloading** — edit `config.yaml` and changes apply on the next message, no gateway restart needed
 - **Natural language commands** — `/do absorb this repo and skip the security scan` gets parsed into `/absorb <url> --skip-security-scan` and runs in background with 1-minute progress reports
 - **Cost-controlled** — daily/weekly caps enforced before every Claude invocation
 
@@ -113,18 +115,38 @@ All pipelines (`/absorb`, `/learn`, `/evolve`) run an automated security scan on
 
 Use `--skip-security-scan` to bypass (when you trust the source).
 
+### Autonomy Levels (ZeroClaw pattern)
+
+Three levels control what tools Claude Code can use, configured via `autonomy` in `config.yaml` or toggled live with `/autonomy`:
+
+| Level | Tools | Risk Awareness | Use Case |
+|-------|-------|----------------|----------|
+| `full` | Unrestricted (`--dangerously-skip-permissions`) | None | Default — trusted local use |
+| `supervised` | Restricted whitelist (read + safe writes + safe bash) | Risk-tier prompting (low/medium/high) | Shared environments, demo mode |
+| `readonly` | Read-only (Read, Glob, Grep, WebFetch, Task) | N/A | Research-only, audit mode |
+
+Additional security controls (all in `config.yaml`):
+
+- **`forbidden_paths`** — directories the agent must never access (e.g., `~/.ssh`, `~/.aws`)
+- **`security.filesystem_scoping`** — allowed directory prefixes (empty = allow all)
+- **`security.block_symlink_escape`** — prevents symlinks from escaping filesystem scope
+- **`security.deny_by_default`** — when `true`, empty `allowed_users` list = deny all users
+
+All settings hot-reload: edit `config.yaml` and they take effect on the next message.
+
 ### `/gc` — Garbage Collection
 
 Cleans stale sessions (30d), empty sessions (24h), orphan skills (7d), checks memory entropy (85% threshold), rotates logs. Supports `--dry` preview mode.
 
-## Telegram Commands (28)
+## Telegram Commands (29)
 
 | Command | Description |
 |---------|-------------|
 | `/start`, `/help` | Welcome message, command list |
 | `/status` | System overview (gateway, memory, sessions, cost) |
 | `/heartbeat` | Liveness check |
-| `/config` | View runtime config (model, caps, platforms) |
+| `/config` | View runtime config (model, caps, platforms, autonomy) |
+| `/autonomy [level]` | View or change autonomy level (readonly/supervised/full) |
 | `/memory` | Show bounded memory (MEMORY.md + USER.md) |
 | `/soul` | View agent personality (SOUL.md) |
 | `/sessions` | List recent sessions |
@@ -193,18 +215,19 @@ Skills with `disable-model-invocation: true` (nah, ABP, unf, cron-manager) only 
 ├── SOUL.md                     # Agent personality
 ├── AGENTS.md                   # Project conventions + agent roles
 │
-├── gateway/                    # Messaging gateway (~4,500 lines Python)
+├── gateway/                    # Messaging gateway (~5,000 lines Python)
 │   ├── run.py                  # GatewayRunner — main process
 │   ├── agent.py                # Claude Code invocation wrapper
 │   ├── evolve.py               # 5-stage evolve pipeline
 │   ├── absorb.py               # 5-stage absorb pipeline
+│   ├── autonomy.py             # Autonomy levels, risk tiers, filesystem scoping (ZeroClaw)
 │   ├── security.py             # Security scanner (credential theft, reverse shells, etc.)
 │   ├── gc.py                   # Garbage collection
-│   ├── config.py               # Config loader (YAML + .env)
+│   ├── config.py               # Config loader (YAML + .env, hot-reload)
 │   ├── session_db.py           # SQLite + FTS5 (sessions + learnings)
 │   └── platforms/
 │       ├── base.py             # Platform adapter interface
-│       ├── telegram.py         # Telegram (~2,000 lines, 28 commands)
+│       ├── telegram.py         # Telegram (~2,300 lines, 29 commands)
 │       ├── discord.py          # Discord (written, untested)
 │       └── whatsapp.py         # WhatsApp (written, untested)
 │
@@ -340,20 +363,22 @@ ae doctor               # Diagnose issues
 - **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) with frozen snapshot pattern. Injected at session start, never changes mid-session.
 - **Session continuity** — conversation history fed back into each `claude -p` call within a session (last 20 turns, 8K chars). Sessions auto-expire after 2h idle.
 - **Skills follow skill-creator standards** — descriptions are "pushy" with "Use when..." clauses to avoid undertriggering. Progressive disclosure keeps SKILL.md lean, heavy docs go in references/.
-- **Safety gates everywhere** — automated security scanner on all external code, skills queue with human approval, daily + weekly cost caps, user whitelisting, review agent validation, bounded memory limits.
+- **Safety gates everywhere** — automated security scanner on all external code, skills queue with human approval, daily + weekly cost caps, user whitelisting, review agent validation, bounded memory limits, deny-by-default auth on all platforms.
+- **Autonomy levels** — `full`/`supervised`/`readonly` toggle inspired by ZeroClaw. Controls tool access, injects risk-tier awareness in supervised mode, supports filesystem scoping and forbidden paths. Hot-reloads from config.yaml.
 - **Cron inside the gateway** — no OS cron dependency. Supports standard 5-field cron expressions with timezone awareness (Asia/Hong_Kong, US/Eastern, etc.), interval-based, and one-shot jobs. Pause/unpause via Telegram.
 
 ## Platform support
 
 | Platform | Status | Library |
 |----------|--------|---------|
-| Telegram | Working (28 commands) | python-telegram-bot |
+| Telegram | Working (29 commands) | python-telegram-bot |
 | Discord | Written, untested | discord.py |
 | WhatsApp | Written, untested | @whiskeysockets/baileys (Node.js bridge) |
 
 ## Inspiration
 
-- [hermes-agent](https://github.com/NousResearch/hermes-agent) — bounded memory, session persistence, messaging gateway, agent-managed cron
+- [hermes-agent](https://github.com/NousResearch/hermes-agent) — bounded memory, session persistence, messaging gateway, agent-managed cron, growing-status-message UX
+- [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) — autonomy levels, hot config reloading, deny-by-default security, risk-tier classification, filesystem scoping
 - [Anthropic skill-creator](https://github.com/anthropics/claude-plugins-official) — skill creation patterns, eval-driven development, description optimization
 - [snarktank/ralph](https://github.com/snarktank/ralph) — v1 inspiration (bash orchestrator, two-tier learning)
 

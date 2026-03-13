@@ -350,6 +350,12 @@ class TelegramAdapter(BasePlatformAdapter):
             except Exception:
                 pass
 
+        # Autonomy status (ZeroClaw pattern)
+        from ..autonomy import format_autonomy_status
+        gw = self._gateway
+        cfg = gw.config if gw else {}
+        autonomy_info = format_autonomy_status(cfg) if cfg else "Autonomy: unknown"
+
         text = (
             f"*agenticEvolve status*\n\n"
             f"Gateway: running\n"
@@ -359,7 +365,8 @@ class TelegramAdapter(BasePlatformAdapter):
             f"Skills: {skill_count} installed\n"
             f"Cron jobs: {active_jobs} active\n"
             f"DB: {s['db_size_mb']} MB\n"
-            f"Cost today: ${today_cost:.2f}"
+            f"Cost today: ${today_cost:.2f}\n\n"
+            f"{autonomy_info}"
         )
         await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -1454,6 +1461,10 @@ class TelegramAdapter(BasePlatformAdapter):
             users = len(pcfg.get("allowed_users", []))
             platforms.append(f"  {pname}: {status} ({users} users)")
 
+        # Autonomy info (ZeroClaw pattern)
+        from ..autonomy import format_autonomy_status
+        autonomy_info = format_autonomy_status(cfg)
+
         text = (
             f"Configuration\n\n"
             f"Model: {model}\n"
@@ -1461,9 +1472,64 @@ class TelegramAdapter(BasePlatformAdapter):
             f"Weekly cap: ${weekly_cap:.2f}\n"
             f"Session idle timeout: {session_idle}m\n"
             f"Cron scheduler: {'on' if cron_enabled else 'off'}\n\n"
-            f"Platforms:\n" + "\n".join(platforms)
+            f"Platforms:\n" + "\n".join(platforms) + "\n\n"
+            f"{autonomy_info}"
         )
         await update.message.reply_text(text)
+
+    # ── /autonomy — view/change autonomy level ───────────────────
+
+    async def _handle_autonomy(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """View or change autonomy level. Usage: /autonomy [readonly|supervised|full]"""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        from ..autonomy import format_autonomy_status
+        from ..config import CONFIG_PATH
+
+        gw = self._gateway
+        cfg = gw.config if gw else {}
+        raw_args = list(context.args) if context.args else []
+
+        if not raw_args:
+            # Just show current autonomy
+            text = format_autonomy_status(cfg)
+            await update.message.reply_text(text)
+            return
+
+        new_level = raw_args[0].lower()
+        if new_level not in ("readonly", "supervised", "full"):
+            await update.message.reply_text(
+                "Usage: /autonomy [readonly|supervised|full]\n\n"
+                "- readonly: read-only tools, no writes or bash\n"
+                "- supervised: restricted tool set, safe bash only\n"
+                "- full: unrestricted (default)"
+            )
+            return
+
+        # Update config.yaml on disk
+        try:
+            import yaml
+            config_text = CONFIG_PATH.read_text() if CONFIG_PATH.exists() else ""
+            config_data = yaml.safe_load(config_text) or {}
+            config_data["autonomy"] = new_level
+            CONFIG_PATH.write_text(yaml.dump(config_data, default_flow_style=False, sort_keys=False))
+
+            # Hot-reload will pick this up on next message
+            from ..config import reload_config
+            new_cfg, changes = reload_config()
+            if gw:
+                gw.config = new_cfg
+
+            await update.message.reply_text(
+                f"Autonomy level changed to: *{new_level}*\n\n"
+                f"{format_autonomy_status(new_cfg)}",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await update.message.reply_text(f"Failed to update autonomy: {e}")
 
     # ── /pause, /unpause — toggle cron job ───────────────────────
 
@@ -2186,6 +2252,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "skills": self._handle_skills,
             "soul": self._handle_soul,
             "config": self._handle_config,
+            "autonomy": self._handle_autonomy,
             "pause": self._handle_pause,
             "unpause": self._handle_unpause,
             "do": self._handle_do,
@@ -2233,6 +2300,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("skills", "List installed skills"),
                 BotCommand("soul", "View agent personality"),
                 BotCommand("config", "View runtime config"),
+                BotCommand("autonomy", "View/change autonomy level"),
                 BotCommand("pause", "Pause a cron job"),
                 BotCommand("unpause", "Resume a paused cron job"),
             ])
