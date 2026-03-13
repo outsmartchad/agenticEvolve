@@ -90,6 +90,79 @@ class TelegramAdapter(BasePlatformAdapter):
                         break
         return result
 
+    def _make_progress_tracker(self, chat_id: str, loop):
+        """Create a silent progress tracker + 30s polling reporter.
+
+        The callback silently tracks tool count and current stage.
+        A separate async task (started via start_reporter / stop_reporter)
+        sends a status update every 30 seconds.
+
+        Returns (on_progress_sync, get_tool_count, start_reporter, stop_reporter).
+        """
+        state = {
+            "tool_count": 0,
+            "stage": "",
+            "stages_seen": [],
+            "done": False,
+            "reporter_task": None,
+        }
+
+        def on_progress_sync(text: str):
+            """Called from sync thread — just track state, never send messages."""
+            # Stage transitions
+            if text.startswith("*Stage:") or text.startswith("*Security scan:"):
+                stage_name = text.replace("*", "").strip()
+                state["stage"] = stage_name
+                if stage_name not in state["stages_seen"]:
+                    state["stages_seen"].append(stage_name)
+                return
+
+            # Pipeline-level status
+            if text.startswith("*"):
+                stage_name = text.replace("*", "").strip()
+                state["stage"] = stage_name
+                return
+
+            # Tool-use events — just count
+            if (text.startswith("[") and "] " in text[:12]) or any(
+                text.startswith(p) for p in (
+                    "Running:", "Reading:", "Writing:", "Editing:",
+                    "Searching:", "Grepping:", "Fetching:", "Subagent:",
+                )
+            ):
+                state["tool_count"] += 1
+
+        async def _reporter_loop():
+            """Send a status update every 30 seconds until done."""
+            while not state["done"]:
+                await asyncio.sleep(30)
+                if state["done"]:
+                    break
+                stage = state["stage"] or "Working"
+                tc = state["tool_count"]
+                stages_done = len(state["stages_seen"])
+                msg = f"{stage}... ({tc} steps, {stages_done} stage{'s' if stages_done != 1 else ''} completed)"
+                try:
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=msg)
+                except Exception:
+                    pass
+
+        def start_reporter():
+            """Start the 30s polling reporter. Call from async context."""
+            state["done"] = False
+            state["reporter_task"] = asyncio.ensure_future(_reporter_loop())
+
+        def stop_reporter():
+            """Stop the reporter."""
+            state["done"] = True
+            if state["reporter_task"]:
+                state["reporter_task"].cancel()
+
+        def get_tool_count():
+            return state["tool_count"]
+
+        return on_progress_sync, get_tool_count, start_reporter, stop_reporter
+
     # ── /start ───────────────────────────────────────────────────
 
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -367,25 +440,12 @@ class TelegramAdapter(BasePlatformAdapter):
             )
 
         loop = asyncio.get_running_loop()
-
-        # Bridge sync progress callback to async Telegram messages
-        msg_buffer = []
-        async def send_progress(text: str):
-            msg_buffer.append(text)
-            if len(msg_buffer) % 3 == 0:
-                batch = "\n".join(msg_buffer[-3:])
-                try:
-                    await self.app.bot.send_message(
-                        chat_id=int(chat_id), text=batch, parse_mode="Markdown"
-                    )
-                except Exception:
-                    pass
-
-        def on_progress_sync(text: str):
-            asyncio.run_coroutine_threadsafe(send_progress(text), loop)
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop)
 
         model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
 
+        start_reporter()
         try:
             from ..evolve import EvolveOrchestrator
 
@@ -395,34 +455,28 @@ class TelegramAdapter(BasePlatformAdapter):
                 skip_security_scan=skip_security_scan,
             )
 
-            # Run pipeline in executor
             summary, cost = await loop.run_in_executor(
                 None, lambda: orchestrator.run(dry_run=dry_run)
             )
-
-            # Send remaining buffered progress
-            remaining = len(msg_buffer) % 3
-            if remaining > 0:
-                batch = "\n".join(msg_buffer[-remaining:])
-                try:
-                    await self.app.bot.send_message(
-                        chat_id=int(chat_id), text=batch, parse_mode="Markdown"
-                    )
-                except Exception:
-                    pass
-
-            # Send final summary
-            for i in range(0, len(summary), 4000):
-                await self.app.bot.send_message(
-                    chat_id=int(chat_id), text=summary[i:i+4000], parse_mode="Markdown"
-                )
-
-            if cost > 0 and self._gateway:
-                self._gateway._log_cost("telegram", "evolve", cost)
-
         except Exception as e:
+            stop_reporter()
             log.error(f"Evolve error: {e}")
             await self.app.bot.send_message(chat_id=int(chat_id), text=f"Evolution failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        # Send single comprehensive report
+        tools_used = get_tool_count()
+        footer = f"\n\n({tools_used} steps, ${cost:.2f})"
+        full_summary = summary + footer
+        for i in range(0, len(full_summary), 4000):
+            await self.app.bot.send_message(
+                chat_id=int(chat_id), text=full_summary[i:i+4000], parse_mode="Markdown"
+            )
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "evolve", cost)
 
     # ── /queue — list skills pending approval ────────────────────
 
@@ -802,19 +856,8 @@ class TelegramAdapter(BasePlatformAdapter):
         user_id = str(update.message.from_user.id)
         loop = asyncio.get_running_loop()
 
-        # Build progress bridge
-        msg_buffer = []
-        async def send_progress(text: str):
-            msg_buffer.append(text)
-            if len(msg_buffer) % 3 == 0:
-                batch = "\n".join(msg_buffer[-3:])
-                try:
-                    await self.app.bot.send_message(chat_id=int(chat_id), text=batch, parse_mode="Markdown")
-                except Exception:
-                    pass
-
-        def on_progress_sync(text: str):
-            asyncio.run_coroutine_threadsafe(send_progress(text), loop)
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop)
 
         is_url = target.startswith("http://") or target.startswith("https://")
         is_github = "github.com" in target
@@ -914,6 +957,7 @@ class TelegramAdapter(BasePlatformAdapter):
             await self.app.bot.send_message(chat_id=int(chat_id), text="\n".join(lines))
             return
 
+        start_reporter()
         try:
             from ..agent import invoke_claude_streaming
 
@@ -926,59 +970,54 @@ class TelegramAdapter(BasePlatformAdapter):
                     session_context=f"[Learn: {target[:50]}]"
                 )
             )
-
-            # Flush remaining progress
-            remaining = len(msg_buffer) % 3
-            if remaining > 0:
-                batch = "\n".join(msg_buffer[-remaining:])
-                try:
-                    await self.app.bot.send_message(chat_id=int(chat_id), text=batch, parse_mode="Markdown")
-                except Exception:
-                    pass
-
-            response = result.get("text", "No output.")
-            cost = result.get("cost", 0)
-
-            header = f"*Learn: {target}* (${cost:.2f})\n\n"
-            full = header + response
-            for i in range(0, len(full), 4000):
-                await self.app.bot.send_message(chat_id=int(chat_id), text=full[i:i+4000], parse_mode="Markdown")
-
-            if cost > 0 and self._gateway:
-                self._gateway._log_cost("telegram", "learn", cost)
-
-            # Store learning in DB
-            try:
-                from ..session_db import add_learning
-                # Parse structured JSON from response
-                learning_data = {"verdict": "UNKNOWN", "patterns": "", "operational_benefit": "", "skill_created": ""}
-                json_start = response.rfind('```json')
-                json_end = response.rfind('```', json_start + 7) if json_start >= 0 else -1
-                if json_start >= 0 and json_end > json_start:
-                    json_str = response[json_start + 7:json_end].strip()
-                    try:
-                        learning_data = json.loads(json_str)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-
-                target_type = "github" if is_github else ("url" if is_url else "topic")
-                add_learning(
-                    target=target,
-                    target_type=target_type,
-                    verdict=learning_data.get("verdict", "UNKNOWN"),
-                    patterns=learning_data.get("patterns", ""),
-                    operational_benefit=learning_data.get("operational_benefit", ""),
-                    skill_created=learning_data.get("skill_created", ""),
-                    full_report=response[:8000],
-                    cost=cost,
-                )
-                log.info(f"[learn] Stored learning: {target} -> {learning_data.get('verdict', '?')}")
-            except Exception as e:
-                log.warning(f"[learn] Failed to store learning: {e}")
-
         except Exception as e:
+            stop_reporter()
             log.error(f"Learn error: {e}")
             await self.app.bot.send_message(chat_id=int(chat_id), text=f"Learn failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        response = result.get("text", "No output.")
+        cost = result.get("cost", 0)
+        tools_used = get_tool_count()
+
+        # Send single comprehensive report
+        header = f"*Learn: {target}*\n({tools_used} steps, ${cost:.2f})\n\n"
+        full = header + response
+        for i in range(0, len(full), 4000):
+            await self.app.bot.send_message(chat_id=int(chat_id), text=full[i:i+4000], parse_mode="Markdown")
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "learn", cost)
+
+        # Store learning in DB
+        try:
+            from ..session_db import add_learning
+            learning_data = {"verdict": "UNKNOWN", "patterns": "", "operational_benefit": "", "skill_created": ""}
+            json_start = response.rfind('```json')
+            json_end = response.rfind('```', json_start + 7) if json_start >= 0 else -1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start + 7:json_end].strip()
+                try:
+                    learning_data = json.loads(json_str)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            target_type = "github" if is_github else ("url" if is_url else "topic")
+            add_learning(
+                target=target,
+                target_type=target_type,
+                verdict=learning_data.get("verdict", "UNKNOWN"),
+                patterns=learning_data.get("patterns", ""),
+                operational_benefit=learning_data.get("operational_benefit", ""),
+                skill_created=learning_data.get("skill_created", ""),
+                full_report=response[:8000],
+                cost=cost,
+            )
+            log.info(f"[learn] Stored learning: {target} -> {learning_data.get('verdict', '?')}")
+        except Exception as e:
+            log.warning(f"[learn] Failed to store learning: {e}")
 
     # ── /absorb — deep scan + implement improvements ───────────
 
@@ -1038,22 +1077,12 @@ class TelegramAdapter(BasePlatformAdapter):
         chat_id = str(update.message.chat_id)
         loop = asyncio.get_running_loop()
 
-        # Progress bridge
-        msg_buffer = []
-        async def send_progress(text: str):
-            msg_buffer.append(text)
-            if len(msg_buffer) % 3 == 0:
-                batch = "\n".join(msg_buffer[-3:])
-                try:
-                    await self.app.bot.send_message(chat_id=int(chat_id), text=batch, parse_mode="Markdown")
-                except Exception:
-                    pass
-
-        def on_progress_sync(text: str):
-            asyncio.run_coroutine_threadsafe(send_progress(text), loop)
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop)
 
         model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
 
+        start_reporter()
         try:
             from ..absorb import AbsorbOrchestrator
 
@@ -1068,44 +1097,41 @@ class TelegramAdapter(BasePlatformAdapter):
             summary, cost = await loop.run_in_executor(
                 None, lambda: orchestrator.run(dry_run=dry_run)
             )
-
-            # Flush remaining progress
-            remaining = len(msg_buffer) % 3
-            if remaining > 0:
-                batch = "\n".join(msg_buffer[-remaining:])
-                try:
-                    await self.app.bot.send_message(chat_id=int(chat_id), text=batch, parse_mode="Markdown")
-                except Exception:
-                    pass
-
-            # Send final summary
-            for i in range(0, len(summary), 4000):
-                await self.app.bot.send_message(
-                    chat_id=int(chat_id), text=summary[i:i+4000], parse_mode="Markdown"
-                )
-
-            if cost > 0 and self._gateway:
-                self._gateway._log_cost("telegram", "absorb", cost)
-
-            # Store in learnings DB
-            try:
-                from ..session_db import add_learning
-                add_learning(
-                    target=target,
-                    target_type=target_type,
-                    verdict="ABSORBED",
-                    patterns=f"Absorbed via 5-stage pipeline. See full report.",
-                    operational_benefit=f"System improvements implemented. Cost: ${cost:.2f}",
-                    skill_created="",
-                    full_report=summary[:8000],
-                    cost=cost,
-                )
-            except Exception as e:
-                log.warning(f"[absorb] Failed to store learning: {e}")
-
         except Exception as e:
+            stop_reporter()
             log.error(f"Absorb error: {e}")
             await self.app.bot.send_message(chat_id=int(chat_id), text=f"Absorb failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        # Send single comprehensive report
+        tools_used = get_tool_count()
+        footer = f"\n\n({tools_used} steps, ${cost:.2f})"
+        full_summary = summary + footer
+        for i in range(0, len(full_summary), 4000):
+            await self.app.bot.send_message(
+                chat_id=int(chat_id), text=full_summary[i:i+4000], parse_mode="Markdown"
+            )
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "absorb", cost)
+
+        # Store in learnings DB
+        try:
+            from ..session_db import add_learning
+            add_learning(
+                target=target,
+                target_type=target_type,
+                verdict="ABSORBED",
+                patterns=f"Absorbed via 5-stage pipeline. See full report.",
+                operational_benefit=f"System improvements implemented. Cost: ${cost:.2f}",
+                skill_created="",
+                full_report=summary[:8000],
+                cost=cost,
+            )
+        except Exception as e:
+            log.warning(f"[absorb] Failed to store learning: {e}")
 
     # ── /learnings — view past learnings ────────────────────────
 
@@ -1511,19 +1537,8 @@ class TelegramAdapter(BasePlatformAdapter):
                 from ..absorb import AbsorbOrchestrator
 
                 loop = asyncio.get_running_loop()
-                msg_buffer = []
-
-                async def send_progress(text: str):
-                    msg_buffer.append(text)
-                    if len(msg_buffer) % 3 == 0:
-                        batch = "\n".join(msg_buffer[-3:])
-                        try:
-                            await self.app.bot.send_message(chat_id=int(chat_id), text=batch)
-                        except Exception:
-                            pass
-
-                def on_progress_sync(text: str):
-                    asyncio.run_coroutine_threadsafe(send_progress(text), loop)
+                on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+                    self._make_progress_tracker(chat_id, loop)
 
                 orchestrator = AbsorbOrchestrator(
                     target=target,
@@ -1532,14 +1547,20 @@ class TelegramAdapter(BasePlatformAdapter):
                     on_progress=on_progress_sync,
                 )
 
-                summary, cost = await loop.run_in_executor(
-                    None, lambda: orchestrator.run(dry_run=False)
-                )
+                start_reporter()
+                try:
+                    summary, cost = await loop.run_in_executor(
+                        None, lambda: orchestrator.run(dry_run=False)
+                    )
+                finally:
+                    stop_reporter()
 
-                for i in range(0, len(summary), 4000):
-                    await self.app.bot.send_message(chat_id=int(chat_id), text=summary[i:i+4000])
+                tools_used = get_tool_count()
+                footer = f"\n\n({tools_used} steps, ${cost:.2f})"
+                full_summary = summary + footer
+                for i in range(0, len(full_summary), 4000):
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=full_summary[i:i+4000])
 
-                # Store in learnings DB
                 try:
                     from ..session_db import add_learning
                     add_learning(
