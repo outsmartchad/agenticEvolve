@@ -1,0 +1,22 @@
+{
+  "name": "@ae/browser",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Human-like browser automation for agenticEvolve",
+  "main": "dist/browser.js",
+  "types": "dist/browser.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx browser.ts",
+    "test": "tsx browser-test.ts"
+  },
+  "dependencies": {
+    "playwright-core": "^1.43.0",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
