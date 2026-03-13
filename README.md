@@ -1,118 +1,141 @@
 # agenticEvolve
 
+**Claude Code on your phone. It remembers everything. It gets smarter every day.**
+
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-16-orange?style=for-the-badge" alt="16 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-29-blue?style=for-the-badge" alt="29 Commands"></a>
 </p>
 
-**A personal closed-loop agentic system that evolves your development capabilities daily.** It scans the internet for developer signals, absorbs patterns from any repo, builds skills from what it learns, and gets smarter every session — all through Telegram while you go about your day.
+---
 
-Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as the agent engine. Zero custom agent loops. Intelligence lives in prompts, memory, and skills.
+Text your Telegram bot. It runs Claude Code — with full terminal access, file operations, web search, and 16 skills — from anywhere. Every conversation is remembered. Every pattern is learned. While you sleep, it scans GitHub trending and Hacker News for tools that match your stack, builds skills from them, and waits for your approval.
 
-<table>
-<tr><td><b>Talk to it from anywhere</b></td><td>Telegram, Discord, WhatsApp, CLI — full Claude Code capabilities (file ops, terminal, web search, MCP, 16 skills) from your phone.</td></tr>
-<tr><td><b>Closed learning loop</b></td><td>Bounded memory (MEMORY.md + USER.md) + SQLite FTS5 session search. Every conversation is indexed. Every pattern is remembered.</td></tr>
-<tr><td><b>Self-evolving</b></td><td>Scans GitHub trending, Hacker News, and X for signals. Auto-builds Claude Code skills with human approval gate. <a href="docs/pipelines.md">See pipelines →</a></td></tr>
-<tr><td><b>Absorbs from the wild</b></td><td>Deep-scans any repo, compares against itself, identifies gaps, and implements improvements to its own codebase.</td></tr>
-<tr><td><b>Security-first</b></td><td>Automated security scanner, skills approval queue, cost caps, autonomy levels, filesystem scoping, deny-by-default auth. <a href="docs/security.md">See security →</a></td></tr>
-<tr><td><b>Cost-controlled</b></td><td>Daily + weekly caps enforced before every Claude invocation. Never wake up to a surprise bill.</td></tr>
-</table>
+No custom agent loop. No framework. Just Claude Code + memory + a messaging gateway.
 
 ---
 
-## Quick Start
+## See It In Action
+
+```
+You:     hey, refactor the auth middleware in my express app to use JWT
+Bot:     [reads files, edits code, runs tests]
+         Done. Replaced session-based auth with JWT in 3 files.
+         Tests passing. Here's what changed: ...
+
+You:     /absorb https://github.com/some-cool-project
+Bot:     [clones repo, scans architecture, finds 4 patterns we're missing]
+         Found 3 improvements. Implementing...
+         Done. Added retry logic, health checks, and graceful shutdown.
+
+You:     /evolve
+Bot:     [scans GitHub trending, HN, scores 12 signals]
+         Built 2 skills: rate-limiter-patterns, structured-logging
+         Waiting in queue. /approve to install.
+```
+
+That's it. You text, it codes. It learns, you approve.
+
+---
+
+## Get Started (2 minutes)
 
 ```bash
-# Clone
 git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-
-# Symlink the CLI
-mkdir -p ~/.local/bin && ln -sf ~/.agenticEvolve/ae ~/.local/bin/ae
-
-# Install dependencies
 pip install -r ~/.agenticEvolve/requirements.txt
-
-# Setup
-ae setup
 ```
 
-Then add your Telegram bot token to `~/.agenticEvolve/.env` and your user ID to `config.yaml`. Done.
+Add your Telegram bot token to `~/.agenticEvolve/.env`:
+```
+TELEGRAM_BOT_TOKEN=your-token-here
+```
 
----
+Add your Telegram user ID to `~/.agenticEvolve/config.yaml`:
+```yaml
+platforms:
+  telegram:
+    allowed_users: [your-user-id]
+```
 
-## Usage
-
+Start it:
 ```bash
-ae gateway              # Start the messaging gateway
-ae gateway stop         # Stop it
-ae status               # System overview
-ae cost                 # Cost breakdown
-ae doctor               # Diagnose issues
+cd ~/.agenticEvolve && python3 -m gateway.run
 ```
 
-Or just message the bot on Telegram. Regular text goes to Claude Code. Slash commands trigger pipelines.
+Message your bot. Done.
 
 ---
 
-## Core Capabilities
+## What Can It Do?
 
-### Pipelines
+**Chat** — Send any message. It goes to Claude Code with full tool access. Ask it to write code, debug, refactor, deploy, research — anything Claude Code can do, but from your phone.
+
+**Remember** — Every conversation is saved in SQLite with full-text search. The agent maintains bounded notes about you and your projects. Context carries across sessions.
+
+**Evolve** — `/evolve` scans GitHub trending + Hacker News for dev signals relevant to your work. Scores them, builds Claude Code skills from the best ones, and queues them for your approval. Run it daily via cron — it gets smarter on autopilot.
+
+**Absorb** — `/absorb <any-repo-url>` deep-scans a repo, compares its patterns against your system, identifies gaps, and implements improvements. One command to learn from any codebase.
+
+**Learn** — `/learn <repo-or-topic>` extracts actionable patterns from any repo or technology. Not a summary — structured findings you can use.
+
+**Schedule** — `/loop every 6h /evolve` and it runs on its own. Built-in cron with timezone support. Set reminders with `/notify`.
+
+**Stay Safe** — Automated security scanner on all external code. Skills require your `/approve`. Daily + weekly cost caps. User whitelisting. Three autonomy levels (full / supervised / readonly).
+
+---
+
+## Key Commands
 
 | Command | What it does |
 |---------|-------------|
-| `/evolve` | Signal → Skill. Scans trending repos/news, scores relevance, builds skills. |
-| `/absorb <target>` | Deep Scan → Self-Improve. Clones a repo, finds gaps, implements improvements. |
-| `/learn <target>` | Pattern Extraction. Deep-dives a repo or tech, returns structured findings. |
-| `/do <instruction>` | Natural Language → Command. "absorb this repo and skip security" just works. |
+| Just text it | Chat with Claude Code |
+| `/evolve` | Scan internet, build new skills |
+| `/absorb <url>` | Learn from any repo |
+| `/learn <topic>` | Deep-dive research |
+| `/cost` | Check your spend |
+| `/memory` | See what the agent remembers |
+| `/search <query>` | Search past conversations |
+| `/skills` | List installed skills |
+| `/loop <interval> <cmd>` | Schedule recurring tasks |
+| `/approve <name>` | Install a queued skill |
 
-All pipelines run in background with streaming progress. All support `--dry-run`.
-
-**[Full pipeline documentation →](docs/pipelines.md)**
-
-### Security
-
-Three autonomy levels (`full` / `supervised` / `readonly`), automated security scanning on all external code, filesystem scoping, forbidden paths, and deny-by-default auth.
-
-**[Full security documentation →](docs/security.md)**
-
-### Commands
-
-29 Telegram commands covering chat, memory, sessions, cost, pipelines, skills, cron, and maintenance.
-
-**[Full command reference →](docs/commands.md)**
-
-### Skills
-
-16 installed skills — 7 original + 9 adapted from [everything-claude-code](https://github.com/affaan-m/everything-claude-code) (73k+ stars). Covers web search, browser automation, research, writing, video editing, security, and more.
-
-**[Full skill catalog →](docs/skills.md)**
+[All 29 commands ->](docs/commands.md)
 
 ---
 
-## Documentation
+## How It Works Under The Hood
 
-| Doc | What's covered |
-|-----|---------------|
-| [Pipelines](docs/pipelines.md) | `/evolve`, `/absorb`, `/learn`, `/do`, `/gc` — full pipeline details |
-| [Security](docs/security.md) | Scanner, autonomy levels, filesystem scoping, safety gates |
-| [Commands](docs/commands.md) | All 29 Telegram commands with flags |
-| [Skills](docs/skills.md) | 16 installed skills, triggering, how to add new ones |
-| [Architecture](docs/architecture.md) | Message flow, project structure, design decisions, platform support |
-| [Build Plan](BUILD-PLAN-V2.md) | v2 architecture spec (409 lines) |
+```
+Telegram message
+    -> Gateway (Python asyncio)
+        -> Session lookup + cost cap check
+        -> Build system prompt (personality + memory + history)
+        -> claude -p (full Claude Code)
+        -> Stream progress back to chat
+        -> Save to SQLite
+```
 
----
-
-## Inspiration
-
-- [hermes-agent](https://github.com/NousResearch/hermes-agent) — bounded memory, session persistence, messaging gateway, growing-status-message UX
-- [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) — autonomy levels, hot config reloading, deny-by-default security
-- [everything-claude-code](https://github.com/affaan-m/everything-claude-code) — skills, eval-driven development, continuous learning patterns
-- [Anthropic skill-creator](https://github.com/anthropics/claude-plugins-official) — skill creation, eval framework, description optimization
+No custom agent loop. Claude Code IS the agent. The gateway just routes messages, manages memory, and enforces safety. [Architecture details ->](docs/architecture.md)
 
 ---
 
-## License
+## Built On
 
-MIT
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — the agent engine (25+ built-in tools, MCP, skills, subagents)
+- [hermes-agent](https://github.com/NousResearch/hermes-agent) — bounded memory, session persistence, messaging gateway patterns
+- [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) — autonomy levels, deny-by-default security
+- [everything-claude-code](https://github.com/affaan-m/everything-claude-code) — skills and eval patterns
+
+---
+
+## Docs
+
+- [Commands](docs/commands.md) — all 29 commands
+- [Pipelines](docs/pipelines.md) — evolve, absorb, learn, do, gc
+- [Skills](docs/skills.md) — 16 installed skills
+- [Security](docs/security.md) — scanner, autonomy, safety
+- [Architecture](docs/architecture.md) — internals
+
+---
+
+MIT License
