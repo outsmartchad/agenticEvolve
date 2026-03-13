@@ -49,6 +49,47 @@ class TelegramAdapter(BasePlatformAdapter):
             parse_mode="Markdown"
         )
 
+    @staticmethod
+    def _parse_flags(raw_args: list, flag_defs: dict) -> dict:
+        """Parse flags from args list. Mutates raw_args (removes consumed flags).
+
+        flag_defs: dict mapping flag names to their config:
+          {"--dry-run": {"aliases": ["dry-run", "dry", "preview"], "type": "bool"},
+           "--model": {"type": "value"},  # consumes next arg
+           "--limit": {"type": "value", "cast": int, "default": 10}}
+
+        Returns dict of parsed flag values.
+        """
+        result = {}
+        for flag, cfg in flag_defs.items():
+            flag_type = cfg.get("type", "bool")
+            aliases = [flag] + cfg.get("aliases", [])
+
+            if flag_type == "bool":
+                result[flag] = False
+                for alias in aliases:
+                    if alias in raw_args:
+                        result[flag] = True
+                        raw_args.remove(alias)
+                        break
+
+            elif flag_type == "value":
+                result[flag] = cfg.get("default")
+                for alias in aliases:
+                    if alias in raw_args:
+                        idx = raw_args.index(alias)
+                        if idx + 1 < len(raw_args):
+                            val = raw_args[idx + 1]
+                            cast = cfg.get("cast")
+                            try:
+                                result[flag] = cast(val) if cast else val
+                            except (ValueError, TypeError):
+                                result[flag] = cfg.get("default")
+                            raw_args.pop(idx + 1)
+                        raw_args.pop(idx)
+                        break
+        return result
+
     # ── /start ───────────────────────────────────────────────────
 
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -75,41 +116,37 @@ class TelegramAdapter(BasePlatformAdapter):
             "/help — Show this help\n"
             "/status — System status\n"
             "/model [name] — View or switch model\n"
-            "/cost — Today's cost\n"
+            "/cost [--week] — Today's cost (add --week for weekly)\n"
             "/config — View runtime config\n"
             "/heartbeat — Check if bot is alive\n\n"
             "Sessions\n"
-            "/newsession — Force new session\n"
-            "/sessions — Recent sessions\n"
-            "/search <query> — FTS5 search past sessions\n\n"
+            "/newsession [title] — Start new session (optionally named)\n"
+            "/sessions [--limit N] — Recent sessions\n"
+            "/search <query> [--limit N] — FTS5 search past sessions\n\n"
             "Memory & Identity\n"
             "/memory — Show bounded memory\n"
             "/soul — View agent personality\n\n"
             "Evolution\n"
-            "/evolve — Scan signals + build skills now\n"
-            "/evolve --dry-run — Preview what would be built\n"
-            "/absorb <target> — Deep scan + implement improvements\n"
-            "/absorb --dry-run <target> — Preview gaps only\n"
-            "/learn <target> — Deep-dive + extract patterns\n"
-            "Add --skip-security-scan to /learn, /evolve, /absorb to bypass scan\n"
-            "/learnings — View past findings (or search)\n\n"
+            "/evolve [--dry-run] [--model X] [--skip-security-scan]\n"
+            "/absorb <target> [--dry-run] [--model X] [--skip-security-scan]\n"
+            "/learn <target> [--dry-run] [--model X] [--skip-security-scan]\n"
+            "/learnings [query] [--limit N] — View past findings\n\n"
             "Skills\n"
             "/skills — List installed skills\n"
             "/queue — Skills pending approval\n"
-            "/approve <name> — Install a queued skill\n"
-            "/reject <name> — Remove a queued skill\n\n"
+            "/approve <name> [--force] — Install a queued skill\n"
+            "/reject <name> [reason] — Remove a queued skill\n\n"
             "Scheduling\n"
-            "/loop <interval> <prompt> — Recurring job\n"
+            "/loop <interval> <prompt> [--model X] [--max-runs N] [--start-now]\n"
             "/loops — List active loops\n"
             "/unloop <id> — Cancel a loop\n"
-            "/pause <id> — Pause a loop\n"
-            "/unpause <id> — Resume a loop\n"
+            "/pause <id|--all> — Pause loop(s)\n"
+            "/unpause <id|--all> — Resume loop(s)\n"
             "/notify <delay> <msg> — One-shot reminder\n\n"
             "Maintenance\n"
-            "/gc — Garbage collection + health check\n"
-            "/gc dry — Preview without deleting\n\n"
+            "/gc [--dry-run] — Garbage collection\n\n"
             "Natural Language\n"
-            "/do <instruction> — Parse intent + run command\n\n"
+            "/do <instruction> [--preview] — Parse intent + run command\n\n"
             "Or just send any message to chat with Claude."
         )
 
@@ -187,8 +224,12 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {"--limit": {"type": "value", "cast": int, "default": 10}})
+        limit = min(flags["--limit"], 50)
+
         from ..session_db import list_sessions
-        rows = list_sessions(limit=10)
+        rows = list_sessions(limit=limit)
         if not rows:
             return await update.message.reply_text("No sessions yet.")
 
@@ -209,6 +250,8 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
+        title = " ".join(context.args) if context.args else ""
+
         chat_id = str(update.message.chat_id)
         key = f"telegram:{chat_id}"
         if self._gateway:
@@ -217,9 +260,16 @@ class TelegramAdapter(BasePlatformAdapter):
             self._gateway._session_msg_count.pop(key, None)
             self._gateway._locks.pop(key, None)
             if sid:
-                from ..session_db import end_session
+                from ..session_db import end_session, set_session_title
                 end_session(sid)
-        await update.message.reply_text("New session started. Send your next message.")
+            # If title provided, pre-create a titled session
+            if title:
+                from ..session_db import create_session
+                new_sid = create_session("telegram", chat_id)
+                set_session_title(new_sid, title)
+                self._gateway._active_sessions[key] = new_sid
+        msg = f"New session started: *{title}*" if title else "New session started. Send your next message."
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
     # ── /cost ────────────────────────────────────────────────────
 
@@ -229,15 +279,22 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        from ..agent import get_today_cost
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {"--week": {"type": "bool"}})
+
+        from ..agent import get_today_cost, get_week_cost
         today_cost = get_today_cost()
         daily_cap = 5.0
+        weekly_cap = 25.0
         if self._gateway:
             daily_cap = self._gateway.config.get("daily_cost_cap", 5.0)
-        await update.message.reply_text(
-            f"*Cost today*: ${today_cost:.2f} / ${daily_cap:.2f}",
-            parse_mode="Markdown"
-        )
+            weekly_cap = self._gateway.config.get("weekly_cost_cap", 25.0)
+
+        lines = [f"*Cost today*: ${today_cost:.2f} / ${daily_cap:.2f}"]
+        if flags["--week"]:
+            week_cost = get_week_cost()
+            lines.append(f"*Cost this week*: ${week_cost:.2f} / ${weekly_cap:.2f}")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     # ── /model ───────────────────────────────────────────────────
 
@@ -283,17 +340,15 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        dry_run = False
-        skip_security_scan = False
         raw_args = list(context.args) if context.args else []
-        for flag in ("--dry-run", "dry-run", "dry", "preview"):
-            if flag in raw_args:
-                dry_run = True
-                raw_args.remove(flag)
-                break
-        if "--skip-security-scan" in raw_args:
-            skip_security_scan = True
-            raw_args.remove("--skip-security-scan")
+        flags = self._parse_flags(raw_args, {
+            "--dry-run": {"aliases": ["dry-run", "dry", "preview"], "type": "bool"},
+            "--skip-security-scan": {"type": "bool"},
+            "--model": {"type": "value"},
+        })
+        dry_run = flags["--dry-run"]
+        skip_security_scan = flags["--skip-security-scan"]
+        model_override = flags["--model"]
 
         chat_id = str(update.message.chat_id)
         if dry_run:
@@ -329,9 +384,7 @@ class TelegramAdapter(BasePlatformAdapter):
         def on_progress_sync(text: str):
             asyncio.run_coroutine_threadsafe(send_progress(text), loop)
 
-        model = "sonnet"
-        if self._gateway:
-            model = self._gateway.config.get("model", "sonnet")
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
 
         try:
             from ..evolve import EvolveOrchestrator
@@ -407,12 +460,13 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        args = context.args if context.args else []
-        if not args:
-            return await update.message.reply_text("Usage: `/approve <skill-name>` or `/approve <skill-name> force`", parse_mode="Markdown")
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {"--force": {"aliases": ["force"], "type": "bool"}})
+        if not raw_args:
+            return await update.message.reply_text("Usage: `/approve <skill-name> [--force]`", parse_mode="Markdown")
 
-        name = args[0]
-        force = len(args) > 1 and args[1] == "force"
+        name = raw_args[0]
+        force = flags["--force"]
 
         from ..evolve import approve_skill, approve_skill_force
         if force:
@@ -449,14 +503,26 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        args = " ".join(context.args) if context.args else ""
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {
+            "--model": {"type": "value"},
+            "--max-runs": {"type": "value", "cast": int},
+            "--start-now": {"type": "bool"},
+        })
+
+        args = " ".join(raw_args)
         if not args:
             await update.message.reply_text(
                 "*Usage:* `/loop <interval> <prompt>`\n\n"
+                "*Options:*\n"
+                "`--model <name>` — override model for this loop\n"
+                "`--max-runs <n>` — auto-stop after N runs\n"
+                "`--start-now` — run first iteration immediately\n\n"
                 "*Examples:*\n"
                 "`/loop 2h scan HN for AI tools`\n"
                 "`/loop 30m check GitHub trending`\n"
-                "`/loop 1d summarize today's tech news`\n\n"
+                "`/loop 1d --model haiku summarize today's tech news`\n"
+                "`/loop 6h --max-runs 3 --start-now check for new releases`\n\n"
                 "*Intervals:* `s` sec, `m` min, `h` hours, `d` days (min 60s)",
                 parse_mode="Markdown"
             )
@@ -489,6 +555,9 @@ class TelegramAdapter(BasePlatformAdapter):
         chat_id = str(update.message.chat_id)
         now = datetime.now(timezone.utc)
 
+        start_now = flags["--start-now"]
+        next_run = now if start_now else (now + timedelta(seconds=interval_seconds))
+
         job = {
             "id": job_id,
             "prompt": prompt,
@@ -497,19 +566,31 @@ class TelegramAdapter(BasePlatformAdapter):
             "deliver_to": "telegram",
             "deliver_chat_id": chat_id,
             "created_at": now.isoformat(),
-            "next_run_at": (now + timedelta(seconds=interval_seconds)).isoformat(),
+            "next_run_at": next_run.isoformat(),
             "run_count": 0,
             "paused": False,
             "last_run_at": None,
         }
+        if flags["--model"]:
+            job["model"] = flags["--model"]
+        if flags["--max-runs"]:
+            job["max_runs"] = flags["--max-runs"]
         jobs.append(job)
         CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
 
         unit_names = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
+        extras = []
+        if flags["--model"]:
+            extras.append(f"model: {flags['--model']}")
+        if flags["--max-runs"]:
+            extras.append(f"max runs: {flags['--max-runs']}")
+        if start_now:
+            extras.append("starts immediately")
+        extra_line = f"\n{', '.join(extras)}" if extras else ""
         await update.message.reply_text(
             f"Loop created: `{job_id}`\n"
             f"Every {value} {unit_names[unit]}: {prompt}\n"
-            f"Next run: {job['next_run_at'][:19]}",
+            f"Next run: {job['next_run_at'][:19]}{extra_line}",
             parse_mode="Markdown"
         )
 
@@ -686,26 +767,34 @@ class TelegramAdapter(BasePlatformAdapter):
             return await self._deny(update)
 
         raw_args = list(context.args) if context.args else []
-        skip_security_scan = False
-        if "--skip-security-scan" in raw_args:
-            skip_security_scan = True
-            raw_args.remove("--skip-security-scan")
+        flags = self._parse_flags(raw_args, {
+            "--skip-security-scan": {"type": "bool"},
+            "--model": {"type": "value"},
+            "--dry-run": {"aliases": ["dry-run", "preview"], "type": "bool"},
+        })
+        skip_security_scan = flags["--skip-security-scan"]
+        model_override = flags["--model"]
+        dry_run = flags["--dry-run"]
 
         target = " ".join(raw_args)
         if not target:
             await update.message.reply_text(
                 "*Usage:* `/learn <repo-url or tech name>`\n\n"
+                "*Options:*\n"
+                "`--dry-run` — security scan + preview only, no full analysis\n"
+                "`--model <name>` — override model (e.g. opus for deeper analysis)\n"
+                "`--skip-security-scan` — bypass security check\n\n"
                 "*Examples:*\n"
                 "`/learn https://github.com/vercel/ai`\n"
-                "`/learn anthropic tool-use patterns`\n"
-                "`/learn htmx`\n"
-                "`/learn https://github.com/nicepkg/aide`",
+                "`/learn --model opus anthropic tool-use patterns`\n"
+                "`/learn --dry-run https://github.com/nicepkg/aide`",
                 parse_mode="Markdown"
             )
             return
 
+        mode = "preview" if dry_run else "full analysis"
         await update.message.reply_text(
-            f"Learning about `{target}`...\n\nI'll research it, analyze how it benefits us, and suggest if we should build a skill for it.",
+            f"Learning about `{target}` ({mode})...\n\nI'll research it, analyze how it benefits us, and suggest if we should build a skill for it.",
             parse_mode="Markdown"
         )
 
@@ -812,9 +901,18 @@ class TelegramAdapter(BasePlatformAdapter):
                 f"Return: patterns extracted, operational verdict, and any skill/memory updates made."
             )
 
-        model = "sonnet"
-        if self._gateway:
-            model = self._gateway.config.get("model", "sonnet")
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
+
+        # Dry run: show security scan result and what would be analyzed, then stop
+        if dry_run:
+            lines = [f"*Learn dry run: {target}*\n"]
+            lines.append(f"Type: {'GitHub repo' if is_github else 'URL' if is_url else 'topic'}")
+            lines.append(f"Model: {model}")
+            lines.append(f"Security scan: {'skipped' if skip_security_scan else 'passed'}")
+            lines.append(f"\nWould run full analysis with Claude ({model}).")
+            lines.append(f"Run `/learn {target}` to execute.")
+            await self.app.bot.send_message(chat_id=int(chat_id), text="\n".join(lines))
+            return
 
         try:
             from ..agent import invoke_claude_streaming
@@ -891,33 +989,28 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        # Parse --dry-run and --skip-security-scan flags from args
-        dry_run = False
-        skip_security_scan = False
         raw_args = list(context.args) if context.args else []
-        for flag in ("--dry-run", "dry-run", "dry", "preview"):
-            if flag in raw_args:
-                dry_run = True
-                raw_args.remove(flag)
-                break
-        if "--skip-security-scan" in raw_args:
-            skip_security_scan = True
-            raw_args.remove("--skip-security-scan")
+        flags = self._parse_flags(raw_args, {
+            "--dry-run": {"aliases": ["dry-run", "dry", "preview"], "type": "bool"},
+            "--skip-security-scan": {"type": "bool"},
+            "--model": {"type": "value"},
+        })
+        dry_run = flags["--dry-run"]
+        skip_security_scan = flags["--skip-security-scan"]
+        model_override = flags["--model"]
 
         target = " ".join(raw_args)
         if not target:
             await update.message.reply_text(
                 "*Usage:* `/absorb <repo-url or tech/architecture>`\n\n"
                 "*Options:*\n"
-                "`/absorb --dry-run <target>` — scan + gap analysis only\n\n"
+                "`--dry-run` — scan + gap analysis only\n"
+                "`--model <name>` — override model for this run\n"
+                "`--skip-security-scan` — bypass security check\n\n"
                 "*Examples:*\n"
                 "`/absorb https://github.com/NousResearch/hermes-agent`\n"
-                "`/absorb persistent memory protocol for ai agents`\n"
-                "`/absorb --dry-run https://github.com/langchain-ai/langgraph`\n"
-                "`/absorb bounded context window management`\n\n"
-                "This will deep scan the target, compare against our system, "
-                "identify gaps, and *actually implement improvements*.\n"
-                "Use `--dry-run` to preview gaps without implementing.",
+                "`/absorb --model opus persistent memory protocol`\n"
+                "`/absorb --dry-run https://github.com/langchain-ai/langgraph`",
                 parse_mode="Markdown"
             )
             return
@@ -959,9 +1052,7 @@ class TelegramAdapter(BasePlatformAdapter):
         def on_progress_sync(text: str):
             asyncio.run_coroutine_threadsafe(send_progress(text), loop)
 
-        model = "sonnet"
-        if self._gateway:
-            model = self._gateway.config.get("model", "sonnet")
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
 
         try:
             from ..absorb import AbsorbOrchestrator
@@ -1025,14 +1116,17 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        query = " ".join(context.args) if context.args else ""
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {"--limit": {"type": "value", "cast": int, "default": 10}})
+        limit = min(flags["--limit"], 50)
+        query = " ".join(raw_args)
 
         from ..session_db import list_learnings, search_learnings
 
         if query:
-            items = search_learnings(query, limit=10)
+            items = search_learnings(query, limit=limit)
         else:
-            items = list_learnings(limit=10)
+            items = list_learnings(limit=limit)
 
         if not items:
             msg = "No learnings stored yet. Use `/learn <topic>` to start." if not query else f"No learnings matching `{query}`."
@@ -1068,9 +1162,9 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        dry_run = False
-        if context.args and context.args[0].lower() in ("dry", "dry-run", "preview"):
-            dry_run = True
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {"--dry-run": {"aliases": ["dry-run", "dry", "preview"], "type": "bool"}})
+        dry_run = flags["--dry-run"]
 
         mode = "preview" if dry_run else "cleanup"
         await update.message.reply_text(f"Running GC ({mode})...", parse_mode="Markdown")
@@ -1097,25 +1191,28 @@ class TelegramAdapter(BasePlatformAdapter):
     # ── /search — FTS5 search across past sessions ─────────────
 
     async def _handle_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Search past sessions using FTS5. Usage: /search <query>"""
+        """Search past sessions using FTS5. Usage: /search <query> [--limit N]"""
         if not update.message:
             return
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        query = " ".join(context.args) if context.args else ""
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {"--limit": {"type": "value", "cast": int, "default": 5}})
+        limit = min(flags["--limit"], 20)
+        query = " ".join(raw_args)
         if not query:
             await update.message.reply_text(
-                "Usage: /search <query>\n\n"
+                "Usage: /search <query> [--limit N]\n\n"
                 "Examples:\n"
                 "/search telegram rate limit\n"
-                "/search cost cap\n"
+                "/search --limit 10 cost cap\n"
                 "/search absorb pipeline"
             )
             return
 
         from ..session_db import search_sessions
-        results = search_sessions(query, limit=5)
+        results = search_sessions(query, limit=limit)
 
         if not results:
             await update.message.reply_text(f"No results for: {query}")
@@ -1265,11 +1362,18 @@ class TelegramAdapter(BasePlatformAdapter):
         await self._toggle_job(update, context, paused=False)
 
     async def _toggle_job(self, update: Update, context: ContextTypes.DEFAULT_TYPE, paused: bool):
-        """Shared logic for pause/unpause."""
-        job_id = context.args[0] if context.args else ""
-        if not job_id:
-            action = "pause" if paused else "unpause"
-            return await update.message.reply_text(f"Usage: /{action} <job_id>\n\nUse /loops to see job IDs.")
+        """Shared logic for pause/unpause. Supports --all to toggle all jobs."""
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {"--all": {"aliases": ["all"], "type": "bool"}})
+        toggle_all = flags["--all"]
+        job_id = raw_args[0] if raw_args else ""
+
+        action = "pause" if paused else "unpause"
+        if not job_id and not toggle_all:
+            return await update.message.reply_text(
+                f"Usage: /{action} <job_id>\n"
+                f"       /{action} --all\n\nUse /loops to see job IDs."
+            )
 
         if not CRON_JOBS_FILE.exists():
             return await update.message.reply_text("No jobs configured.")
@@ -1278,6 +1382,16 @@ class TelegramAdapter(BasePlatformAdapter):
             jobs = json.loads(CRON_JOBS_FILE.read_text())
         except Exception:
             return await update.message.reply_text("Failed to read jobs.json.")
+
+        if toggle_all:
+            count = 0
+            for job in jobs:
+                if job.get("paused") != paused:
+                    job["paused"] = paused
+                    count += 1
+            CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+            past = "Paused" if paused else "Unpaused"
+            return await update.message.reply_text(f"{past} {count} job(s).")
 
         found = False
         for job in jobs:
@@ -1290,8 +1404,8 @@ class TelegramAdapter(BasePlatformAdapter):
             return await update.message.reply_text(f"Job not found: {job_id}")
 
         CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
-        action = "Paused" if paused else "Unpaused"
-        await update.message.reply_text(f"{action} job: {job_id}")
+        past = "Paused" if paused else "Unpaused"
+        await update.message.reply_text(f"{past} job: {job_id}")
 
     # ── /model — view or switch model ────────────────────────────
     # (overrides the existing read-only /model handler above)
@@ -1614,14 +1728,20 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        text = " ".join(context.args) if context.args else ""
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {"--preview": {"aliases": ["--dry-run"], "type": "bool"}})
+        preview = flags["--preview"]
+        text = " ".join(raw_args)
+
         if not text:
             await update.message.reply_text(
                 "*Usage:* `/do <natural language instruction>`\n\n"
+                "*Options:*\n"
+                "`--preview` — show parsed command without running it\n\n"
                 "*Examples:*\n"
                 "`/do absorb this repo https://github.com/foo/bar and skip the security scan`\n"
                 "`/do learn about htmx`\n"
-                "`/do preview what evolve would build`\n"
+                "`/do --preview study this repo https://github.com/vercel/ai`\n"
                 "`/do search for memory management in past sessions`\n"
                 "`/do show me the cost so far`\n"
                 "`/do schedule absorb langchain every day at 9am`\n\n"
@@ -1642,6 +1762,15 @@ class TelegramAdapter(BasePlatformAdapter):
 
         cmd = intent["command"]
         confidence = intent.get("confidence", 0)
+
+        if preview:
+            await update.message.reply_text(
+                f"*Preview (not executed):*\n`{cmd}` (confidence: {confidence:.0%})\n\n"
+                f"Run `/do {text}` without --preview to execute.",
+                parse_mode="Markdown"
+            )
+            return
+
         await update.message.reply_text(
             f"Parsed: `{cmd}` (confidence: {confidence:.0%})\nRunning..."
         )
@@ -1651,45 +1780,45 @@ class TelegramAdapter(BasePlatformAdapter):
 
     # Commands the intent parser knows about
     _COMMAND_SCHEMA = """Available commands:
-/absorb <repo-url or topic> [--dry-run] [--skip-security-scan]
+/absorb <repo-url or topic> [--dry-run] [--model <name>] [--skip-security-scan]
   Absorb patterns from a repo/topic into our system.
-/learn <repo-url or topic> [--skip-security-scan]
+/learn <repo-url or topic> [--dry-run] [--model <name>] [--skip-security-scan]
   Deep-dive a repo/tech, extract patterns, evaluate benefit.
-/evolve [--dry-run] [--skip-security-scan]
+/evolve [--dry-run] [--model <name>] [--skip-security-scan]
   Run the evolution pipeline (collect signals, build skills).
-/search <query>
+/search <query> [--limit <n>]
   Full-text search across past sessions.
-/sessions
+/sessions [--limit <n>]
   List recent sessions.
-/newsession
-  Start a fresh session.
+/newsession [title]
+  Start a fresh session, optionally with a title.
 /memory
   View bounded memory.
-/cost
-  View cost usage.
+/cost [--week]
+  View cost usage. Add --week for weekly total.
 /status
   System status.
 /skills
   List installed skills.
-/learnings
-  List stored learnings.
+/learnings [query] [--limit <n>]
+  List or search stored learnings.
 /model <name>
   Switch model (e.g. sonnet, opus, haiku).
-/gc [dry]
+/gc [--dry-run]
   Run garbage collection.
-/loop <cron-expr> <command> [--tz=<timezone>]
+/loop <interval> <prompt> [--model <name>] [--max-runs <n>] [--start-now]
   Schedule a recurring command.
 /loops
   List scheduled loops.
 /unloop <id>
   Remove a scheduled loop.
-/pause <id>
-  Pause a scheduled loop.
-/unpause <id>
-  Unpause a scheduled loop.
+/pause <id|--all>
+  Pause a scheduled loop or all loops.
+/unpause <id|--all>
+  Unpause a scheduled loop or all loops.
 /queue
   List skills pending approval.
-/approve <name> [force]
+/approve <name> [--force]
   Approve a queued skill.
 /reject <name>
   Reject a queued skill.
