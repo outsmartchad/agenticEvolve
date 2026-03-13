@@ -91,30 +91,54 @@ class TelegramAdapter(BasePlatformAdapter):
         return result
 
     def _make_progress_tracker(self, chat_id: str, loop):
-        """Create a silent progress tracker + 30s polling reporter.
+        """Create a growing-status-message progress tracker.
 
-        The callback silently tracks tool count and current stage.
-        A separate async task (started via start_reporter / stop_reporter)
-        sends a status update every 30 seconds.
+        Inspired by hermes-agent: one Telegram message that gets edited to
+        accumulate tool lines. Edits are rate-limited (max every 3s) to avoid
+        Telegram API throttling.
+
+        The callback tracks tools and stages. A background async task
+        periodically edits the status message with accumulated lines.
 
         Returns (on_progress_sync, get_tool_count, start_reporter, stop_reporter).
         """
+        import time
+
+        _TOOL_EMOJI = {
+            "Bash": "$ ",
+            "Read": "reading ",
+            "Write": "writing ",
+            "Edit": "editing ",
+            "Glob": "searching ",
+            "Grep": "grep ",
+            "WebFetch": "fetching ",
+            "Task": "subagent: ",
+            "TodoRead": "reading todos",
+            "TodoWrite": "planning",
+        }
+
         state = {
             "tool_count": 0,
+            "tool_lines": [],      # accumulated tool preview lines
             "stage": "",
             "stages_seen": [],
             "done": False,
+            "dirty": False,        # new lines since last edit
+            "msg_id": None,        # Telegram message ID to edit
             "reporter_task": None,
+            "start_time": time.time(),
         }
 
         def on_progress_sync(text: str):
-            """Called from sync thread — just track state, never send messages."""
+            """Called from sync thread — track state, mark dirty for edit."""
             # Stage transitions
             if text.startswith("*Stage:") or text.startswith("*Security scan:"):
                 stage_name = text.replace("*", "").strip()
                 state["stage"] = stage_name
                 if stage_name not in state["stages_seen"]:
                     state["stages_seen"].append(stage_name)
+                state["tool_lines"].append(f"\n{stage_name}")
+                state["dirty"] = True
                 return
 
             # Pipeline-level status
@@ -123,33 +147,105 @@ class TelegramAdapter(BasePlatformAdapter):
                 state["stage"] = stage_name
                 return
 
-            # Tool-use events — just count
-            if (text.startswith("[") and "] " in text[:12]) or any(
-                text.startswith(p) for p in (
-                    "Running:", "Reading:", "Writing:", "Editing:",
-                    "Searching:", "Grepping:", "Fetching:", "Subagent:",
-                )
-            ):
+            # Tool-use events — build smart preview line
+            if (text.startswith("[") and "] " in text[:12]):
                 state["tool_count"] += 1
+                # Parse: "[N] Running: `cmd`" or "[N] Fetching: `url`"
+                after_bracket = text.split("] ", 1)[1] if "] " in text else text
+                # Extract tool type and preview
+                if ": " in after_bracket:
+                    action, preview = after_bracket.split(": ", 1)
+                    preview = preview.strip("`").strip()[:60]
+                    action_lower = action.lower().strip()
+                    emoji = _TOOL_EMOJI.get(action.strip(), "")
+                    if not emoji:
+                        # Map action words to emoji
+                        if "running" in action_lower:
+                            emoji = "$ "
+                        elif "reading" in action_lower:
+                            emoji = "reading "
+                        elif "writing" in action_lower:
+                            emoji = "writing "
+                        elif "editing" in action_lower:
+                            emoji = "editing "
+                        elif "fetching" in action_lower:
+                            emoji = "fetching "
+                        elif "searching" in action_lower or "grepping" in action_lower:
+                            emoji = "searching "
+                        elif "subagent" in action_lower:
+                            emoji = "subagent: "
+                        else:
+                            emoji = f"{action.strip().lower()} "
+
+                    line = f"  {emoji}{preview}"
+                else:
+                    line = f"  {after_bracket.strip()[:60]}"
+
+                state["tool_lines"].append(line)
+                state["dirty"] = True
+                return
+
+        async def _build_status_text():
+            """Build the full status message text."""
+            elapsed = int(time.time() - state["start_time"])
+            tc = state["tool_count"]
+            stage = state["stage"] or "Starting"
+
+            header = f"{stage} ({tc} steps, {elapsed}s)"
+            # Show last 15 tool lines to avoid hitting Telegram's message size limits
+            recent = state["tool_lines"][-15:]
+            if len(state["tool_lines"]) > 15:
+                skipped = len(state["tool_lines"]) - 15
+                recent = [f"  ... ({skipped} earlier steps)"] + recent
+            body = "\n".join(recent) if recent else ""
+            return f"{header}\n{body}" if body else header
 
         async def _reporter_loop():
-            """Send a status update every 30 seconds until done."""
+            """Edit the status message every 3s when dirty, or every 15s as heartbeat."""
+            last_edit = 0
             while not state["done"]:
-                await asyncio.sleep(30)
+                await asyncio.sleep(3)
                 if state["done"]:
                     break
-                stage = state["stage"] or "Working"
-                tc = state["tool_count"]
-                stages_done = len(state["stages_seen"])
-                msg = f"{stage}... ({tc} steps, {stages_done} stage{'s' if stages_done != 1 else ''} completed)"
-                try:
-                    await self.app.bot.send_message(chat_id=int(chat_id), text=msg)
-                except Exception:
-                    pass
+
+                now = time.time()
+                # Edit if dirty (new tool events) OR every 15s as heartbeat
+                if state["dirty"] or (now - last_edit >= 15):
+                    state["dirty"] = False
+                    text = await _build_status_text()
+                    try:
+                        if state["msg_id"] is None:
+                            # First time — send new message
+                            msg = await self.app.bot.send_message(
+                                chat_id=int(chat_id), text=text
+                            )
+                            state["msg_id"] = msg.message_id
+                        else:
+                            # Edit existing message
+                            await self.app.bot.edit_message_text(
+                                chat_id=int(chat_id),
+                                message_id=state["msg_id"],
+                                text=text,
+                            )
+                        last_edit = now
+                    except Exception as e:
+                        # Edit failed (rate limit, message too old, etc.)
+                        # Send a new message instead
+                        if "not modified" not in str(e).lower():
+                            log.debug(f"Progress edit failed: {e}")
+
+                    # Keep typing indicator alive
+                    try:
+                        await self.app.bot.send_chat_action(
+                            chat_id=int(chat_id), action="typing"
+                        )
+                    except Exception:
+                        pass
 
         def start_reporter():
-            """Start the 30s polling reporter. Call from async context."""
+            """Start the progress reporter. Call from async context."""
             state["done"] = False
+            state["start_time"] = time.time()
             state["reporter_task"] = asyncio.ensure_future(_reporter_loop())
 
         def stop_reporter():
