@@ -25,7 +25,8 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | **Reply Context** | All commands resolve reply-to-message context. Pronouns ("this", "that") resolve to replied URLs |
 | **Cron** | Built-in scheduler. `/loop every 6h /evolve` for autonomous growth |
 | **Voice** | `/speak` TTS (edge-tts, 300+ voices). Voice-to-text via local whisper.cpp (~500ms on Apple Silicon). Auto-TTS inbound mode |
-| **Security** | Static analysis scanner. Automated review agent. Cost caps. Autonomy levels. Deny-by-default |
+| **Browser** | Human-like browser automation (Playwright + CDP). Click, type, screenshot, evaluate |
+| **Security** | 2-layer: L1 regex scanner (pre-install) + L2 AgentShield (post-install). Typed failure handling. Deny-by-default |
 
 ---
 
@@ -69,19 +70,20 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/cost` | Usage and spend |
 | `/speak <text>` | Text-to-speech voice message |
 | `/loop <cron> <cmd>` | Schedule recurring execution |
+| `/restart` | Restart gateway remotely |
 | _(voice message)_ | Auto-transcribe + reply (+ voice if mode=inbound) |
 
-[All 31 commands ->](docs/commands.md)
+[All 32 commands ->](docs/commands.md)
 
 ---
 
 ## Architecture
 
 ```
-Telegram -> Gateway (asyncio) -> Session + Cost Gate -> Auto-Recall -> claude -p -> SQLite -> Git Sync
+Telegram -> Gateway (asyncio) -> Hook Dispatcher -> Session + Cost Gate -> Auto-Recall -> claude -p -> SQLite -> Git Sync
 ```
 
-No custom agent loop. Claude Code is the runtime. The gateway handles routing, memory, recall, cron, and safety.
+No custom agent loop. Claude Code is the runtime. The gateway handles routing, memory, recall, cron, hooks, and safety. Drain-on-shutdown ensures in-flight requests complete before restart.
 
 ---
 
@@ -91,7 +93,7 @@ No custom agent loop. Claude Code is the runtime. The gateway handles routing, m
 |-----|-------------|
 | [Interface](docs/interface.md) | Usage examples and interaction patterns |
 | [Memory](docs/memory.md) | 6-layer memory architecture, auto-recall, instinct scoring |
-| [Commands](docs/commands.md) | All 30 commands with flags and examples |
+| [Commands](docs/commands.md) | All 32 commands with flags and examples |
 | [Pipelines](docs/pipelines.md) | Evolve, absorb, learn, do, gc pipelines |
 | [Skills](docs/skills.md) | Installed skill catalog |
 | [Security](docs/security.md) | Scanner, autonomy levels, safety gates |
@@ -108,7 +110,7 @@ No custom agent loop. Claude Code is the runtime. The gateway handles routing, m
 | [hermes-agent](https://github.com/NousResearch/hermes-agent) | Bounded memory, session persistence, messaging gateway |
 | [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | Autonomy levels, deny-by-default, hot config reload |
 | [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | Skill patterns, eval-driven development, hook-based observation |
-| [openclaw](https://github.com/openclaw/openclaw) | Voice pipeline patterns — TTS provider chain, STT fallback, auto-TTS modes |
+| [openclaw](https://github.com/openclaw/openclaw) | Voice pipeline, browser automation, TTS/STT patterns |
 
 ---
 
