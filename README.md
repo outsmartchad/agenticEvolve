@@ -93,6 +93,7 @@ No custom agent loop. Claude Code is the runtime. The gateway handles routing, m
 | [Skills](docs/skills.md) | Installed skill catalog |
 | [Security](docs/security.md) | Scanner, autonomy levels, safety gates |
 | [Architecture](docs/architecture.md) | Message flow, project structure, design decisions |
+| [Roadmap](docs/roadmap.md) | Integration plan — Firecrawl, Cloudflare /crawl, vision, TTS, sandboxing |
 
 ---
 
