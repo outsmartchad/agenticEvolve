@@ -17,8 +17,12 @@ memory/sessions.db-shm
 cron/output/
 gateway.pid
 
-# WhatsApp bridge runtime
+# node_modules (all subdirs)
+node_modules/
 whatsapp-bridge/node_modules/
+browser/node_modules/
+
+# WhatsApp bridge runtime
 whatsapp-bridge/auth/
 
 # OS
