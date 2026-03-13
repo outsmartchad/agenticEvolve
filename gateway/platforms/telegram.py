@@ -2366,6 +2366,240 @@ class TelegramAdapter(BasePlatformAdapter):
             typing_task.cancel()
             audio_path.unlink(missing_ok=True)
 
+    # ── /digest — morning briefing ──────────────────────────────────
+
+    async def _handle_digest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Send a morning briefing: top signals, skills built, sessions, cost.
+
+        Usage: /digest [--days N]
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {
+            "--days": {"type": "value", "cast": int, "default": 1},
+        })
+        days = max(1, min(flags["--days"], 7))
+
+        chat_id = str(update.message.chat_id)
+        await update.message.reply_text(f"Building digest (last {days}d)...")
+        await self._send_digest(chat_id, days=days)
+
+    async def _send_digest(self, chat_id: str, days: int = 1):
+        """Build and send the digest message. Called by command or cron."""
+        import sqlite3
+        from ..agent import get_today_cost
+        from ..session_db import DB_PATH
+
+        now = datetime.now(timezone.utc)
+        since = now - timedelta(days=days)
+        since_str = since.isoformat()
+
+        # ── Sessions since cutoff ──
+        sessions_summary = ""
+        try:
+            conn = sqlite3.connect(str(DB_PATH), timeout=5)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT title, message_count, source, started_at FROM sessions "
+                "WHERE started_at >= ? ORDER BY started_at DESC LIMIT 20",
+                (since_str,)
+            ).fetchall()
+            conn.close()
+            if rows:
+                lines = []
+                for r in rows:
+                    title = (r["title"] or "(untitled)")[:50]
+                    msgs = r["message_count"]
+                    ts = r["started_at"][:16]
+                    lines.append(f"  {ts} — {title} ({msgs} msgs)")
+                sessions_summary = "\n".join(lines)
+            else:
+                sessions_summary = "  (none)"
+        except Exception:
+            sessions_summary = "  (error reading sessions)"
+
+        # ── Top signals from today's signal dir ──
+        signals_summary = ""
+        try:
+            today_str = now.strftime("%Y-%m-%d")
+            sig_dir = EXODIR / "signals" / today_str
+            if not sig_dir.exists():
+                # Fall back to most recent signal dir
+                sig_dirs = sorted((EXODIR / "signals").glob("????-??-??")) if (EXODIR / "signals").exists() else []
+                sig_dir = sig_dirs[-1] if sig_dirs else None
+
+            if sig_dir and sig_dir.exists():
+                import json as _json
+                signal_lines = []
+                for f in sorted(sig_dir.glob("*.json"))[:3]:
+                    try:
+                        content = f.read_text().strip()
+                        for line in content.splitlines()[:5]:
+                            if not line.strip():
+                                continue
+                            obj = _json.loads(line)
+                            title = obj.get("title", obj.get("name", ""))[:60]
+                            source = obj.get("source", f.stem)
+                            if title:
+                                signal_lines.append(f"  [{source}] {title}")
+                    except Exception:
+                        pass
+                signals_summary = "\n".join(signal_lines[:5]) if signal_lines else "  (none today)"
+            else:
+                signals_summary = "  (no signal dir found)"
+        except Exception:
+            signals_summary = "  (error reading signals)"
+
+        # ── Skills built since cutoff ──
+        skills_built = ""
+        try:
+            skills_dir = Path.home() / ".claude" / "skills"
+            if skills_dir.exists():
+                new_skills = []
+                for skill_path in skills_dir.glob("*/SKILL.md"):
+                    mtime = datetime.fromtimestamp(skill_path.stat().st_mtime, tz=timezone.utc)
+                    if mtime >= since:
+                        new_skills.append(skill_path.parent.name)
+                skills_built = "\n".join(f"  {s}" for s in new_skills) if new_skills else "  (none)"
+            else:
+                skills_built = "  (no skills dir)"
+        except Exception:
+            skills_built = "  (error)"
+
+        # ── Cost ──
+        cost_today = get_today_cost()
+
+        # ── Cron job next runs ──
+        cron_summary = ""
+        try:
+            import json as _json
+            if CRON_JOBS_FILE.exists():
+                jobs = _json.loads(CRON_JOBS_FILE.read_text())
+                active = [j for j in jobs if not j.get("paused")]
+                lines = []
+                for j in active[:5]:
+                    nxt = j.get("next_run_at", "?")[:16]
+                    jid = j.get("id", "?")
+                    lines.append(f"  {jid} → {nxt}")
+                cron_summary = "\n".join(lines) if lines else "  (none active)"
+            else:
+                cron_summary = "  (no jobs)"
+        except Exception:
+            cron_summary = "  (error)"
+
+        period = "today" if days == 1 else f"last {days}d"
+        text = (
+            f"*Morning digest — {now.strftime('%Y-%m-%d %H:%M')} UTC*\n\n"
+            f"*Sessions ({period}):*\n{sessions_summary}\n\n"
+            f"*Top signals (latest):*\n{signals_summary}\n\n"
+            f"*Skills built ({period}):*\n{skills_built}\n\n"
+            f"*Cost today:* ${cost_today:.2f}\n\n"
+            f"*Cron (next runs):*\n{cron_summary}"
+        )
+
+        if self.app and self.app.bot:
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=text, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=text)
+
+    # ── /reflect — weekly self-analysis ─────────────────────────────
+
+    async def _handle_reflect(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Run a weekly self-analysis: patterns, avoidance, next actions.
+
+        Usage: /reflect [--days N] [--model X]
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {
+            "--days": {"type": "value", "cast": int, "default": 7},
+            "--model": {"type": "value"},
+        })
+        days = max(1, min(flags["--days"], 30))
+        model_override = flags["--model"]
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
+
+        chat_id = str(update.message.chat_id)
+        await update.message.reply_text(
+            f"Reflecting on the last {days} days...\n~2-4 min."
+        )
+
+        loop = asyncio.get_running_loop()
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop)
+
+        now = datetime.now(timezone.utc)
+        since = (now - timedelta(days=days)).isoformat()
+
+        reflect_prompt = (
+            f"You are the REFLECT agent for agenticEvolve — Vincent's personal closed-loop agent system.\n\n"
+            f"Run a {days}-day self-analysis. Do the following:\n\n"
+            f"1. Query the SQLite DB at {EXODIR}/memory/sessions.db for sessions and messages "
+            f"since {since}. Focus on:\n"
+            f"   SELECT title, message_count, started_at FROM sessions WHERE started_at >= '{since}' "
+            f"ORDER BY started_at DESC;\n"
+            f"   SELECT role, content FROM messages WHERE timestamp >= '{since}' ORDER BY timestamp DESC LIMIT 100;\n\n"
+            f"2. Check git log in ~/Desktop/projects/agenticEvolve for commits since {since[:10]}:\n"
+            f"   git -C ~/Desktop/projects/agenticEvolve log --oneline --since={since[:10]}\n\n"
+            f"3. List skills installed (ls ~/.claude/skills/) and when they were created.\n\n"
+            f"4. Read ~/.agenticEvolve/memory/MEMORY.md and ~/.agenticEvolve/memory/USER.md.\n\n"
+            f"5. Analyze and return:\n"
+            f"   a) *Patterns I'm seeing* — what topics, tools, or workflows keep coming up?\n"
+            f"   b) *What am I avoiding?* — what was deferred, blocked, or repeatedly postponed?\n"
+            f"   c) *3 things to build next* — ranked by impact, based on patterns + gaps\n"
+            f"   d) *System health* — any memory pressure, high cost, stale sessions, or skill bloat?\n\n"
+            f"Return a concise, actionable report. No filler."
+        )
+
+        start_reporter()
+        try:
+            from ..agent import invoke_claude_streaming
+            result = await loop.run_in_executor(
+                None,
+                lambda: invoke_claude_streaming(
+                    reflect_prompt,
+                    on_progress=on_progress_sync,
+                    model=model,
+                    session_context="[Reflect pipeline]",
+                )
+            )
+        except Exception as e:
+            stop_reporter()
+            log.error(f"Reflect error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"Reflect failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        response = result.get("text", "No output.")
+        cost = result.get("cost", 0)
+        tools_used = get_tool_count()
+
+        header = f"*Reflect — last {days}d*\n({tools_used} steps, ${cost:.2f})\n\n"
+        full = header + response
+        for i in range(0, len(full), 4000):
+            chunk = full[i:i+4000]
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "reflect", cost)
+
     # ── /do — natural language command ─────────────────────────────
 
     async def _handle_do(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

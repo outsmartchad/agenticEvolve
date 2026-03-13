@@ -53,6 +53,7 @@ class GatewayRunner:
         self._start_time = 0.0
         self._session_cleanup_task: Optional[asyncio.Task] = None
         self._cron_task: Optional[asyncio.Task] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
         self._draining: bool = False
         self._inflight: set[asyncio.Future] = set()
 
@@ -317,6 +318,23 @@ class GatewayRunner:
 
             log.info(f"Cron job due: {job_id}")
 
+            # Native digest job — no Claude invocation needed
+            if job_id == "daily-digest":
+                adapter = self._adapter_map.get("telegram")
+                if adapter and deliver_chat_id and hasattr(adapter, "_send_digest"):
+                    try:
+                        await adapter._send_digest(deliver_chat_id, days=1)
+                        log.info("Cron: daily-digest sent")
+                    except Exception as e:
+                        log.error(f"Cron: daily-digest failed: {e}")
+                # Update job and continue (no cost)
+                job["run_count"] = job.get("run_count", 0) + 1
+                job["last_run_at"] = now.isoformat()
+                job["next_run_at"] = self._next_cron_run(job, now).isoformat()
+                modified = True
+                log.info(f"Cron job completed: {job_id} (cost=$0.0000)")
+                continue
+
             # Cost cap check
             allowed, reason = self._check_cost_cap()
             if not allowed:
@@ -495,6 +513,16 @@ class GatewayRunner:
         self._session_cleanup_task = asyncio.create_task(self._session_cleanup_loop())
         self._cron_task = asyncio.create_task(self._cron_loop())
 
+        # Start watchdog if configured
+        watchdog_cfg = self.config.get("watchdog", {})
+        watchdog_chat_id = str(watchdog_cfg.get("chat_id", ""))
+        if watchdog_cfg.get("enabled", False) and watchdog_chat_id:
+            from .watchdog import _watchdog_loop
+            self._watchdog_task = asyncio.create_task(
+                _watchdog_loop(self, watchdog_chat_id, self._shutdown_event)
+            )
+            log.info(f"Watchdog: started (chat_id={watchdog_chat_id})")
+
         await self._shutdown_event.wait()
 
     async def stop(self):
@@ -506,7 +534,7 @@ class GatewayRunner:
             log.info(f"Draining {len(self._inflight)} in-flight requests (30s timeout)...")
             await asyncio.wait(self._inflight, timeout=30)
 
-        for task in [self._session_cleanup_task, self._cron_task]:
+        for task in [self._session_cleanup_task, self._cron_task, self._watchdog_task]:
             if task:
                 task.cancel()
 
