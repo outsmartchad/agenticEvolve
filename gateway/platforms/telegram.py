@@ -2092,6 +2092,33 @@ class TelegramAdapter(BasePlatformAdapter):
             typing_active = False
             typing_task.cancel()
 
+    # ── /restart — remote gateway restart ────────────────────────
+
+    async def _handle_restart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Restart the gateway process remotely via Telegram."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        await update.message.reply_text("Restarting gateway in 2s...")
+
+        # Spawn a detached process that kills us and starts a new instance
+        import subprocess as sp
+        restart_script = (
+            "sleep 2 && "
+            "pkill -9 -f 'gateway.run' && "
+            "sleep 1 && "
+            "cd ~/.agenticEvolve && "
+            "nohup python3 -m gateway.run > /dev/null 2>&1 &"
+        )
+        sp.Popen(
+            ["bash", "-c", restart_script],
+            start_new_session=True,
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+        )
+
     # ── /speak — text-to-speech ───────────────────────────────────
 
     async def _handle_speak(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2697,6 +2724,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "unpause": self._handle_unpause,
             "do": self._handle_do,
             "speak": self._handle_speak,
+            "restart": self._handle_restart,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -2747,6 +2775,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("config", "View runtime config"),
                 BotCommand("autonomy", "View/change autonomy level"),
                 BotCommand("speak", "Text-to-speech voice message"),
+                BotCommand("restart", "Restart the gateway remotely"),
                 BotCommand("pause", "Pause a cron job"),
                 BotCommand("unpause", "Resume a paused cron job"),
             ])
