@@ -62,15 +62,19 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ## Capabilities
 
-| Capability | Description |
-|------------|-------------|
-| **Chat** | Any message routes to Claude Code with full tool access — terminal, files, web, MCP, skills |
-| **Memory** | SQLite + FTS5 session persistence. Bounded agent notes (MEMORY.md + USER.md). Context carries across sessions |
-| **Evolve** | Signal collectors scan GitHub trending + HN. Scores relevance. Builds skills. Queues for approval |
-| **Absorb** | Deep-scans any repo, diffs patterns against self, implements missing improvements |
-| **Learn** | Extracts actionable patterns from repos or technologies. Structured findings, not summaries |
-| **Cron** | Built-in scheduler with 5-field cron expressions and timezone support. Runs pipelines autonomously |
-| **Security** | Static analysis on all external code. Skills queue with human gate. Cost caps. Autonomy levels. Deny-by-default auth |
+**Chat** — Any message routes directly to Claude Code with full tool access — terminal, file operations, web search, MCP servers, and 16 installed skills. Write code, debug, refactor, deploy, research. Anything Claude Code can do, accessible from Telegram.
+
+**Memory** — Every conversation is persisted in SQLite with FTS5 full-text search. The agent maintains bounded notes about you (USER.md) and its own discoveries (MEMORY.md). Context carries across sessions automatically. Nothing is forgotten. Search any past session with `/search`.
+
+**Evolve** — `/evolve` triggers a 5-stage pipeline: signal collectors scan GitHub trending and Hacker News, score each signal on relevance and novelty, build Claude Code skills from the highest-scoring candidates, run a separate review agent for quality validation, and queue results for human approval. Schedule it on cron — the agent gets smarter on autopilot.
+
+**Absorb** — `/absorb <repo-url>` deep-scans any repository. Clones it, maps its architecture, diffs its patterns against this system, identifies gaps, and implements improvements directly into the codebase. One command to internalize the best patterns from any project.
+
+**Learn** — `/learn <repo-or-topic>` extracts actionable patterns from any repository or technology. Not a summary — structured findings with three verdicts: ADOPT (use directly), STEAL (take the pattern, skip the dependency), or SKIP. Findings persist in the learnings database, searchable via `/learnings`.
+
+**Schedule** — Built-in cron scheduler with 5-field expressions and timezone support. `/loop every 6h /evolve` runs the evolve pipeline autonomously. `/notify 30m check deployment` sets one-shot reminders. All scheduled jobs run inside the gateway process — no OS cron dependency.
+
+**Security** — Automated static analysis on all external code before processing. Detects credential exfiltration, reverse shells, obfuscated payloads, malicious install hooks, and crypto miners. Three autonomy levels (full / supervised / readonly) control tool access. Skills require human `/approve` before installation. Daily and weekly cost caps enforced before every Claude invocation. Deny-by-default auth on all platforms.
 
 ---
 
