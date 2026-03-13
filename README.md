@@ -37,6 +37,8 @@ Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as the ag
 - **Self-evolving** — scans GitHub trending, Hacker News, and X for developer signals, then auto-builds Claude Code skills (with human approval gate)
 - **Absorbs from the wild** — deep-scans any repo/URL/topic, compares against itself, identifies gaps, and implements improvements to its own codebase
 - **Learns and remembers** — extracts patterns from repos and tools, stores structured findings with verdicts (ADOPT/STEAL/SKIP) in a searchable learnings DB
+- **Security-first** — automated security scanner checks all external repos for credential exfiltration, reverse shells, malicious install hooks, obfuscated payloads, and macOS persistence before any code touches the system
+- **Natural language commands** — `/do absorb this repo and skip the security scan` gets parsed into `/absorb <url> --skip-security-scan` and runs in background with 1-minute progress reports
 - **Cost-controlled** — daily/weekly caps enforced before every Claude invocation
 
 ## Pipelines
@@ -51,7 +53,7 @@ Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as the ag
 4. Reviewer agent validates security, quality, correctness
 5. Skills land in `skills-queue/` — requires human `/approve` to install
 
-Supports `--dry-run` (stops after ANALYZE, shows what would be built).
+Supports `--dry-run` (stops after ANALYZE, shows what would be built) and `--skip-security-scan`.
 
 ### `/absorb <target>` — Deep Scan → Self-Improve
 
@@ -63,7 +65,7 @@ Supports `--dry-run` (stops after ANALYZE, shows what would be built).
 4. Implementer modifies our system files to absorb improvements
 5. Changes logged in learnings DB
 
-Supports `--dry-run` (stops after GAP, shows gaps by priority).
+Supports `--dry-run` (stops after GAP, shows gaps by priority) and `--skip-security-scan`.
 
 ### `/learn <target>` — Pattern Extraction
 
@@ -73,13 +75,49 @@ Deep-dives a repo, URL, or technology. Extracts patterns for operational benefit
 - **STEAL** — take the patterns, skip the dependency
 - **SKIP** — not useful for our workflow
 
-Findings persist in SQLite+FTS5, searchable via `/learnings`.
+Findings persist in SQLite+FTS5, searchable via `/learnings`. Supports `--skip-security-scan`.
+
+### `/do <instruction>` — Natural Language Command
+
+Parses free-text instructions into structured commands using a lightweight Claude Haiku call, then executes them in background with 1-minute progress reports.
+
+```
+/do absorb this repo https://github.com/foo/bar and skip the security scan
+→ Parsed: /absorb https://github.com/foo/bar --skip-security-scan (confidence: 95%)
+→ Running...
+→ [/absorb ...] Still running... (60s elapsed, ~1 min)
+→ [/absorb ...] Completed in 245s.
+```
+
+Maps synonyms naturally: "study"/"research" → `/learn`, "integrate"/"steal from" → `/absorb`, "find new tools" → `/evolve`, "preview"/"just check" → `--dry-run`, "skip security"/"no scan" → `--skip-security-scan`.
+
+### Security Scanner
+
+All pipelines (`/absorb`, `/learn`, `/evolve`) run an automated security scan on external repos before processing. The scanner checks for:
+
+| Threat | Examples |
+|--------|----------|
+| Credential exfiltration | Reading `~/.ssh`, `~/.aws`, macOS Keychain dumps |
+| Reverse shells | Bash/netcat/Python reverse shells |
+| Remote code execution | `curl \| bash`, download-and-execute patterns |
+| Obfuscated payloads | Base64-encoded shell commands, hex payloads |
+| Malicious install hooks | npm `postinstall`, Python `setup.py` cmdclass |
+| Destructive commands | `rm -rf /`, fork bombs, disk wipes |
+| Crypto miners | xmrig, stratum connections |
+| macOS persistence | LaunchAgents, login items, TCC resets |
+
+**Verdicts:**
+- **BLOCKED** — critical threat detected, pipeline aborted
+- **WARNING** — suspicious patterns found, proceeds with caution
+- **SAFE** — no threats detected
+
+Use `--skip-security-scan` to bypass (when you trust the source).
 
 ### `/gc` — Garbage Collection
 
 Cleans stale sessions (30d), empty sessions (24h), orphan skills (7d), checks memory entropy (85% threshold), rotates logs. Supports `--dry` preview mode.
 
-## Telegram Commands (27)
+## Telegram Commands (28)
 
 | Command | Description |
 |---------|-------------|
@@ -109,6 +147,7 @@ Cleans stale sessions (30d), empty sessions (24h), orphan skills (7d), checks me
 | `/approve <name>` | Install a queued skill |
 | `/reject <name>` | Remove a queued skill |
 | `/gc` | Run garbage collection |
+| `/do <instruction>` | Natural language → command parser |
 
 Regular text messages are routed to Claude Code as chat with full session continuity.
 
@@ -154,17 +193,18 @@ Skills with `disable-model-invocation: true` (nah, ABP, unf, cron-manager) only 
 ├── SOUL.md                     # Agent personality
 ├── AGENTS.md                   # Project conventions + agent roles
 │
-├── gateway/                    # Messaging gateway (~3,500 lines Python)
+├── gateway/                    # Messaging gateway (~4,500 lines Python)
 │   ├── run.py                  # GatewayRunner — main process
 │   ├── agent.py                # Claude Code invocation wrapper
 │   ├── evolve.py               # 5-stage evolve pipeline
 │   ├── absorb.py               # 5-stage absorb pipeline
+│   ├── security.py             # Security scanner (credential theft, reverse shells, etc.)
 │   ├── gc.py                   # Garbage collection
 │   ├── config.py               # Config loader (YAML + .env)
 │   ├── session_db.py           # SQLite + FTS5 (sessions + learnings)
 │   └── platforms/
 │       ├── base.py             # Platform adapter interface
-│       ├── telegram.py         # Telegram (~1,380 lines, 27 commands)
+│       ├── telegram.py         # Telegram (~2,000 lines, 28 commands)
 │       ├── discord.py          # Discord (written, untested)
 │       └── whatsapp.py         # WhatsApp (written, untested)
 │
@@ -300,14 +340,14 @@ ae doctor               # Diagnose issues
 - **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) with frozen snapshot pattern. Injected at session start, never changes mid-session.
 - **Session continuity** — conversation history fed back into each `claude -p` call within a session (last 20 turns, 8K chars). Sessions auto-expire after 2h idle.
 - **Skills follow skill-creator standards** — descriptions are "pushy" with "Use when..." clauses to avoid undertriggering. Progressive disclosure keeps SKILL.md lean, heavy docs go in references/.
-- **Safety gates everywhere** — skills queue with human approval, daily + weekly cost caps, user whitelisting, review agent validation, bounded memory limits.
+- **Safety gates everywhere** — automated security scanner on all external code, skills queue with human approval, daily + weekly cost caps, user whitelisting, review agent validation, bounded memory limits.
 - **Cron inside the gateway** — no OS cron dependency. Supports standard 5-field cron expressions with timezone awareness (Asia/Hong_Kong, US/Eastern, etc.), interval-based, and one-shot jobs. Pause/unpause via Telegram.
 
 ## Platform support
 
 | Platform | Status | Library |
 |----------|--------|---------|
-| Telegram | Working (27 commands) | python-telegram-bot |
+| Telegram | Working (28 commands) | python-telegram-bot |
 | Discord | Written, untested | discord.py |
 | WhatsApp | Written, untested | @whiskeysockets/baileys (Node.js bridge) |
 
