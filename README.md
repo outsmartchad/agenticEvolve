@@ -48,8 +48,9 @@ Whether you're shipping a product, building an audience, researching competitors
 - **Create** — Draft articles, threads, newsletters, documentation. Distinctive voice, not AI slop.
 - **Evolve** — Scans GitHub trending and Hacker News daily. Finds tools relevant to your stack. Builds new skills. Auto-installs them after review. Gets smarter on autopilot.
 - **Absorb** — Point it at any repo. It clones, analyzes, finds what you're missing, and implements the improvements.
-- **Remember** — Every conversation indexed with full-text search. Bounded notes about you and your projects. Context carries across sessions.
+- **Remember** — The agent has auto-recall. Before every response, it searches across 5 memory layers — past sessions, learnings, instincts, agent notes, and your profile — and injects relevant context into the prompt. It doesn't just store knowledge; it retrieves and applies it automatically. The more you use it, the smarter it gets.
 - **Automate** — Built-in cron scheduler. `/loop every 6h /evolve` and it runs on its own. Set reminders. Schedule anything.
+- **Reply Context** — Reply to any bot message to use it as context. Reply to a learn summary with `/absorb` to absorb that repo. Reply with `/notify 30m` to be reminded. "This", "that", "it" resolve to the replied message automatically.
 - **Stay Safe** — Security scanner on all external code. Automated review agent validates skills before install. Cost caps. Autonomy levels.
 
 ---
@@ -88,23 +89,31 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/absorb <url>` | Absorb patterns from any repo |
 | `/learn <target>` | Deep-dive a repo or topic |
 | `/memory` | What the agent knows about you |
-| `/search <query>` | Search all past conversations |
+| `/search <query>` | Search past conversations |
+| `/recall <query>` | Search ALL memory layers at once |
 | `/skills` | List installed skills |
 | `/cost` | Check spend |
 | `/loop <interval> <cmd>` | Schedule recurring tasks |
 | `/approve <name>` | Manually install a queued skill (when auto-approve is off) |
 
-[All 29 commands ->](docs/commands.md)
+[All 30 commands ->](docs/commands.md)
 
 ---
 
 ## Architecture
 
 ```
-Telegram -> Gateway (asyncio) -> Session + Cost Gate -> claude -p -> Stream -> SQLite
+Telegram
+  -> Gateway (asyncio)
+  -> Session + Cost Gate
+  -> Auto-Recall (unified_search across 5 memory layers)
+  -> System Prompt Assembly (SOUL + MEMORY + USER + recalled context + history)
+  -> claude -p
+  -> Stream response back
+  -> Persist to SQLite (sessions, learnings, instincts)
 ```
 
-No custom agent loop. Claude Code is the agent. The gateway handles routing, memory, sessions, cron, and safety. [Details ->](docs/architecture.md)
+No custom agent loop. Claude Code is the agent. The gateway handles routing, memory, recall, sessions, cron, and safety. [Details ->](docs/architecture.md)
 
 ---
 
