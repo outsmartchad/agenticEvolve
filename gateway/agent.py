@@ -5,12 +5,47 @@ import os
 import signal
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 
 log = logging.getLogger("agenticEvolve.agent")
 
 EXODIR = Path.home() / ".agenticEvolve"
+
+
+class InvokeFailReason(str, Enum):
+    """Typed failure classification for invoke_claude() error handling."""
+    AUTH_PERMANENT = "auth_permanent"
+    BILLING = "billing"
+    RATE_LIMIT = "rate_limit"
+    EMPTY_OUTPUT = "empty_output"
+    UNKNOWN = "unknown"
+
+
+# Cooldown table: reason → epoch when cooldown expires.
+# Rate-limit errors back off for a short period before retrying.
+_cooldowns: dict[str, float] = {}
+
+
+def _classify_stderr(stderr: str) -> InvokeFailReason:
+    """Classify a Claude CLI stderr string into a typed failure reason.
+
+    Args:
+        stderr: Raw stderr output from the claude subprocess.
+
+    Returns:
+        InvokeFailReason enum value.
+    """
+    s = stderr.lower()
+    if "invalid api key" in s or "unauthorized" in s:
+        return InvokeFailReason.AUTH_PERMANENT
+    if "billing" in s or "quota exceeded" in s or "payment" in s:
+        return InvokeFailReason.BILLING
+    if "rate limit" in s or "429" in s or "too many requests" in s:
+        return InvokeFailReason.RATE_LIMIT
+    return InvokeFailReason.UNKNOWN
 
 
 def build_system_prompt(config: dict | None = None,
@@ -79,29 +114,60 @@ def _format_history(history: list[dict], max_turns: int = 20,
                     max_chars: int = 8000) -> str:
     """Format conversation history for injection into the prompt.
 
-    Takes the most recent `max_turns` messages, truncates to `max_chars` total.
+    Three-pass compaction cascade:
+      Pass 1 — full messages up to max_chars (with 1.2x safety multiplier).
+      Pass 2 — strip large tool result blocks (>500 chars with code fences).
+      Pass 3 — drop oldest turns one-by-one, per-message cap at 1500 chars.
+      Fallback — hard truncate to effective_limit.
+
+    The 1.2x safety multiplier corrects for the chars/4 token underestimate
+    used by many context-window calculators.
     """
     if not history:
         return ""
 
-    # Take last N turns
+    SAFETY_MULTIPLIER = 1.2  # chars/4 underestimates tokens; shrink by 1/1.2
+    effective_limit = int(max_chars / SAFETY_MULTIPLIER)  # ~6666 for default 8000
+
     recent = history[-max_turns:]
 
-    lines = []
-    total = 0
-    for msg in recent:
-        role = msg.get("role", "user")
+    def _strip_tool_result(msg: dict) -> dict:
+        """Remove large tool output blocks from assistant messages."""
         content = msg.get("content", "")
-        # Truncate individual messages that are too long
-        if len(content) > 1500:
-            content = content[:1500] + "... [truncated]"
-        line = f"[{role}]: {content}"
-        if total + len(line) > max_chars:
-            break
-        lines.append(line)
-        total += len(line)
+        if len(content) > 500 and ("<tool_result>" in content or "```" in content):
+            msg = dict(msg, content=content[:200] + "\n[tool output truncated for compaction]")
+        return msg
 
-    return "\n\n".join(lines)
+    def _render(msgs: list[dict], per_msg_cap: int = 0) -> str:
+        parts = []
+        for m in msgs:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if per_msg_cap and len(content) > per_msg_cap:
+                content = content[:per_msg_cap] + "... [truncated]"
+            parts.append(f"[{role}]: {content}")
+        return "\n\n".join(parts)
+
+    # Pass 1: full messages
+    joined = _render(recent)
+    if len(joined) <= effective_limit:
+        return joined
+
+    # Pass 2: strip large tool results
+    stripped = [_strip_tool_result(m) for m in recent]
+    joined = _render(stripped)
+    if len(joined) <= effective_limit:
+        return joined
+
+    # Pass 3: drop oldest turns (keep first + recent slice), cap per message
+    for drop_count in range(1, len(recent)):
+        subset = recent[:1] + recent[drop_count + 1:]
+        joined = _render(subset, per_msg_cap=1500)
+        if len(joined) <= effective_limit:
+            return joined
+
+    # Fallback: hard truncate
+    return joined[:effective_limit]
 
 
 def get_today_cost() -> float:
@@ -267,7 +333,7 @@ def invoke_claude(message: str, model: str = "sonnet",
     env = os.environ.copy()
     work_dir = cwd or str(Path.home())
 
-    # Retry up to 2 times on empty response
+    # Retry up to 2 times on empty/transient response
     for attempt in range(2):
         try:
             log.debug(f"Claude invocation (attempt {attempt+1}): prompt={len(full_prompt)} chars, model={model}")
@@ -288,7 +354,23 @@ def invoke_claude(message: str, model: str = "sonnet",
                 log.debug(f"Claude stderr: {stderr[:300]}")
 
             if not output:
-                log.warning(f"Claude returned empty stdout (returncode={result.returncode}, stderr={stderr[:200]})")
+                reason = _classify_stderr(stderr)
+                log.warning(
+                    f"Claude returned empty stdout "
+                    f"(returncode={result.returncode}, reason={reason.value}, stderr={stderr[:200]})"
+                )
+                if reason == InvokeFailReason.AUTH_PERMANENT:
+                    log.error("AUTH_PERMANENT — not retrying")
+                    return {"text": "Authentication failed. Check your API key.", "cost": 0, "success": False}
+                if reason == InvokeFailReason.BILLING:
+                    log.error("BILLING — not retrying")
+                    return {"text": "Billing quota exceeded. Check your Anthropic account.", "cost": 0, "success": False}
+                if reason == InvokeFailReason.RATE_LIMIT:
+                    cooldown_until = _cooldowns.get(reason.value, 0)
+                    if time.time() < cooldown_until:
+                        remaining = int(cooldown_until - time.time())
+                        return {"text": f"Rate limited. Please wait {remaining}s and try again.", "cost": 0, "success": False}
+                    _cooldowns[reason.value] = time.time() + 30
                 if attempt == 0:
                     log.info("Retrying...")
                     continue

@@ -19,6 +19,7 @@ from typing import Optional
 
 from .config import load_config, config_changed, reload_config
 from .agent import invoke_claude, get_today_cost, generate_title, consolidate_session
+from .hooks import hooks
 from .session_db import (
     create_session, generate_session_id, add_message,
     end_session, list_sessions, get_session_messages, set_title
@@ -52,6 +53,8 @@ class GatewayRunner:
         self._start_time = 0.0
         self._session_cleanup_task: Optional[asyncio.Task] = None
         self._cron_task: Optional[asyncio.Task] = None
+        self._draining: bool = False
+        self._inflight: set[asyncio.Future] = set()
 
     # ── Session key ──────────────────────────────────────────────
 
@@ -109,9 +112,28 @@ class GatewayRunner:
 
     # ── Message handler ──────────────────────────────────────────
 
+    async def _tracked_invoke(self, session_id: str, text: str, model: str,
+                               history: list, session_context: str,
+                               cfg: dict) -> dict:
+        """Invoke Claude in executor and track the future in _inflight for drain-on-shutdown."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: invoke_claude(
+                text, model=model, history=history,
+                session_context=session_context,
+                config=cfg
+            )
+        )
+
     async def handle_message(self, platform: str, chat_id: str,
                                user_id: str, text: str) -> str:
         """Core message handler — called by platform adapters."""
+        # Drain guard — reject new messages while shutting down
+        if self._draining:
+            log.info(f"Rejecting message during drain ({platform}:{chat_id})")
+            return "Gateway is restarting, please try again in 30s."
+
         key = self._session_key(platform, chat_id)
         lock = self._get_lock(key)
 
@@ -127,6 +149,10 @@ class GatewayRunner:
                 return reason
 
             session_id = self._get_or_create_session(platform, chat_id, user_id)
+
+            # Fire message_received hook (void — non-blocking)
+            await hooks.fire_void("message_received",
+                                  platform=platform, chat_id=chat_id, text=text)
 
             # Persist user message
             add_message(session_id, "user", text)
@@ -153,23 +179,33 @@ class GatewayRunner:
 
             model = self.config.get("model", "sonnet")
 
-            # Run Claude Code in executor (config passed for autonomy resolution)
-            loop = asyncio.get_running_loop()
+            # Allow before_invoke hooks to mutate the prompt
+            invoke_text = await hooks.fire_modifying("before_invoke", text)
+
             cfg = self.config
-            result = await loop.run_in_executor(
-                None,
-                lambda: invoke_claude(
-                    text, model=model, history=history,
-                    session_context=session_context,
-                    config=cfg
-                )
+
+            # Track in-flight futures for drain-on-shutdown
+            fut = asyncio.ensure_future(
+                self._tracked_invoke(session_id, invoke_text, model,
+                                     history, session_context, cfg)
             )
+            self._inflight.add(fut)
+            fut.add_done_callback(self._inflight.discard)
+
+            try:
+                result = await fut
+            except asyncio.CancelledError:
+                return "Request cancelled during shutdown."
 
             response_text = result.get("text", "No response.")
             cost = result.get("cost", 0)
 
             # Persist assistant response
             add_message(session_id, "assistant", response_text)
+
+            # Fire llm_output hook (void — non-blocking)
+            await hooks.fire_void("llm_output",
+                                  session_id=session_id, text=response_text, cost=cost)
 
             # Log cost
             if cost > 0:
@@ -463,6 +499,12 @@ class GatewayRunner:
 
     async def stop(self):
         log.info("Gateway shutting down...")
+
+        # Drain in-flight requests before cancelling background tasks
+        self._draining = True
+        if self._inflight:
+            log.info(f"Draining {len(self._inflight)} in-flight requests (30s timeout)...")
+            await asyncio.wait(self._inflight, timeout=30)
 
         for task in [self._session_cleanup_task, self._cron_task]:
             if task:
