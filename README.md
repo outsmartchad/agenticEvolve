@@ -136,7 +136,21 @@ Scans for: credential exfiltration, reverse shells, obfuscated payloads, crypto 
 
 ---
 
-## Skills (18 installed)
+## Scheduled Cron Jobs
+
+3 autonomous jobs run daily — no human trigger needed.
+
+| Job | Schedule (HKT) | What it does |
+|-----|----------------|-------------|
+| **evolve-daily** | 6:00 AM | Collects signals from GitHub Trending + HN, scores candidates, builds up to 3 new skills, security-reviews, auto-installs, pushes to git |
+| **daily-digest** | 8:00 AM | Morning briefing — top signals, skills built, session count, cost summary. Delivered to Telegram |
+| **daily-ux-review** | 1:00 AM | Reads the day's conversations, finds friction points, identifies top 3 UX improvements, implements them directly |
+
+Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/jobs.json`.
+
+---
+
+## Skills (20 installed)
 
 | Skill | Purpose |
 |-------|---------|
