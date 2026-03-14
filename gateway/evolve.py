@@ -155,13 +155,45 @@ class EvolveOrchestrator:
 
     # ── Stage 2: Analyze ─────────────────────────────────────────
 
+    def _prefilter_signals(self, signals_dir: str, top_n: int = 30) -> list[dict]:
+        """Load all signal files and return top N by engagement proxy.
+
+        Ranking heuristic: HN points > GitHub stars > recency.
+        Caps input to Haiku at top_n to avoid context dilution.
+        """
+        signals: list[dict] = []
+        sig_path = Path(signals_dir)
+        for f in sig_path.glob("*.json"):
+            try:
+                raw = f.read_text()
+                batch = json.loads(raw)
+                if isinstance(batch, list):
+                    signals.extend(batch)
+                elif isinstance(batch, dict):
+                    signals.append(batch)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        def _rank(s: dict) -> int:
+            meta = s.get("metadata", {})
+            return meta.get("points", 0) or meta.get("stars", 0)
+
+        signals.sort(key=_rank, reverse=True)
+        return signals[:top_n]
+
     def stage_analyze(self, collect_result: dict) -> dict:
         """Analyze signals and score them. Returns top candidates."""
         signals_dir = collect_result.get("signals_dir", "")
 
+        top_signals = self._prefilter_signals(signals_dir, top_n=30)
+        self._report(f"  Pre-filtered to {len(top_signals)} top signals for scoring")
+
+        signals_json = json.dumps(top_signals, indent=2)
+
         prompt = (
             "You are the ANALYZER agent in the agenticEvolve pipeline.\n\n"
-            f"Read all signal files from {signals_dir}/ (JSON files).\n\n"
+            "Below are the top signals collected today (pre-ranked by engagement).\n\n"
+            f"```json\n{signals_json}\n```\n\n"
             "For each signal, evaluate on a 0-9 scale:\n"
             "  - RELEVANCE: Is this useful for AI agents, TypeScript, React, or developer tooling?\n"
             "  - NOVELTY: Is this genuinely new, or a rehash of known tools?\n"

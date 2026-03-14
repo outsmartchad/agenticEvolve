@@ -13,7 +13,7 @@ echo "Collecting GitHub trending signals..."
 
 gh api search/repositories \
     --method GET \
-    -f q="stars:>20 pushed:>=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d '1 day ago' +%Y-%m-%d) topic:ai-agent OR topic:claude OR topic:mcp OR topic:agent-loop OR topic:dev-tools" \
+    -f q="stars:>500 pushed:>=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d '1 day ago' +%Y-%m-%d) (ai-agent OR claude OR mcp OR agent-loop OR dev-tools)" \
     -f sort=stars \
     -f per_page=10 \
     --jq '.items[] | {
