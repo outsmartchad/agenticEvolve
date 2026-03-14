@@ -108,15 +108,16 @@ class EvolveOrchestrator:
 
     def stage_collect(self) -> dict:
         """Run signal collectors and return collected file paths."""
-        self._report("Collecting signals from GitHub, HN, X...")
+        self._report("Collecting signals from GitHub, HN, X, WeChat groups...")
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         signals_today = SIGNALS_DIR / today
         signals_today.mkdir(parents=True, exist_ok=True)
 
         results = {}
-        collectors = ["github.sh", "hackernews.sh", "x-search.sh"]
 
+        # Bash collectors
+        collectors = ["github.sh", "hackernews.sh", "x-search.sh"]
         for collector in collectors:
             path = COLLECTORS_DIR / collector
             if not path.exists():
@@ -135,6 +136,37 @@ class EvolveOrchestrator:
                     "success": proc.returncode == 0,
                     "output": proc.stdout[:500] if proc.stdout else "",
                     "error": proc.stderr[:200] if proc.stderr else "",
+                }
+                if proc.returncode == 0:
+                    self._report(f"  {collector} done")
+                else:
+                    self._report(f"  {collector} failed (exit {proc.returncode})")
+            except subprocess.TimeoutExpired:
+                results[name] = {"success": False, "error": "timeout"}
+                self._report(f"  {collector} timed out")
+            except Exception as e:
+                results[name] = {"success": False, "error": str(e)}
+
+        # Python collectors (WeChat group chats)
+        py_collectors = ["wechat.py"]
+        for collector in py_collectors:
+            path = COLLECTORS_DIR / collector
+            if not path.exists():
+                self._report(f"  Skipped {collector} (not found)")
+                continue
+            name = collector.replace(".py", "")
+            try:
+                self._report(f"  Running `{collector}`...")
+                proc = subprocess.run(
+                    ["python3", str(path), "--no-refresh"],
+                    capture_output=True, text=True, timeout=120,
+                    cwd=str(EXODIR),
+                    env={**os.environ, "SIGNALS_DIR": str(SIGNALS_DIR)}
+                )
+                results[name] = {
+                    "success": proc.returncode == 0,
+                    "output": proc.stderr[:500] if proc.stderr else "",
+                    "error": proc.stderr[:200] if proc.returncode != 0 else "",
                 }
                 if proc.returncode == 0:
                     self._report(f"  {collector} done")
@@ -194,6 +226,9 @@ class EvolveOrchestrator:
             "You are the ANALYZER agent in the agenticEvolve pipeline.\n\n"
             "Below are the top signals collected today (pre-ranked by engagement).\n\n"
             f"```json\n{signals_json}\n```\n\n"
+            "Signals may come from GitHub, HN, X, or WeChat group chats.\n"
+            "WeChat group signals contain real developer conversations — extract mentioned\n"
+            "repos, tools, techniques, and ideas from the chat content.\n\n"
             "For each signal, evaluate on a 0-9 scale:\n"
             "  - RELEVANCE: Is this useful for AI agents, TypeScript, React, or developer tooling?\n"
             "  - NOVELTY: Is this genuinely new, or a rehash of known tools?\n"
