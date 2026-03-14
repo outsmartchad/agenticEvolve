@@ -6,7 +6,7 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
 </p>
 
 ---
@@ -41,6 +41,9 @@
 **グループチャットからアイデアを寝ている間に吸収**
 > 毎朝6時の `/evolve` cronはGitHubをスキャンするだけではない。WeChatの技術グループチャットも読み取り、過去24時間の議論を要約する——メンバーが言及した新ツール、共有されたリポジトリ、議論された技術——そして最良のアイデアをスキルとして吸収する。朝起きたら、グループの集合知があなたのシステムに組み込まれている。
 
+**トレンドシグナルからビジネスアイデアをブレインストーミング**
+> `/produce` — エージェントが11のソース（GitHub Trending、Hacker News、X/Twitter、Reddit、Product Hunt、Lobste.rs、ArXiv、HuggingFace、BestOfJS、WeChatグループ、スター付きリポジトリ）から本日のシグナルを集約し、新興トレンドを特定し、収益モデル・技術スタック・MVPスコープを含む5つの具体的なアプリ/ビジネスアイデアをブレインストーミングする。オンデマンドのシグナル駆動アイデア創出。
+
 **自己改善するUX**
 > 毎晩午前1時、エージェントがその日の会話を読み、待ち時間が長すぎたり混乱する応答があった摩擦点を見つけ、自らのコードにパッチを当てて修正する。朝起きたら、より良いエージェントになっている。
 
@@ -51,7 +54,7 @@
 | 機能 | 説明 |
 |------|------|
 | **ビルド** | Telegram経由でフルClaude Code——ターミナル、ファイルI/O、Web検索、MCP、23スキル |
-| **進化** | 5段階パイプライン：収集 → 分析 → 構築 → レビュー → 自動インストール。GitHub Trending + HN + WeChatグループチャット要約をスキャンし、スキルを合成 |
+| **進化** | 5段階パイプライン：収集 → 分析 → 構築 → レビュー → 自動インストール。11ソースをスキャン：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChatグループ、スキルを合成 |
 | **吸収** | `/absorb <url>` — リポジトリをクローン、アーキテクチャをマッピング、パターンを比較、改善をシステムに統合 |
 | **学習** | `/learn <target>` — 深掘り抽出、ADOPT / ADAPT / SKIP の判定を出力 |
 | **音声** | 音声メッセージ送信 → ローカルwhisper.cpp転写（~500ms）。`/speak` → edge-tts、300+音声。広東語/北京語/日本語/韓国語を自動検出 |
@@ -109,9 +112,12 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/memory` | エージェントメモリ状態を表示 |
 | `/skills` | インストール済みスキル一覧（23個） |
 | `/cost` | 使用量とコスト |
+| `/wechat [--hours N]` | WeChatグループチャットダイジェスト（简体中文） |
+| `/produce [--ideas N]` | 全シグナルからビジネスアイデアをブレインストーミング |
+| `/digest` | 朝のブリーフィング |
 | `/restart` | ゲートウェイをリモート再起動 |
 
-[全32コマンド →](docs/commands.md)
+[全35コマンド →](docs/commands.md)
 
 ---
 
@@ -169,15 +175,34 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ## スケジュールされたcronジョブ
 
-3つの自律ジョブが毎日実行——人手によるトリガー不要。
+4つの自律ジョブが毎日実行——人手によるトリガー不要。
 
 | ジョブ | スケジュール（HKT） | 内容 |
 |--------|-------------------|------|
-| **evolve-daily** | 6:00 AM | GitHub Trending + HN + WeChatグループチャット要約からシグナルを収集、候補をスコアリング、最大3つの新スキルを構築、セキュリティレビュー、自動インストール、gitにプッシュ |
+| **evolve-daily** | 6:00 AM | 11ソースからシグナルを収集：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChatグループ、候補をスコアリング、最大3つの新スキルを構築、セキュリティレビュー、自動インストール、gitにプッシュ |
 | **daily-digest** | 8:00 AM | 朝のブリーフィング——トップシグナル、構築済みスキル、セッション数、コストサマリー。Telegramに配信 |
+| **wechat-digest** | 9:00 AM | 毎日のWeChatグループチャットダイジェスト——議論内容、言及されたツール、技術グループからの重要なインサイトを要約。Telegramに配信 |
 | **daily-ux-review** | 1:00 AM | その日の会話を読み、摩擦点を発見、トップ3のUX改善を特定、直接実装 |
 
 `/loop`、`/loops`、`/unloop`、`/pause`、`/unpause` で管理。設定ファイル：`cron/jobs.json`。
+
+---
+
+## シグナルソース（11個）
+
+| ソース | コレクター | API | 収集内容 |
+|--------|-----------|-----|----------|
+| GitHub Search | `github.sh` | GitHub API (gh CLI) | キーワード別トレンドリポジトリ、スター付きリポジトリの活動、リリース監視 |
+| GitHub Trending | `github-trending.py` | GitHub API (gh CLI) | 過去7日間に作成されたホットな新リポジトリ |
+| Hacker News | `hackernews.sh` | Algolia API | キーワード検索 + フロントページ + Show HN |
+| X / Twitter | `x-search.sh` | Brave Search API | オープンソース、開発ツール、AIに関するバイラルツイート |
+| Reddit | `reddit.py` | Pullpush.io API | 13のサブレディット：LocalLLaMA、programming、ClaudeAI等 |
+| Product Hunt | `producthunt.py` | RSS/Atom feed | 開発ツール + AI製品のローンチ |
+| Lobste.rs | `lobsters.py` | JSON API | 厳選された技術ニュース（高い信号対雑音比） |
+| ArXiv | `arxiv.py` | ArXiv API | cs.AI、cs.CL、cs.SE、cs.LGの論文 |
+| HuggingFace | `huggingface.py` | HF API | トレンドモデルとSpaces |
+| BestOfJS | `bestofjs.py` | Static JSON API | 日次スター増加数によるJavaScript/TypeScriptプロジェクトのトレンド |
+| WeChat | `wechat.py` | Local DB | グループチャットメッセージ（ローカルデータを読み取り） |
 
 ---
 
@@ -216,7 +241,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 |-------------|------|
 | [インターフェース](docs/interface.md) | 使用例とインタラクションパターン |
 | [メモリ](docs/memory.md) | 6層メモリアーキテクチャ、自動リコール、直感スコアリング |
-| [コマンド](docs/commands.md) | 全32コマンドのフラグと使用例 |
+| [コマンド](docs/commands.md) | 全35コマンドのフラグと使用例 |
 | [パイプライン](docs/pipelines.md) | Evolve、Absorb、Learn、Do、GCパイプライン |
 | [スキル](docs/skills.md) | 完全スキルカタログ |
 | [セキュリティ](docs/security.md) | スキャナー、自律レベル、セーフティゲート |

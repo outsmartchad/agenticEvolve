@@ -1,6 +1,13 @@
 #!/bin/bash
 # agenticEvolve configuration
 
+# Load .env if present
+if [ -f "$HOME/.agenticEvolve/.env" ]; then
+    set -a
+    source "$HOME/.agenticEvolve/.env"
+    set +a
+fi
+
 # Cost caps
 DAILY_CAP=5        # USD per day
 WEEKLY_CAP=25      # USD per week

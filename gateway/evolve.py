@@ -148,7 +148,16 @@ class EvolveOrchestrator:
                 results[name] = {"success": False, "error": str(e)}
 
         # Python collectors (WeChat group chats)
-        py_collectors = ["wechat.py"]
+        py_collectors = [
+            "wechat.py",
+            "reddit.py",
+            "lobsters.py",
+            "producthunt.py",
+            "github-trending.py",
+            "arxiv.py",
+            "huggingface.py",
+            "bestofjs.py",
+        ]
         for collector in py_collectors:
             path = COLLECTORS_DIR / collector
             if not path.exists():
@@ -208,7 +217,9 @@ class EvolveOrchestrator:
 
         def _rank(s: dict) -> int:
             meta = s.get("metadata", {})
-            return meta.get("points", 0) or meta.get("stars", 0)
+            return (meta.get("points", 0) or meta.get("stars", 0)
+                    or meta.get("message_count", 0) or meta.get("replies", 0)
+                    or meta.get("likes", 0) or meta.get("stars_today", 0))
 
         signals.sort(key=_rank, reverse=True)
         return signals[:top_n]

@@ -73,6 +73,32 @@ curl -s -X POST http://localhost:8222/api/v1/tabs/<ID>/navigate \
   -d '{"url":"https://example.com","screenshot":{"format":"webp"}}'
 ```
 
+## Browser Selection Rules
+
+**Default: ABP (bundled Chromium)** — use for ALL agent browsing unless the user explicitly asks otherwise.
+
+When the user says "use Brave", "open in Chrome", "use my browser", "with my cookies/login":
+1. Launch the requested browser with CDP remote debugging
+2. Connect via Playwright CDP or ABP's REST API
+
+```bash
+# Launch Brave with CDP
+"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" --remote-debugging-port=9222 &
+
+# Launch Chrome with CDP  
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9223 &
+```
+
+Then connect Playwright to `http://localhost:9222` or `9223`.
+
+**When to use user's browser:**
+- User explicitly asks ("use Brave", "use Chrome", "use my browser")
+- User needs existing login sessions / cookies
+- User wants to see the browser visually
+
+**When to use ABP (default):**
+- Everything else — research, scraping, form filling, testing, browsing
+
 ## Remove
 
 ```bash

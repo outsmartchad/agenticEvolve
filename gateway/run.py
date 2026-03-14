@@ -343,6 +343,22 @@ class GatewayRunner:
                 log.info(f"Cron job completed: {job_id} (cost=$0.0000)")
                 continue
 
+            # Native WeChat digest job
+            if job_id == "wechat-digest":
+                adapter = self._adapter_map.get("telegram")
+                if adapter and deliver_chat_id and hasattr(adapter, "_send_wechat_digest"):
+                    try:
+                        await adapter._send_wechat_digest(deliver_chat_id, hours=24)
+                        log.info("Cron: wechat-digest sent")
+                    except Exception as e:
+                        log.error(f"Cron: wechat-digest failed: {e}")
+                job["run_count"] = job.get("run_count", 0) + 1
+                job["last_run_at"] = now.isoformat()
+                job["next_run_at"] = self._next_cron_run(job, now).isoformat()
+                modified = True
+                log.info(f"Cron job completed: {job_id}")
+                continue
+
             # Cost cap check
             allowed, reason = self._check_cost_cap()
             if not allowed:

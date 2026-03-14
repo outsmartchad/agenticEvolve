@@ -6,7 +6,7 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
 </p>
 
 ---
@@ -41,6 +41,9 @@
 **在睡夢中從群組聊天中吸收想法**
 > 你的 `/evolve` 排程任務在早上 6 點不只是掃描 GitHub。它還會讀取你的微信技術群聊天記錄，總結過去 24 小時的討論——別人提到的新工具、分享的儲存庫、討論的技術方案——並將最好的想法吸收為技能。你醒來時，群組的集體智慧已經融入你的系統。
 
+**從趨勢訊號中腦力激盪商業點子**
+> `/produce` — 代理彙整今天來自 11 個來源的訊號（GitHub Trending、Hacker News、X/Twitter、Reddit、Product Hunt、Lobste.rs、ArXiv、HuggingFace、BestOfJS、微信群組和你 star 的儲存庫），辨識新興趨勢，並腦力激盪 5 個具體的應用/商業點子，包含營收模式、技術棧和 MVP 範圍。按需進行訊號驅動的創意發想。
+
 **自我改進的使用者體驗**
 > 每天凌晨 1 點，代理讀取當天的對話，找出你等待太久或收到困惑回覆的摩擦點，然後直接修補自己的程式碼來修復它們。你醒來後面對的是一個更好的代理。
 
@@ -51,7 +54,7 @@
 | 能力 | 描述 |
 |------|------|
 | **建構** | 透過 Telegram 使用完整的 Claude Code——終端機、檔案讀寫、網路搜尋、MCP、23 個技能 |
-| **進化** | 5 階段流水線：收集 → 分析 → 建構 → 審查 → 自動安裝。掃描 GitHub Trending + HN + 微信群組聊天摘要，合成技能 |
+| **進化** | 5 階段流水線：收集 → 分析 → 建構 → 審查 → 自動安裝。掃描 11 個來源：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + 微信群組，合成技能 |
 | **吸收** | `/absorb <url>` — 複製儲存庫，映射架構，比對模式，將改進融入你的系統 |
 | **學習** | `/learn <target>` — 深度提取，給出 ADOPT / ADAPT / SKIP 判定 |
 | **語音** | 傳送語音訊息 → 本地 whisper.cpp 轉寫（~500ms）。`/speak` → edge-tts，300+ 種語音。自動偵測粵語/國語/日語/韓語 |
@@ -109,9 +112,12 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/memory` | 檢視代理記憶狀態 |
 | `/skills` | 列出已安裝技能（23 個） |
 | `/cost` | 使用量與開銷 |
+| `/wechat [--hours N]` | 微信群組聊天摘要（簡體中文） |
+| `/produce [--ideas N]` | 從所有訊號中腦力激盪商業點子 |
+| `/digest` | 每日早間簡報 |
 | `/restart` | 遠端重啟閘道 |
 
-[全部 32 個指令 →](docs/commands.md)
+[全部 35 個指令 →](docs/commands.md)
 
 ---
 
@@ -169,15 +175,34 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ## 排程任務
 
-3 個自治任務每天自動執行——無需人工觸發。
+4 個自治任務每天自動執行——無需人工觸發。
 
 | 任務 | 時間（HKT） | 功能 |
 |------|------------|------|
-| **evolve-daily** | 6:00 AM | 收集 GitHub Trending + HN + 微信群組聊天摘要訊號，評分候選項，建構最多 3 個新技能，安全審查，自動安裝，推送到 git |
+| **evolve-daily** | 6:00 AM | 收集 11 個來源的訊號：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + 微信群組，評分候選項，建構最多 3 個新技能，安全審查，自動安裝，推送到 git |
 | **daily-digest** | 8:00 AM | 每日簡報——熱門訊號、已建構技能、工作階段數、費用摘要。推送到 Telegram |
+| **wechat-digest** | 9:00 AM | 每日微信群組聊天摘要——總結討論內容、提到的工具、技術群的關鍵洞察。推送到 Telegram |
 | **daily-ux-review** | 1:00 AM | 讀取當天對話，發現摩擦點，識別 Top 3 體驗改進，直接實施修改 |
 
 透過 `/loop`、`/loops`、`/unloop`、`/pause`、`/unpause` 管理。設定檔：`cron/jobs.json`。
+
+---
+
+## 訊號來源（11 個）
+
+| 來源 | 採集器 | API | 採集內容 |
+|------|--------|-----|----------|
+| GitHub Search | `github.sh` | GitHub API (gh CLI) | 按關鍵字搜尋趨勢儲存庫、star 儲存庫動態、發佈監控 |
+| GitHub Trending | `github-trending.py` | GitHub API (gh CLI) | 最近 7 天建立的熱門新儲存庫 |
+| Hacker News | `hackernews.sh` | Algolia API | 關鍵字搜尋 + 首頁 + Show HN |
+| X / Twitter | `x-search.sh` | Brave Search API | 關於開源、開發工具、AI 的熱門推文 |
+| Reddit | `reddit.py` | Pullpush.io API | 13 個子版塊：LocalLLaMA、programming、ClaudeAI 等 |
+| Product Hunt | `producthunt.py` | RSS/Atom feed | 開發工具 + AI 產品發佈 |
+| Lobste.rs | `lobsters.py` | JSON API | 精選技術新聞（高訊噪比） |
+| ArXiv | `arxiv.py` | ArXiv API | cs.AI、cs.CL、cs.SE、cs.LG 論文 |
+| HuggingFace | `huggingface.py` | HF API | 趨勢模型和 Spaces |
+| BestOfJS | `bestofjs.py` | Static JSON API | 按每日 star 增長排名的 JavaScript/TypeScript 專案 |
+| WeChat | `wechat.py` | Local DB | 群組聊天訊息（讀取本地資料） |
 
 ---
 
@@ -216,7 +241,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 |------|------|
 | [互動](docs/interface.md) | 使用範例和互動模式 |
 | [記憶](docs/memory.md) | 6 層記憶架構、自動召回、直覺評分 |
-| [指令](docs/commands.md) | 全部 32 個指令及參數和範例 |
+| [指令](docs/commands.md) | 全部 35 個指令及參數和範例 |
 | [流水線](docs/pipelines.md) | Evolve、Absorb、Learn、Do、GC 流水線 |
 | [技能](docs/skills.md) | 完整技能目錄 |
 | [安全](docs/security.md) | 掃描器、自治等級、安全閘門 |

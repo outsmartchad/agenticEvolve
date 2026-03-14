@@ -6,7 +6,7 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
 </p>
 
 ---
@@ -41,6 +41,9 @@
 **在睡梦中从群聊中吸收想法**
 > 你的 `/evolve` 定时任务在早上 6 点不只是扫描 GitHub。它还会读取你的微信技术群聊天记录，总结过去 24 小时的讨论——别人提到的新工具、分享的仓库、讨论的技术方案——并将最好的想法吸收为技能。你醒来时，群组的集体智慧已经融入你的系统。
 
+**从趋势信号中头脑风暴商业点子**
+> `/produce` — 代理聚合今天来自 11 个来源的信号（GitHub Trending、Hacker News、X/Twitter、Reddit、Product Hunt、Lobste.rs、ArXiv、HuggingFace、BestOfJS、微信群聊和你 star 的仓库），识别新兴趋势，并头脑风暴 5 个具体的应用/商业点子，包含盈利模式、技术栈和 MVP 范围。按需进行信号驱动的创意发想。
+
 **自我改进的用户体验**
 > 每天凌晨 1 点，代理读取当天的对话，找出你等待太久或收到困惑回复的摩擦点，然后直接修补自己的代码来修复它们。你醒来后面对的是一个更好的代理。
 
@@ -51,7 +54,7 @@
 | 能力 | 描述 |
 |------|------|
 | **构建** | 通过 Telegram 使用完整的 Claude Code——终端、文件读写、网络搜索、MCP、23 个技能 |
-| **进化** | 5 阶段流水线：收集 → 分析 → 构建 → 审查 → 自动安装。扫描 GitHub Trending + HN + 微信群聊摘要，合成技能 |
+| **进化** | 5 阶段流水线：收集 → 分析 → 构建 → 审查 → 自动安装。扫描 11 个来源：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + 微信群聊，合成技能 |
 | **吸收** | `/absorb <url>` — 克隆仓库，映射架构，对比模式，将改进融入你的系统 |
 | **学习** | `/learn <target>` — 深度提取，给出 ADOPT / ADAPT / SKIP 判定 |
 | **语音** | 发送语音消息 → 本地 whisper.cpp 转写（~500ms）。`/speak` → edge-tts，300+ 种语音。自动检测粤语/普通话/日语/韩语 |
@@ -109,9 +112,12 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/memory` | 查看代理记忆状态 |
 | `/skills` | 列出已安装技能（23 个） |
 | `/cost` | 使用量和开销 |
+| `/wechat [--hours N]` | 微信群聊摘要（简体中文） |
+| `/produce [--ideas N]` | 从所有信号中头脑风暴商业点子 |
+| `/digest` | 每日早间简报 |
 | `/restart` | 远程重启网关 |
 
-[全部 32 个命令 →](docs/commands.md)
+[全部 35 个命令 →](docs/commands.md)
 
 ---
 
@@ -169,15 +175,34 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ## 定时任务
 
-3 个自治任务每天自动运行——无需人工触发。
+4 个自治任务每天自动运行——无需人工触发。
 
 | 任务 | 时间（HKT） | 功能 |
 |------|------------|------|
-| **evolve-daily** | 6:00 AM | 收集 GitHub Trending + HN + 微信群聊摘要信号，评分候选项，构建最多 3 个新技能，安全审查，自动安装，推送到 git |
+| **evolve-daily** | 6:00 AM | 收集 11 个来源的信号：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + 微信群聊，评分候选项，构建最多 3 个新技能，安全审查，自动安装，推送到 git |
 | **daily-digest** | 8:00 AM | 每日简报——热门信号、已构建技能、会话数、费用摘要。推送到 Telegram |
+| **wechat-digest** | 9:00 AM | 每日微信群聊摘要——总结讨论内容、提到的工具、技术群的关键洞察。推送到 Telegram |
 | **daily-ux-review** | 1:00 AM | 读取当天对话，发现摩擦点，识别 Top 3 体验改进，直接实施修改 |
 
 通过 `/loop`、`/loops`、`/unloop`、`/pause`、`/unpause` 管理。配置文件：`cron/jobs.json`。
+
+---
+
+## 信号来源（11 个）
+
+| 来源 | 采集器 | API | 采集内容 |
+|------|--------|-----|----------|
+| GitHub Search | `github.sh` | GitHub API (gh CLI) | 按关键词搜索趋势仓库、star 仓库动态、发布监控 |
+| GitHub Trending | `github-trending.py` | GitHub API (gh CLI) | 最近 7 天创建的热门新仓库 |
+| Hacker News | `hackernews.sh` | Algolia API | 关键词搜索 + 首页 + Show HN |
+| X / Twitter | `x-search.sh` | Brave Search API | 关于开源、开发工具、AI 的热门推文 |
+| Reddit | `reddit.py` | Pullpush.io API | 13 个子版块：LocalLLaMA、programming、ClaudeAI 等 |
+| Product Hunt | `producthunt.py` | RSS/Atom feed | 开发工具 + AI 产品发布 |
+| Lobste.rs | `lobsters.py` | JSON API | 精选技术新闻（高信噪比） |
+| ArXiv | `arxiv.py` | ArXiv API | cs.AI、cs.CL、cs.SE、cs.LG 论文 |
+| HuggingFace | `huggingface.py` | HF API | 趋势模型和 Spaces |
+| BestOfJS | `bestofjs.py` | Static JSON API | 按每日 star 增长排名的 JavaScript/TypeScript 项目 |
+| WeChat | `wechat.py` | Local DB | 群聊消息（读取本地数据） |
 
 ---
 
@@ -216,7 +241,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 |------|------|
 | [交互](docs/interface.md) | 使用示例和交互模式 |
 | [记忆](docs/memory.md) | 6 层记忆架构、自动召回、直觉评分 |
-| [命令](docs/commands.md) | 全部 32 个命令及参数和示例 |
+| [命令](docs/commands.md) | 全部 35 个命令及参数和示例 |
 | [流水线](docs/pipelines.md) | Evolve、Absorb、Learn、Do、GC 流水线 |
 | [技能](docs/skills.md) | 完整技能目录 |
 | [安全](docs/security.md) | 扫描器、自治等级、安全门控 |

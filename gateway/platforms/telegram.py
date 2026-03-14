@@ -7,6 +7,7 @@ import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Callable
 from .base import BasePlatformAdapter
 from ..voice import text_to_speech, speech_to_text, list_voices, maybe_tts_reply, get_tts_config, TtsMode, parse_tts_directives, detect_language_voice
 
@@ -421,6 +422,13 @@ class TelegramAdapter(BasePlatformAdapter):
             "/speak --voices [lang] — List available voices\n"
             "/speak --mode <off|always|inbound> — Auto-TTS mode\n"
             "Send a voice message — auto-transcribe + reply\n\n"
+            "Ideas\n"
+            "/produce [--ideas N] [--model X] — Brainstorm business ideas from all signals\n\n"
+            "WeChat\n"
+            "/wechat [--hours N] [--model X] — Group chat digest\n"
+            "/absorb wechat [--hours N] — Deep absorb from group chats\n\n"
+            "Briefings\n"
+            "/digest [--days N] — Morning briefing\n\n"
             "Maintenance\n"
             "/gc [--dry-run] — Garbage collection\n\n"
             "Natural Language\n"
@@ -1299,9 +1307,10 @@ class TelegramAdapter(BasePlatformAdapter):
             )
             return
 
+        is_wechat = target.lower().startswith("wechat")
         is_url = target.startswith("http://") or target.startswith("https://")
         is_github = "github.com" in target
-        target_type = "github" if is_github else ("url" if is_url else "topic")
+        target_type = "wechat" if is_wechat else ("github" if is_github else ("url" if is_url else "topic"))
 
         short_target = target[:60] + ("..." if len(target) > 60 else "")
         if dry_run:
@@ -1326,7 +1335,7 @@ class TelegramAdapter(BasePlatformAdapter):
 
         # Security prescan for GitHub repos (Layer 1 — before handing to absorb pipeline)
         is_github = target.startswith("https://github.com/") or target.startswith("git@github.com:")
-        if is_github and not skip_security_scan:
+        if is_github and not skip_security_scan and not is_wechat:
             security_blocked = await self._security_prescan_github(target, chat_id, asyncio.get_running_loop())
             if security_blocked:
                 return
@@ -2752,6 +2761,359 @@ class TelegramAdapter(BasePlatformAdapter):
             except Exception:
                 await self.app.bot.send_message(chat_id=int(chat_id), text=text)
 
+    # ── /produce — brainstorm business ideas from latest signals ──────
+
+    async def _handle_produce(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Aggregate all signal sources and brainstorm app/business ideas.
+
+        Usage: /produce [--model X] [--ideas N]
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {
+            "--model": {"type": "value"},
+            "--ideas": {"type": "value", "cast": int, "default": 5},
+        })
+        num_ideas = max(1, min(flags["--ideas"], 10))
+        model_override = flags["--model"]
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
+
+        chat_id = str(update.message.chat_id)
+        await update.message.reply_text(
+            f"Aggregating signals from all sources...\n"
+            f"Brainstorming {num_ideas} business ideas.\n~2-4 min."
+        )
+
+        loop = asyncio.get_running_loop()
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop)
+
+        start_reporter()
+        try:
+            result_text, cost = await loop.run_in_executor(
+                None, lambda: self._build_produce(num_ideas, model, on_progress_sync)
+            )
+        except Exception as e:
+            stop_reporter()
+            log.error(f"Generate error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"Generate failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        tools_used = get_tool_count()
+        footer = f"\n\n({tools_used} steps, ${cost:.2f})"
+        full_text = result_text + footer
+        for i in range(0, len(full_text), 4000):
+            chunk = full_text[i:i + 4000]
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "produce", cost)
+
+    def _build_produce(self, num_ideas: int, model: str,
+                        on_progress: Callable) -> tuple[str, float]:
+        """Aggregate signals and brainstorm business ideas. Runs in executor thread."""
+        import glob as _glob
+        from datetime import datetime as _dt
+
+        signals_dir = Path.home() / ".agenticEvolve" / "signals"
+        today = _dt.now().strftime("%Y-%m-%d")
+        today_dir = signals_dir / today
+
+        # Collect all signal files from today
+        all_signals = []
+        source_counts = {}
+
+        if today_dir.exists():
+            for f in sorted(today_dir.glob("*.json")):
+                try:
+                    with open(f, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    if isinstance(data, list):
+                        signals = data
+                    else:
+                        signals = [data]
+
+                    source_name = f.stem
+                    source_counts[source_name] = len(signals)
+                    all_signals.extend(signals)
+                except Exception:
+                    continue
+
+        if not all_signals:
+            # Try to collect fresh signals
+            on_progress("No signals found for today. Run /evolve first to collect signals.")
+            return "No signals found for today. Run `/evolve --dry-run` first to collect fresh data from all sources.", 0.0
+
+        on_progress(f"Loaded {len(all_signals)} signals from {len(source_counts)} sources")
+
+        # Build a condensed summary of all signals for the prompt
+        # Group by source, take top items by engagement
+        source_summaries = []
+        for source_name, count in sorted(source_counts.items()):
+            source_signals = [s for s in all_signals if s.get("id", "").startswith(source_name.split("-")[0]) or
+                              source_name in str(s.get("metadata", {}).get("relevance_tags", []))]
+            if not source_signals:
+                # fallback: match by source field
+                source_signals = [s for s in all_signals
+                                  if s.get("source", "") == source_name.replace("-", "")
+                                  or s.get("source", "") == source_name]
+
+            # Sort by engagement
+            source_signals.sort(
+                key=lambda x: (x.get("metadata", {}).get("points", 0)
+                               or x.get("metadata", {}).get("stars", 0)
+                               or x.get("metadata", {}).get("likes", 0)
+                               or x.get("metadata", {}).get("replies", 0)
+                               or 0),
+                reverse=True
+            )
+
+            items = []
+            for s in source_signals[:8]:
+                title = s.get("title", "")
+                content = s.get("content", "")[:200]
+                url = s.get("url", "")
+                meta = s.get("metadata", {})
+                engagement = meta.get("points", 0) or meta.get("stars", 0) or meta.get("likes", 0) or 0
+                items.append(f"  - {title} ({engagement} pts) {url}\n    {content}")
+
+            if items:
+                source_summaries.append(f"### {source_name} ({count} signals)\n" + "\n".join(items))
+
+        signals_text = "\n\n".join(source_summaries)
+
+        # Truncate to avoid context overflow
+        if len(signals_text) > 40000:
+            signals_text = signals_text[:40000] + "\n\n... (truncated)"
+
+        on_progress("Brainstorming ideas...")
+
+        from ..agent import invoke_claude_streaming
+
+        prompt = (
+            f"You are Vincent's personal AI business strategist.\n\n"
+            f"Vincent is a developer who builds AI agents, onchain infrastructure, and developer tools. "
+            f"He's looking for actionable app/business ideas he can build quickly (days to weeks, not months) "
+            f"and monetize.\n\n"
+            f"Here are the latest signals from {len(source_counts)} sources "
+            f"({len(all_signals)} total signals):\n\n"
+            f"{signals_text}\n\n"
+            f"Based on these trends, generate exactly {num_ideas} concrete business/app ideas.\n\n"
+            f"For EACH idea, provide:\n\n"
+            f"## Idea N: [Name]\n"
+            f"**One-liner**: What it does in one sentence\n"
+            f"**Why now**: What trend/signal makes this timely (cite specific signals)\n"
+            f"**Target users**: Who pays for this\n"
+            f"**Revenue model**: How it makes money (be specific — pricing, tiers)\n"
+            f"**Tech stack**: What to build with (leverage Vincent's skills: TypeScript, Python, Claude API, Solana, React/Next.js)\n"
+            f"**MVP scope**: What to build in week 1 to validate\n"
+            f"**Competitive moat**: Why this is hard to copy\n"
+            f"**Estimated effort**: Days/weeks to MVP\n"
+            f"**Revenue potential**: Realistic monthly revenue at 6 months\n\n"
+            f"Prioritize ideas that:\n"
+            f"- Solve a real pain point visible in the signals\n"
+            f"- Can be built solo by one developer\n"
+            f"- Have a clear path to first $1000/month\n"
+            f"- Leverage AI/LLM trends (Vincent's strength)\n"
+            f"- Are NOT just another chatbot wrapper\n\n"
+            f"Rank ideas by feasibility × market timing × revenue potential.\n"
+            f"Be brutally honest about risks and challenges for each.\n"
+            f"Use Markdown formatting."
+        )
+
+        result = invoke_claude_streaming(
+            prompt,
+            on_progress=on_progress,
+            model=model,
+            session_context=f"[Generate: {num_ideas} ideas from {len(all_signals)} signals]"
+        )
+
+        text = result.get("text", "No ideas generated.")
+        cost = result.get("cost", 0.0)
+
+        sources_line = ", ".join(f"{k}({v})" for k, v in sorted(source_counts.items()))
+        header = (
+            f"*Business Ideas — based on {len(all_signals)} signals*\n"
+            f"Sources: {sources_line}\n\n"
+        )
+        return header + text, cost
+
+    # ── /wechat — WeChat group chat digest ────────────────────────────
+
+    async def _handle_wechat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Summarize recent WeChat group chat messages with AI analysis.
+
+        Usage: /wechat [--hours N] [--model X]
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {
+            "--hours": {"type": "value", "cast": int, "default": 24},
+            "--model": {"type": "value"},
+        })
+        hours = max(1, min(flags["--hours"], 168))  # max 7 days
+        model_override = flags["--model"]
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
+
+        chat_id = str(update.message.chat_id)
+        await update.message.reply_text(f"Reading WeChat groups (last {hours}h)...\n~1-2 min.")
+
+        loop = asyncio.get_running_loop()
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop)
+
+        start_reporter()
+        try:
+            summary, cost = await loop.run_in_executor(
+                None, lambda: self._build_wechat_digest(hours, model, on_progress_sync)
+            )
+        except Exception as e:
+            stop_reporter()
+            log.error(f"WeChat digest error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"WeChat digest failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        tools_used = get_tool_count()
+        footer = f"\n\n({tools_used} steps, ${cost:.2f})"
+        full_text = summary + footer
+        for i in range(0, len(full_text), 4000):
+            chunk = full_text[i:i + 4000]
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "wechat-digest", cost)
+
+    def _build_wechat_digest(self, hours: int, model: str,
+                             on_progress: Callable) -> tuple[str, float]:
+        """Build WeChat group chat digest using Claude. Runs in executor thread."""
+        from pathlib import Path as _Path
+        import sys
+
+        decrypted_dir = _Path.home() / ".agenticEvolve" / "tools" / "wechat-decrypt" / "decrypted"
+        if not decrypted_dir.exists():
+            return ("No decrypted WeChat data found.\n"
+                    "Run the decrypt pipeline first:\n"
+                    "  `cd ~/.agenticEvolve/tools/wechat-decrypt`\n"
+                    "  `sudo ./find_keys && python3 decrypt_db.py`"), 0.0
+
+        # Load messages via collector
+        collectors_dir = str(_Path.home() / ".agenticEvolve" / "collectors")
+        if collectors_dir not in sys.path:
+            sys.path.insert(0, collectors_dir)
+
+        try:
+            # Import from the wechat module using its path
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "wechat_collector",
+                str(_Path.home() / ".agenticEvolve" / "collectors" / "wechat.py")
+            )
+            wechat_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(wechat_mod)
+            signals = wechat_mod.extract_group_messages(decrypted_dir, hours=hours)
+        except Exception as e:
+            return f"Failed to read WeChat messages: {e}", 0.0
+
+        if not signals:
+            return f"No WeChat group messages in the last {hours} hours.", 0.0
+
+        # Build conversation text
+        chat_lines = []
+        total_msgs = 0
+        for s in signals:
+            meta = s.get("metadata", {})
+            chat_lines.append(f"## {meta.get('group_name', 'Unknown')} "
+                              f"({meta.get('message_count', 0)} msgs, "
+                              f"{meta.get('unique_senders', 0)} senders)")
+            chat_lines.append(s.get("content", ""))
+            chat_lines.append("")
+            total_msgs += meta.get("message_count", 0)
+
+        chat_text = "\n".join(chat_lines)
+
+        # Truncate to avoid context overflow
+        if len(chat_text) > 30000:
+            chat_text = chat_text[:30000] + "\n\n... (truncated)"
+
+        on_progress("Analyzing conversations...")
+
+        from ..agent import invoke_claude_streaming
+
+        prompt = (
+            f"You are Vincent's personal AI assistant analyzing his WeChat group chats.\n\n"
+            f"Here are the last {hours} hours of group conversations ({total_msgs} messages "
+            f"across {len(signals)} groups):\n\n"
+            f"{chat_text}\n\n"
+            f"Create a concise, actionable digest. IMPORTANT: Summarize EACH GROUP SEPARATELY.\n\n"
+            f"For EACH group, use this structure:\n\n"
+            f"---\n"
+            f"## [Group Name] (N messages, N senders)\n\n"
+            f"**关键要点** (3-5 bullet points — the most important things from THIS group)\n\n"
+            f"**提到的工具 & 仓库** (list with brief descriptions, include URLs if shared)\n\n"
+            f"**技术洞察** (useful tips, patterns, debugging techniques)\n\n"
+            f"**热议话题** (what people are talking about most in this group)\n\n"
+            f"---\n\n"
+            f"After all groups, add a final section:\n\n"
+            f"## Vincent 的 Action Items\n"
+            f"(Combined actionable items across ALL groups, prioritized)\n\n"
+            f"Be concise. Skip small talk and irrelevant messages. Focus on signal, not noise.\n"
+            f"Use Markdown formatting. ALWAYS respond in simplified Chinese (简体中文) since the messages are from Chinese group chats."
+        )
+
+        result = invoke_claude_streaming(
+            prompt,
+            on_progress=on_progress,
+            model=model,
+            session_context=f"[WeChat digest: {hours}h, {len(signals)} groups]"
+        )
+
+        text = result.get("text", "No analysis generated.")
+        cost = result.get("cost", 0.0)
+
+        header = f"*WeChat Digest — last {hours}h*\n{total_msgs} messages across {len(signals)} groups\n\n"
+        return header + text, cost
+
+    async def _send_wechat_digest(self, chat_id: str, hours: int = 24):
+        """Send a WeChat digest to a specific chat. Called by cron."""
+        model = self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet"
+
+        def _noop(msg):
+            pass
+
+        summary, cost = self._build_wechat_digest(hours, model, _noop)
+
+        if self.app and self.app.bot:
+            for i in range(0, len(summary), 4000):
+                chunk = summary[i:i + 4000]
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                    )
+                except Exception:
+                    await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+
     # ── /reflect — weekly self-analysis ─────────────────────────────
 
     async def _handle_reflect(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2933,6 +3295,12 @@ class TelegramAdapter(BasePlatformAdapter):
   List or search stored learnings.
 /model <name>
   Switch model (e.g. sonnet, opus, haiku).
+/produce [--ideas N] [--model <name>]
+  Brainstorm business/app ideas from all collected signals.
+/wechat [--hours N] [--model <name>]
+  Summarize recent WeChat group chat messages.
+/digest [--days N]
+  Morning briefing (sessions, signals, skills, cost).
 /gc [--dry-run]
   Run garbage collection.
 /loop <interval> <prompt> [--model <name>] [--max-runs <n>] [--start-now]
@@ -3067,6 +3435,9 @@ class TelegramAdapter(BasePlatformAdapter):
             "heartbeat": self._handle_heartbeat,
             "notify": self._handle_notify,
             "help": self._handle_help,
+            "wechat": self._handle_wechat,
+            "digest": self._handle_digest,
+            "produce": self._handle_produce,
         }
 
         handler = handler_map.get(cmd_name)
@@ -3075,7 +3446,7 @@ class TelegramAdapter(BasePlatformAdapter):
             return
 
         # For long-running commands, run in background with 1-min progress reports
-        long_running = {"absorb", "learn", "evolve", "gc"}
+        long_running = {"absorb", "learn", "evolve", "gc", "wechat", "produce"}
 
         if cmd_name in long_running:
             # Inject args into context so the handler sees them
@@ -3231,6 +3602,9 @@ class TelegramAdapter(BasePlatformAdapter):
             "speak": self._handle_speak,
             "screenshot": self._handle_screenshot,
             "restart": self._handle_restart,
+            "wechat": self._handle_wechat,
+            "digest": self._handle_digest,
+            "produce": self._handle_produce,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -3287,6 +3661,9 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("restart", "Restart the gateway remotely"),
                 BotCommand("pause", "Pause a cron job"),
                 BotCommand("unpause", "Resume a paused cron job"),
+                BotCommand("produce", "Brainstorm business ideas from signals"),
+                BotCommand("wechat", "WeChat group chat digest"),
+                BotCommand("digest", "Morning briefing"),
             ])
         except Exception as e:
             log.warning(f"Failed to set bot commands: {e}")

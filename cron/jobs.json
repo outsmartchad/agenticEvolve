@@ -43,5 +43,21 @@
     "run_count": 0,
     "paused": false,
     "last_run_at": null
+  },
+  {
+    "id": "wechat-digest",
+    "description": "Daily WeChat group chat digest — summarize key discussions, tools, and insights",
+    "prompt": "native:wechat-digest",
+    "schedule_type": "cron",
+    "cron": "0 9 * * *",
+    "timezone": "Asia/Hong_Kong",
+    "deliver_to": "telegram",
+    "deliver_chat_id": "934847281",
+    "created_at": "2026-03-14T00:00:00Z",
+    "next_run_at": "2026-03-15T01:00:00Z",
+    "run_count": 0,
+    "paused": false,
+    "last_run_at": null,
+    "_note": "9 AM HKT = 01:00 UTC. Handled natively by gateway (no Claude invocation for reading, only for analysis)."
   }
 ]

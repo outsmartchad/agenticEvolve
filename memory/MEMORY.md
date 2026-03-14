@@ -22,3 +22,9 @@ User values proactive systems that notify without being asked; watchdog agent th
 Agent cannot directly send images via Telegram gateway using SendMessage tool; images must be extracted from browser tool_result blocks and forwarded through gateway's image handling
 §
 When agent hits limitations sending files/images to Telegram, reference similar implementations in other projects (e.g. openclaw) and apply those patterns to the current codebase
+§
+When providing URLs, always verify first rather than generating from memory — acknowledge uncertainty if URL is unverified
+§
+Prefer official App Store downloads over direct website URLs for native macOS apps to avoid security risks
+§
+For critical user requests like app installation, provide multiple verification paths so user can independently confirm legitimacy

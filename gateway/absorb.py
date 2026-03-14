@@ -115,12 +115,76 @@ class AbsorbOrchestrator:
         self._report(format_telegram_report(result))
         return result
 
+    def _load_wechat_messages(self) -> str:
+        """Load recent WeChat group messages for absorb pipeline."""
+        import sqlite3 as _sqlite3
+        from pathlib import Path as _Path
+
+        decrypted_dir = _Path.home() / ".agenticEvolve" / "tools" / "wechat-decrypt" / "decrypted"
+        if not decrypted_dir.exists():
+            return "(No decrypted WeChat DBs found. Run decrypt pipeline first.)"
+
+        # Parse hours from target string (e.g. "wechat --hours 48")
+        hours = 24
+        parts = self.target.split()
+        for i, p in enumerate(parts):
+            if p == "--hours" and i + 1 < len(parts):
+                try:
+                    hours = int(parts[i + 1])
+                except ValueError:
+                    pass
+
+        # Import collector logic
+        import sys
+        tools_dir = str(_Path.home() / ".agenticEvolve" / "collectors")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "wechat_collector",
+                str(_Path.home() / ".agenticEvolve" / "collectors" / "wechat.py")
+            )
+            wechat_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(wechat_mod)
+            signals = wechat_mod.extract_group_messages(decrypted_dir, hours=hours)
+        except Exception:
+            signals = []
+
+        if not signals:
+            return f"(No WeChat group messages in the last {hours} hours)"
+
+        lines = []
+        for s in signals:
+            meta = s.get("metadata", {})
+            lines.append(f"## {meta.get('group_name', 'Unknown group')} "
+                         f"({meta.get('message_count', 0)} msgs, "
+                         f"{meta.get('unique_senders', 0)} senders)")
+            lines.append(s.get("content", ""))
+            lines.append("")
+
+        return "\n".join(lines)
+
     # ── Stage 1: SCAN ────────────────────────────────────────────
 
     def stage_scan(self) -> dict:
         """Deep scan the target — understand its architecture, patterns, and key decisions."""
 
-        if self.target_type == "github":
+        if self.target_type == "wechat":
+            # WeChat absorb: read group chat messages and extract knowledge
+            wechat_content = self._load_wechat_messages()
+            scan_instructions = (
+                f"You are reading recent WeChat group chat conversations from the user's own local data.\n\n"
+                f"Here are the messages:\n\n{wechat_content}\n\n"
+                f"Analyze these conversations deeply:\n"
+                f"1. Identify all mentioned tools, libraries, repos, APIs, and techniques\n"
+                f"2. Extract key technical insights, opinions, and recommendations\n"
+                f"3. Note any URLs shared (GitHub repos, articles, docs)\n"
+                f"4. Identify recurring themes and hot topics\n"
+                f"5. Find actionable ideas — things Vincent could use or build\n"
+            )
+        elif self.target_type == "github":
             scan_instructions = (
                 f"Clone this repo to /tmp/absorb-scan/ (rm -rf first if exists): {self.target}\n\n"
                 f"Then do a DEEP read:\n"
@@ -148,16 +212,30 @@ class AbsorbOrchestrator:
                 f"5. Identify patterns that are novel or well-executed\n"
             )
 
-        prompt = (
-            f"You are the SCAN agent for agenticEvolve's /absorb pipeline.\n\n"
-            f"{scan_instructions}\n"
-            f"Return a structured analysis:\n"
-            f"1. ARCHITECTURE: How is the system structured? What are the key components?\n"
-            f"2. KEY PATTERNS: What design patterns or techniques does it use? (be specific — show code snippets)\n"
-            f"3. NOVEL IDEAS: What does this do that's genuinely different or better than common approaches?\n"
-            f"4. IMPLEMENTATION DETAILS: Important details about how things are wired together\n\n"
-            f"Be thorough. The next stage will compare this against our system to find gaps."
-        )
+        if self.target_type == "wechat":
+            prompt = (
+                f"You are the SCAN agent for agenticEvolve's /absorb pipeline.\n\n"
+                f"{scan_instructions}\n"
+                f"Return a structured analysis:\n"
+                f"1. TOOLS & REPOS: All tools, libraries, GitHub repos mentioned (with URLs if shared)\n"
+                f"2. KEY INSIGHTS: Technical insights, best practices, debugging tips discussed\n"
+                f"3. TRENDS: Recurring themes, hot topics, emerging technologies\n"
+                f"4. ACTIONABLE IDEAS: Things that could be built, integrated, or learned from\n"
+                f"5. NOTABLE OPINIONS: Strong opinions or recommendations from experienced developers\n\n"
+                f"Be thorough. Extract maximum knowledge from these conversations.\n"
+                f"ALWAYS respond in simplified Chinese (简体中文) since the messages are from Chinese group chats."
+            )
+        else:
+            prompt = (
+                f"You are the SCAN agent for agenticEvolve's /absorb pipeline.\n\n"
+                f"{scan_instructions}\n"
+                f"Return a structured analysis:\n"
+                f"1. ARCHITECTURE: How is the system structured? What are the key components?\n"
+                f"2. KEY PATTERNS: What design patterns or techniques does it use? (be specific — show code snippets)\n"
+                f"3. NOVEL IDEAS: What does this do that's genuinely different or better than common approaches?\n"
+                f"4. IMPLEMENTATION DETAILS: Important details about how things are wired together\n\n"
+                f"Be thorough. The next stage will compare this against our system to find gaps."
+            )
 
         return self._invoke(prompt, "SCAN")
 
@@ -168,35 +246,58 @@ class AbsorbOrchestrator:
 
         scan_text = scan_result.get("text", "")
 
-        prompt = (
-            f"You are the GAP ANALYSIS agent for agenticEvolve's /absorb pipeline.\n\n"
-            f"You have two inputs:\n\n"
-            f"## What we scanned\n"
-            f"{scan_text[:6000]}\n\n"
-            f"## Our current system\n"
-            f"{OUR_SYSTEM_FILES}\n\n"
-            f"Read our actual source files to understand our current implementation:\n"
-            f"- Read ~/.agenticEvolve/gateway/run.py\n"
-            f"- Read ~/.agenticEvolve/gateway/agent.py\n"
-            f"- Read ~/.agenticEvolve/gateway/session_db.py\n"
-            f"- Read ~/.agenticEvolve/gateway/evolve.py\n"
-            f"- Read ~/.agenticEvolve/gateway/platforms/telegram.py\n"
-            f"- Read ~/.agenticEvolve/SOUL.md\n"
-            f"- Read ~/.agenticEvolve/memory/MEMORY.md\n"
-            f"- Read any other files needed to understand our system\n\n"
-            f"Now identify GAPS — things the scanned target does better or has that we're missing:\n\n"
-            f"For each gap:\n"
-            f"- WHAT: What's missing or weaker in our system?\n"
-            f"- WHY IT MATTERS: Why would fixing this make our system meaningfully better?\n"
-            f"- HOW: High-level approach to fixing it\n"
-            f"- PRIORITY: high (core weakness) / medium (nice improvement) / low (polish)\n\n"
-            f"Be brutally honest. Only list gaps that are REAL and ACTIONABLE.\n"
-            f"Skip anything trivial or cosmetic.\n\n"
-            f"At the END, return a JSON array:\n"
-            f"```json\n"
-            f'[{{"gap": "description", "why": "impact", "priority": "high|medium|low", "files_affected": ["list"]}}]\n'
-            f"```"
-        )
+        if self.target_type == "wechat":
+            prompt = (
+                f"You are the GAP ANALYSIS agent for agenticEvolve's /absorb pipeline.\n\n"
+                f"The SCAN stage extracted knowledge from WeChat group chats:\n\n"
+                f"## Extracted knowledge\n"
+                f"{scan_text[:6000]}\n\n"
+                f"## Our current system\n"
+                f"{OUR_SYSTEM_FILES}\n\n"
+                f"Read our system files, then identify GAPS — things mentioned in the chats "
+                f"that we could adopt, build, or improve:\n\n"
+                f"For each gap:\n"
+                f"- WHAT: A tool, technique, pattern, or improvement we should adopt\n"
+                f"- WHY IT MATTERS: Why this would make our system or workflow better\n"
+                f"- HOW: Concrete approach (new skill, config change, dependency, etc.)\n"
+                f"- PRIORITY: high (immediately useful) / medium (worth exploring) / low (interesting FYI)\n\n"
+                f"Also store any pure knowledge learnings (tips, warnings, best practices) "
+                f"as low-priority gaps with action 'store as learning'.\n\n"
+                f"At the END, return a JSON array:\n"
+                f"```json\n"
+                f'[{{"gap": "description", "why": "impact", "priority": "high|medium|low", "files_affected": ["list"]}}]\n'
+                f"```"
+            )
+        else:
+            prompt = (
+                f"You are the GAP ANALYSIS agent for agenticEvolve's /absorb pipeline.\n\n"
+                f"You have two inputs:\n\n"
+                f"## What we scanned\n"
+                f"{scan_text[:6000]}\n\n"
+                f"## Our current system\n"
+                f"{OUR_SYSTEM_FILES}\n\n"
+                f"Read our actual source files to understand our current implementation:\n"
+                f"- Read ~/.agenticEvolve/gateway/run.py\n"
+                f"- Read ~/.agenticEvolve/gateway/agent.py\n"
+                f"- Read ~/.agenticEvolve/gateway/session_db.py\n"
+                f"- Read ~/.agenticEvolve/gateway/evolve.py\n"
+                f"- Read ~/.agenticEvolve/gateway/platforms/telegram.py\n"
+                f"- Read ~/.agenticEvolve/SOUL.md\n"
+                f"- Read ~/.agenticEvolve/memory/MEMORY.md\n"
+                f"- Read any other files needed to understand our system\n\n"
+                f"Now identify GAPS — things the scanned target does better or has that we're missing:\n\n"
+                f"For each gap:\n"
+                f"- WHAT: What's missing or weaker in our system?\n"
+                f"- WHY IT MATTERS: Why would fixing this make our system meaningfully better?\n"
+                f"- HOW: High-level approach to fixing it\n"
+                f"- PRIORITY: high (core weakness) / medium (nice improvement) / low (polish)\n\n"
+                f"Be brutally honest. Only list gaps that are REAL and ACTIONABLE.\n"
+                f"Skip anything trivial or cosmetic.\n\n"
+                f"At the END, return a JSON array:\n"
+                f"```json\n"
+                f'[{{"gap": "description", "why": "impact", "priority": "high|medium|low", "files_affected": ["list"]}}]\n'
+                f"```"
+            )
 
         return self._invoke(prompt, "GAP ANALYSIS")
 

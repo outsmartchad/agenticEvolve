@@ -25,6 +25,12 @@ browser/node_modules/
 # WhatsApp bridge runtime
 whatsapp-bridge/auth/
 
+# Browser profiles (runtime, large binaries)
+browser-profiles/
+
+# Session handoff files (runtime)
+sessions/
+
 # OS
 .DS_Store
 

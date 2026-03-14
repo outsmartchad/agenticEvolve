@@ -6,14 +6,14 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
 </p>
 
 **[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)** | **[日本語](README.ja.md)**
 
 ---
 
-Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. 32 Telegram commands — your entire dev machine in your pocket.
+Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. 35 Telegram commands — your entire dev machine in your pocket.
 
 ---
 
@@ -43,6 +43,9 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 **Absorb ideas from your group chats overnight**
 > Your `/evolve` cron at 6 AM doesn't just scan GitHub. It also reads your WeChat tech group chats, summarizes the last 24 hours of discussions — new tools people mentioned, repos shared, techniques debated — and absorbs the best ideas into skills. You wake up with your group's collective intelligence baked in.
 
+**Brainstorm business ideas from trending signals**
+> `/produce` — the agent aggregates today's signals from 11 sources (GitHub Trending, Hacker News, X/Twitter, Reddit, Product Hunt, Lobste.rs, ArXiv, HuggingFace, BestOfJS, WeChat groups, and your starred repos), identifies emerging trends, and brainstorms 5 concrete app/business ideas with revenue models, tech stacks, and MVP scopes. Signal-driven ideation on demand.
+
 **Self-improving UX**
 > Every night at 1 AM, the agent reads the day's conversations, finds friction points where you waited too long or got confusing responses, and patches its own code to fix them. You wake up to a better agent.
 
@@ -53,7 +56,7 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | Capability | Description |
 |------------|-------------|
 | **Build** | Full Claude Code over Telegram — terminal, file I/O, web search, MCP, 23 skills |
-| **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans GitHub trending + HN + WeChat group chats, synthesizes skills |
+| **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans 11 sources: GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChat groups, synthesizes skills |
 | **Absorb** | `/absorb <url>` — clones repo, maps architecture, diffs patterns, implements improvements into your system |
 | **Learn** | `/learn <target>` — deep-dive extraction with ADOPT / ADAPT / SKIP verdicts |
 | **Voice** | Send voice messages → local whisper.cpp transcription (~500ms). `/speak` → edge-tts with 300+ voices. Auto-detects Cantonese/Mandarin/Japanese/Korean |
@@ -109,9 +112,12 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/memory` | View agent memory state |
 | `/skills` | List installed skills (23) |
 | `/cost` | Usage and spend |
+| `/wechat [--hours N]` | WeChat group chat digest (简体中文) |
+| `/produce [--ideas N]` | Brainstorm business ideas from all signals |
+| `/digest` | Morning briefing |
 | `/restart` | Restart gateway remotely |
 
-[All 32 commands →](docs/commands.md)
+[All 35 commands →](docs/commands.md)
 
 ---
 
@@ -169,15 +175,34 @@ Scans for: credential exfiltration, reverse shells, obfuscated payloads, crypto 
 
 ## Scheduled Cron Jobs
 
-3 autonomous jobs run daily — no human trigger needed.
+4 autonomous jobs run daily — no human trigger needed.
 
 | Job | Schedule (HKT) | What it does |
 |-----|----------------|-------------|
-| **evolve-daily** | 6:00 AM | Collects signals from GitHub Trending + HN + WeChat group chat summaries, scores candidates, builds up to 3 new skills, security-reviews, auto-installs, pushes to git |
+| **evolve-daily** | 6:00 AM | Collects signals from 11 sources: GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChat groups, scores candidates, builds up to 3 new skills, security-reviews, auto-installs, pushes to git |
 | **daily-digest** | 8:00 AM | Morning briefing — top signals, skills built, session count, cost summary. Delivered to Telegram |
+| **wechat-digest** | 9:00 AM | Daily WeChat group chat digest — summarizes discussions, tools mentioned, key insights from tech groups. Delivered to Telegram |
 | **daily-ux-review** | 1:00 AM | Reads the day's conversations, finds friction points, identifies top 3 UX improvements, implements them directly |
 
 Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/jobs.json`.
+
+---
+
+## Signal Sources (11)
+
+| Source | Collector | API | What it captures |
+|--------|-----------|-----|-----------------|
+| GitHub Search | `github.sh` | GitHub API (gh CLI) | Trending repos by keyword, starred repo activity, release watch |
+| GitHub Trending | `github-trending.py` | GitHub API (gh CLI) | Hot new repos created in the last 7 days |
+| Hacker News | `hackernews.sh` | Algolia API | Keyword search + front page + Show HN |
+| X / Twitter | `x-search.sh` | Brave Search API | Viral tweets about open source, dev tools, AI |
+| Reddit | `reddit.py` | Pullpush.io API | 13 subreddits: LocalLLaMA, programming, ClaudeAI, etc. |
+| Product Hunt | `producthunt.py` | RSS/Atom feed | Dev tools + AI product launches |
+| Lobste.rs | `lobsters.py` | JSON API | Curated tech news (high signal-to-noise) |
+| ArXiv | `arxiv.py` | ArXiv API | Papers from cs.AI, cs.CL, cs.SE, cs.LG |
+| HuggingFace | `huggingface.py` | HF API | Trending models and spaces |
+| BestOfJS | `bestofjs.py` | Static JSON API | Trending JavaScript/TypeScript projects by daily star growth |
+| WeChat | `wechat.py` | Local DB | Group chat messages (reads local data) |
 
 ---
 
@@ -216,7 +241,7 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 |-----|-------------|
 | [Interface](docs/interface.md) | Usage examples and interaction patterns |
 | [Memory](docs/memory.md) | 6-layer memory architecture, auto-recall, instinct scoring |
-| [Commands](docs/commands.md) | All 32 commands with flags and examples |
+| [Commands](docs/commands.md) | All 35 commands with flags and examples |
 | [Pipelines](docs/pipelines.md) | Evolve, absorb, learn, do, gc pipelines |
 | [Skills](docs/skills.md) | Full skill catalog |
 | [Security](docs/security.md) | Scanner, autonomy levels, safety gates |
