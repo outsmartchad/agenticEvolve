@@ -1,0 +1,194 @@
+# agenticEvolve
+
+**一個每天自動進化你開發能力的個人閉環智能體系統。**
+
+<p align="center">
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-20-orange?style=for-the-badge" alt="20 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
+</p>
+
+---
+
+基於 `claude -p` 建構的持久化智能體執行環境，搭配 Python asyncio 閘道。6 層記憶體系 + 跨層自動召回。閉環技能合成。語音輸入輸出。瀏覽器自動化。內建排程任務。雙層安全機制。透過 Telegram 操控——你的整個開發環境裝進口袋。
+
+---
+
+## 核心能力
+
+| 能力 | 描述 |
+|------|------|
+| **建構** | 透過 Telegram 使用完整的 Claude Code——終端機、檔案讀寫、網路搜尋、MCP、20 個技能 |
+| **進化** | 5 階段流水線：收集 → 分析 → 建構 → 審查 → 自動安裝。掃描 GitHub Trending + HN，合成技能 |
+| **吸收** | `/absorb <url>` — 複製儲存庫，映射架構，比對模式，將改進融入你的系統 |
+| **學習** | `/learn <target>` — 深度提取，給出 ADOPT / ADAPT / SKIP 判定 |
+| **語音** | 傳送語音訊息 → 本地 whisper.cpp 轉寫（~500ms）。`/speak` → edge-tts，300+ 種語音。自動偵測粵語/國語/日語/韓語 |
+| **瀏覽器** | ABP（Agent Browser Protocol）作為預設瀏覽器。遇到 Cloudflare 攔截時自動切換到 Brave/Chrome（CDP）。隔離的代理設定檔 |
+| **自動召回** | 每次回覆前對 6 層記憶執行 `unified_search()`（約 400 tokens/則訊息） |
+| **排程任務** | `/loop every 6h /evolve` — 按計劃自主成長 |
+| **安全** | L1：預安裝正規表示式掃描（反向 shell、憑證竊取、挖礦程式）。L2：AgentShield 安裝後掃描（1282 項測試，102 條規則）。發現嚴重問題自動復原 |
+| **鉤子** | 型別化非同步事件系統 — `message_received`、`before_invoke`、`llm_output`、`tool_call`、`session_start`、`session_end` |
+| **韌性** | 關機排空（等待進行中的請求最多 30 秒）。型別化故障分類（驗證/計費/限流）。3 遍上下文壓縮。熱設定重載 |
+
+---
+
+## 安裝
+
+```bash
+git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
+pip install -r ~/.agenticEvolve/requirements.txt
+brew install whisper-cpp ffmpeg  # 語音支援
+```
+
+```bash
+# ~/.agenticEvolve/.env
+TELEGRAM_BOT_TOKEN=<token>
+```
+
+```yaml
+# ~/.agenticEvolve/config.yaml
+platforms:
+  telegram:
+    allowed_users: [<user-id>]
+```
+
+```bash
+cd ~/.agenticEvolve && python3 -m gateway.run
+```
+
+---
+
+## 指令
+
+| 指令 | 功能 |
+|------|------|
+| _(任意訊息)_ | 與 Claude Code 對話 |
+| _(語音訊息)_ | 自動轉寫（whisper.cpp）+ 回覆（語音模式下附帶語音） |
+| _(傳送圖片)_ | 視覺分析——截圖辨識、圖表理解、OCR、UI 檢查 |
+| _(傳送檔案)_ | 檔案分析——PDF、程式碼檔案、文字檔案 |
+| `/evolve` | 掃描訊號，建構並自動安裝技能 |
+| `/absorb <url>` | 從任意儲存庫吸收模式 |
+| `/learn <target>` | 深度分析並給出判定 |
+| `/speak <text>` | 文字轉語音（自動偵測語言） |
+| `/recall <query>` | 跨層搜尋（全部 6 層記憶） |
+| `/search <query>` | FTS5 搜尋歷史工作階段 |
+| `/do <instruction>` | 自然語言 → 結構化指令 |
+| `/loop <cron> <cmd>` | 排程定期執行 |
+| `/memory` | 檢視代理記憶狀態 |
+| `/skills` | 列出已安裝技能（20 個） |
+| `/cost` | 使用量與開銷 |
+| `/restart` | 遠端重啟閘道 |
+
+[全部 32 個指令 →](docs/commands.md)
+
+---
+
+## 架構
+
+```
+使用者 (Telegram/語音) → 閘道 (asyncio) → 鉤子分發器 → 工作階段 + 費用控制
+  → 自動召回 (6 層) → claude -p → SQLite → Git 同步
+```
+
+沒有自訂代理迴圈。Claude Code **就是**執行環境——25+ 內建工具、MCP 伺服器、技能。閘道在其周圍加上了記憶、路由、召回、排程任務、語音、瀏覽器和安全層。
+
+### 關鍵設計決策
+- **不造工具系統** — Claude Code 自帶工具。我們建構技能和基礎設施，而非抽象層。
+- **有界記憶** — MEMORY.md（2200 字元）+ USER.md（1375 字元）+ SQLite FTS5。無無限增長。
+- **閉環** — `auto_approve_skills: true`。進化 → 建構 → 審查 → 安裝 → 同步到 git。無人工審批。
+- **關機排空** — 進行中的請求在重啟前完成。不遺失工作。
+
+---
+
+## 語音流水線
+
+| 方向 | 技術 | 延遲 | 費用 |
+|------|------|------|------|
+| **語音 → 文字** | 本地 whisper.cpp（ggml-small 多語言模型） | Apple Silicon 上約 500ms | 免費 |
+| **文字 → 語音** | edge-tts（300+ 神經網路語音） | 約 1 秒 | 免費 |
+| **語言偵測** | CJK 啟發式（嘅係唔 → 粵語，ひらがな → 日語） | 即時 | 免費 |
+
+自動 TTS 模式：`off`（僅 `/speak`），`always`（每則回覆），`inbound`（使用者傳語音時以語音回覆）。
+
+---
+
+## 瀏覽器自動化
+
+| 瀏覽器 | 使用場景 | 方式 |
+|--------|----------|------|
+| **ABP**（預設） | 所有代理瀏覽 | 內建 Chromium，操作間 JS 凍結，Mind2Web 90.5% |
+| **Brave** | 使用者要求 / Cloudflare 攔截 ABP | CDP 連接埠 9222，隔離設定檔 |
+| **Chrome** | 使用者要求 / Cloudflare 攔截 ABP | CDP 連接埠 9223，隔離設定檔 |
+
+代理設定檔沙箱化在 `~/.agenticEvolve/browser-profiles/` — 絕不觸碰使用者真實瀏覽器資料。
+
+---
+
+## 安全
+
+| 層級 | 工具 | 時機 | 嚴重問題處理 |
+|------|------|------|-------------|
+| **L1** | `gateway/security.py` | 預安裝：掃描原始檔案 | 阻擋 + 中止流水線 |
+| **L2** | AgentShield（1282 項測試） | 安裝後：掃描 `~/.claude/` 設定 | 自動復原已安裝技能 |
+
+掃描內容：憑證洩露、反向 shell、混淆酬載、加密貨幣挖礦、macOS 持久化、提示注入、npm 鉤子利用。
+
+---
+
+## 技能（已安裝 20 個）
+
+| 技能 | 用途 |
+|------|------|
+| agent-browser-protocol | 透過 MCP 的 ABP 瀏覽器自動化 |
+| browser-switch | 多瀏覽器 CDP 切換（Brave/Chrome） |
+| brave-search | 透過 Brave API 網路搜尋 |
+| firecrawl | 網頁抓取、爬取、搜尋、結構化提取 |
+| cloudflare-crawl | 免費網頁爬取（Cloudflare Browser Rendering API） |
+| session-search | FTS5 工作階段歷史搜尋 |
+| cron-manager | 排程任務管理 |
+| skill-creator | 官方 Anthropic 技能建立 |
+| deep-research | 多源研究流水線 |
+| market-research | 市場/競品分析 |
+| article-writing | 長文內容創作 |
+| video-editing | FFmpeg 影片編輯指南 |
+| security-review | 程式碼安全檢查清單 |
+| security-scan | AgentShield 設定掃描器 |
+| autonomous-loops | 自主導向的代理迴圈 |
+| continuous-learning-v2 | 模式提取流水線 |
+| eval-harness | 技能評估框架 |
+| claude-agent-sdk-v0.2.74 | Claude Agent SDK 模式 |
+| nah | 快速拒絕/復原 |
+| unf | 展開/擴展壓縮內容 |
+
+---
+
+## 文件
+
+| 文件 | 描述 |
+|------|------|
+| [互動](docs/interface.md) | 使用範例和互動模式 |
+| [記憶](docs/memory.md) | 6 層記憶架構、自動召回、直覺評分 |
+| [指令](docs/commands.md) | 全部 32 個指令及參數和範例 |
+| [流水線](docs/pipelines.md) | Evolve、Absorb、Learn、Do、GC 流水線 |
+| [技能](docs/skills.md) | 完整技能目錄 |
+| [安全](docs/security.md) | 掃描器、自治等級、安全閘門 |
+| [架構](docs/architecture.md) | 訊息流、專案結構、設計決策 |
+| [路線圖](docs/roadmap.md) | 整合計劃 — Firecrawl、視覺、沙箱 |
+
+---
+
+## 血脈
+
+| 專案 | 採納的模式 |
+|------|-----------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | 代理執行環境 — 25+ 工具、MCP、技能、子代理 |
+| [hermes-agent](https://github.com/NousResearch/hermes-agent) | 有界記憶、工作階段持久化、訊息閘道、漸進式狀態訊息 |
+| [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | 自治等級、預設拒絕、熱設定重載、風險分級分類 |
+| [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | 9 個技能改編，AgentShield 安全，評估驅動開發，鉤子設定 |
+| [openclaw](https://github.com/openclaw/openclaw) | 語音流水線（TTS/STT），瀏覽器自動化模式，自動 TTS 模式 |
+| [ABP](https://github.com/theredsix/agent-browser-protocol) | 瀏覽器 MCP — 操作間凍結的 Chromium，Mind2Web 90.5% |
+
+---
+
+MIT
