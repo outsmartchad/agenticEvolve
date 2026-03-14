@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-20-orange?style=for-the-badge" alt="20 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
 </p>
 
@@ -35,6 +35,12 @@
 **代わりにウェブを閲覧**
 > 「Anthropicのドキュメントに行って最新のClaudeモデルの料金を調べて。」エージェントがABPブラウザを開き、ナビゲートし、データを抽出し、簡潔なサマリーを送ってくれる。Cloudflareにブロックされたら自動でBraveに切り替え。
 
+**WeChatメッセージを復号して読む**
+> WeChatのチャット履歴を検索したいが、アプリ内蔵の検索がひどい。エージェントがMach VM API経由でWeChatプロセスメモリからSQLCipher鍵を抽出し、16個のデータベースを全て復号し、検索可能なエクスポートを提供する——連絡先、メッセージ、グループ、お気に入り。すべてローカル処理、ネットワーク通信なし。
+
+**グループチャットからアイデアを寝ている間に吸収**
+> 毎朝6時の `/evolve` cronはGitHubをスキャンするだけではない。WeChatの技術グループチャットも復号し、過去24時間の議論を要約する——メンバーが言及した新ツール、共有されたリポジトリ、議論された技術——そして最良のアイデアをスキルとして吸収する。朝起きたら、グループの集合知があなたのシステムに組み込まれている。
+
 **自己改善するUX**
 > 毎晩午前1時、エージェントがその日の会話を読み、待ち時間が長すぎたり混乱する応答があった摩擦点を見つけ、自らのコードにパッチを当てて修正する。朝起きたら、より良いエージェントになっている。
 
@@ -44,8 +50,8 @@
 
 | 機能 | 説明 |
 |------|------|
-| **ビルド** | Telegram経由でフルClaude Code——ターミナル、ファイルI/O、Web検索、MCP、20スキル |
-| **進化** | 5段階パイプライン：収集 → 分析 → 構築 → レビュー → 自動インストール。GitHub Trending + HNをスキャンし、スキルを合成 |
+| **ビルド** | Telegram経由でフルClaude Code——ターミナル、ファイルI/O、Web検索、MCP、23スキル |
+| **進化** | 5段階パイプライン：収集 → 分析 → 構築 → レビュー → 自動インストール。GitHub Trending + HN + WeChatグループチャット要約をスキャンし、スキルを合成 |
 | **吸収** | `/absorb <url>` — リポジトリをクローン、アーキテクチャをマッピング、パターンを比較、改善をシステムに統合 |
 | **学習** | `/learn <target>` — 深掘り抽出、ADOPT / ADAPT / SKIP の判定を出力 |
 | **音声** | 音声メッセージ送信 → ローカルwhisper.cpp転写（~500ms）。`/speak` → edge-tts、300+音声。広東語/北京語/日本語/韓国語を自動検出 |
@@ -101,7 +107,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/do <instruction>` | 自然言語 → 構造化コマンド |
 | `/loop <cron> <cmd>` | 定期実行をスケジュール |
 | `/memory` | エージェントメモリ状態を表示 |
-| `/skills` | インストール済みスキル一覧（20個） |
+| `/skills` | インストール済みスキル一覧（23個） |
 | `/cost` | 使用量とコスト |
 | `/restart` | ゲートウェイをリモート再起動 |
 
@@ -167,7 +173,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 | ジョブ | スケジュール（HKT） | 内容 |
 |--------|-------------------|------|
-| **evolve-daily** | 6:00 AM | GitHub Trending + HNからシグナルを収集、候補をスコアリング、最大3つの新スキルを構築、セキュリティレビュー、自動インストール、gitにプッシュ |
+| **evolve-daily** | 6:00 AM | GitHub Trending + HN + WeChatグループチャット要約からシグナルを収集、候補をスコアリング、最大3つの新スキルを構築、セキュリティレビュー、自動インストール、gitにプッシュ |
 | **daily-digest** | 8:00 AM | 朝のブリーフィング——トップシグナル、構築済みスキル、セッション数、コストサマリー。Telegramに配信 |
 | **daily-ux-review** | 1:00 AM | その日の会話を読み、摩擦点を発見、トップ3のUX改善を特定、直接実装 |
 
@@ -175,7 +181,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ---
 
-## スキル（20個インストール済み）
+## スキル（23個インストール済み）
 
 | スキル | 用途 |
 |--------|------|
@@ -184,6 +190,8 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | brave-search | Brave API経由のWeb検索 |
 | firecrawl | Webスクレイピング、クロール、検索、構造化抽出 |
 | cloudflare-crawl | 無料Webクロール（Cloudflare Browser Rendering API） |
+| jshook-messenger | jshookmcp MCP経由のDiscord/WeChat/Telegram/Slack傍受 |
+| wechat-decrypt | 鍵抽出、SQLCipher DB復号、macOS WeChatメッセージエクスポート |
 | session-search | FTS5セッション履歴検索 |
 | cron-manager | cronジョブ管理 |
 | skill-creator | Anthropic公式スキル作成 |

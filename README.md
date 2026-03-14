@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-20-orange?style=for-the-badge" alt="20 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
 </p>
 
@@ -37,6 +37,12 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 **Browse the web for you**
 > "Go to the Anthropic docs and find the latest Claude model pricing." The agent opens ABP browser, navigates, extracts the data, and sends you a clean summary. If Cloudflare blocks it, it auto-switches to Brave.
 
+**Decrypt and read your WeChat messages**
+> You want to search your WeChat history but the app's search is terrible. The agent extracts SQLCipher keys from WeChat's process memory via Mach VM API, decrypts all 16 databases, and gives you a searchable export — contacts, messages, groups, favorites. All local, no network calls.
+
+**Absorb ideas from your group chats overnight**
+> Your `/evolve` cron at 6 AM doesn't just scan GitHub. It also decrypts your WeChat tech group chats, summarizes the last 24 hours of discussions — new tools people mentioned, repos shared, techniques debated — and absorbs the best ideas into skills. You wake up with your group's collective intelligence baked in.
+
 **Self-improving UX**
 > Every night at 1 AM, the agent reads the day's conversations, finds friction points where you waited too long or got confusing responses, and patches its own code to fix them. You wake up to a better agent.
 
@@ -46,8 +52,8 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 
 | Capability | Description |
 |------------|-------------|
-| **Build** | Full Claude Code over Telegram — terminal, file I/O, web search, MCP, 18 skills |
-| **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans GitHub trending + HN, synthesizes skills |
+| **Build** | Full Claude Code over Telegram — terminal, file I/O, web search, MCP, 23 skills |
+| **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans GitHub trending + HN + WeChat group chats, synthesizes skills |
 | **Absorb** | `/absorb <url>` — clones repo, maps architecture, diffs patterns, implements improvements into your system |
 | **Learn** | `/learn <target>` — deep-dive extraction with ADOPT / ADAPT / SKIP verdicts |
 | **Voice** | Send voice messages → local whisper.cpp transcription (~500ms). `/speak` → edge-tts with 300+ voices. Auto-detects Cantonese/Mandarin/Japanese/Korean |
@@ -101,7 +107,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/do <instruction>` | Natural language → structured command |
 | `/loop <cron> <cmd>` | Schedule recurring execution |
 | `/memory` | View agent memory state |
-| `/skills` | List installed skills (18) |
+| `/skills` | List installed skills (23) |
 | `/cost` | Usage and spend |
 | `/restart` | Restart gateway remotely |
 
@@ -167,7 +173,7 @@ Scans for: credential exfiltration, reverse shells, obfuscated payloads, crypto 
 
 | Job | Schedule (HKT) | What it does |
 |-----|----------------|-------------|
-| **evolve-daily** | 6:00 AM | Collects signals from GitHub Trending + HN, scores candidates, builds up to 3 new skills, security-reviews, auto-installs, pushes to git |
+| **evolve-daily** | 6:00 AM | Collects signals from GitHub Trending + HN + WeChat group chat summaries, scores candidates, builds up to 3 new skills, security-reviews, auto-installs, pushes to git |
 | **daily-digest** | 8:00 AM | Morning briefing — top signals, skills built, session count, cost summary. Delivered to Telegram |
 | **daily-ux-review** | 1:00 AM | Reads the day's conversations, finds friction points, identifies top 3 UX improvements, implements them directly |
 
@@ -175,13 +181,17 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 
 ---
 
-## Skills (20 installed)
+## Skills (23 installed)
 
 | Skill | Purpose |
 |-------|---------|
 | agent-browser-protocol | ABP browser automation via MCP |
 | browser-switch | Multi-browser CDP switching (Brave/Chrome) |
 | brave-search | Web search via Brave API |
+| firecrawl | Web scraping, crawling, search, structured extraction |
+| cloudflare-crawl | Free web crawling via Cloudflare Browser Rendering API |
+| jshook-messenger | Discord/WeChat/Telegram/Slack interception via jshookmcp MCP |
+| wechat-decrypt | Extract keys, decrypt SQLCipher DBs, export WeChat messages on macOS |
 | session-search | FTS5 session history search |
 | cron-manager | Cron job management |
 | skill-creator | Official Anthropic skill creation |

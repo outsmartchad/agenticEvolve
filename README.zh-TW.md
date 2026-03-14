@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-20-orange?style=for-the-badge" alt="20 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
 </p>
 
@@ -35,6 +35,12 @@
 **替你瀏覽網頁**
 > 「去 Anthropic 文件找最新的 Claude 模型定價。」代理開啟 ABP 瀏覽器，導覽，提取資料，傳送簡潔摘要。如果 Cloudflare 攔截，自動切換到 Brave。
 
+**解密並閱讀你的微信訊息**
+> 你想搜尋微信聊天記錄，但應用程式自帶的搜尋太爛了。代理透過 Mach VM API 從微信行程記憶體中提取 SQLCipher 金鑰，解密全部 16 個資料庫，給你一個可搜尋的匯出——聯絡人、訊息、群組、收藏。全部本地處理，無網路請求。
+
+**在睡夢中從群組聊天中吸收想法**
+> 你的 `/evolve` 排程任務在早上 6 點不只是掃描 GitHub。它還會解密你的微信技術群聊天記錄，總結過去 24 小時的討論——別人提到的新工具、分享的儲存庫、討論的技術方案——並將最好的想法吸收為技能。你醒來時，群組的集體智慧已經融入你的系統。
+
 **自我改進的使用者體驗**
 > 每天凌晨 1 點，代理讀取當天的對話，找出你等待太久或收到困惑回覆的摩擦點，然後直接修補自己的程式碼來修復它們。你醒來後面對的是一個更好的代理。
 
@@ -44,8 +50,8 @@
 
 | 能力 | 描述 |
 |------|------|
-| **建構** | 透過 Telegram 使用完整的 Claude Code——終端機、檔案讀寫、網路搜尋、MCP、20 個技能 |
-| **進化** | 5 階段流水線：收集 → 分析 → 建構 → 審查 → 自動安裝。掃描 GitHub Trending + HN，合成技能 |
+| **建構** | 透過 Telegram 使用完整的 Claude Code——終端機、檔案讀寫、網路搜尋、MCP、23 個技能 |
+| **進化** | 5 階段流水線：收集 → 分析 → 建構 → 審查 → 自動安裝。掃描 GitHub Trending + HN + 微信群組聊天摘要，合成技能 |
 | **吸收** | `/absorb <url>` — 複製儲存庫，映射架構，比對模式，將改進融入你的系統 |
 | **學習** | `/learn <target>` — 深度提取，給出 ADOPT / ADAPT / SKIP 判定 |
 | **語音** | 傳送語音訊息 → 本地 whisper.cpp 轉寫（~500ms）。`/speak` → edge-tts，300+ 種語音。自動偵測粵語/國語/日語/韓語 |
@@ -101,7 +107,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/do <instruction>` | 自然語言 → 結構化指令 |
 | `/loop <cron> <cmd>` | 排程定期執行 |
 | `/memory` | 檢視代理記憶狀態 |
-| `/skills` | 列出已安裝技能（20 個） |
+| `/skills` | 列出已安裝技能（23 個） |
 | `/cost` | 使用量與開銷 |
 | `/restart` | 遠端重啟閘道 |
 
@@ -167,7 +173,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 | 任務 | 時間（HKT） | 功能 |
 |------|------------|------|
-| **evolve-daily** | 6:00 AM | 收集 GitHub Trending + HN 訊號，評分候選項，建構最多 3 個新技能，安全審查，自動安裝，推送到 git |
+| **evolve-daily** | 6:00 AM | 收集 GitHub Trending + HN + 微信群組聊天摘要訊號，評分候選項，建構最多 3 個新技能，安全審查，自動安裝，推送到 git |
 | **daily-digest** | 8:00 AM | 每日簡報——熱門訊號、已建構技能、工作階段數、費用摘要。推送到 Telegram |
 | **daily-ux-review** | 1:00 AM | 讀取當天對話，發現摩擦點，識別 Top 3 體驗改進，直接實施修改 |
 
@@ -175,7 +181,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ---
 
-## 技能（已安裝 20 個）
+## 技能（已安裝 23 個）
 
 | 技能 | 用途 |
 |------|------|
@@ -184,6 +190,8 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | brave-search | 透過 Brave API 網路搜尋 |
 | firecrawl | 網頁抓取、爬取、搜尋、結構化提取 |
 | cloudflare-crawl | 免費網頁爬取（Cloudflare Browser Rendering API） |
+| jshook-messenger | 透過 jshookmcp MCP 攔截 Discord/微信/Telegram/Slack |
+| wechat-decrypt | 提取金鑰、解密 SQLCipher 資料庫、匯出 macOS 微信訊息 |
 | session-search | FTS5 工作階段歷史搜尋 |
 | cron-manager | 排程任務管理 |
 | skill-creator | 官方 Anthropic 技能建立 |
