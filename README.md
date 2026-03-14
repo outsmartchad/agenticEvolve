@@ -1,6 +1,6 @@
 # agenticEvolve
 
-**A Self-evolving AI agent. Built on Claude Code. Telegram gateway, 6-layer memory, voice, browser automation, 20 skills, closed-loop skill synthesis.**
+**A self-evolving AI agent — grows itself daily.**
 
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
@@ -10,6 +10,10 @@
 </p>
 
 **[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)** | **[日本語](README.ja.md)**
+
+---
+
+Built on Claude Code (`claude -p`) with a Python asyncio gateway. The agent scans GitHub trending and Hacker News, synthesizes new skills, reviews them through a 2-layer security scanner, and auto-installs them — every day, without human intervention. It remembers everything across a 6-layer memory system with cross-layer auto-recall, talks back via voice (whisper.cpp STT + edge-tts), browses the web through ABP/Brave/Chrome, runs scheduled tasks via built-in cron, and is fully controllable from Telegram with 32 commands. Your entire dev machine in your pocket.
 
 ---
 
