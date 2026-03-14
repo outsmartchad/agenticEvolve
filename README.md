@@ -17,6 +17,31 @@ Built on Claude Code (`claude -p`) with a Python asyncio gateway. The agent scan
 
 ---
 
+## What can you do with it?
+
+**Ship code from your phone**
+> You're on the subway. You text `/do add rate limiting to the API`. The agent reads your codebase, writes the middleware, runs the tests, and pushes to git. You get a summary back before your stop.
+
+**Absorb any repo in one message**
+> You see a cool repo on Twitter. Screenshot it to the bot. The agent OCRs the image, finds the GitHub URL, clones the repo, maps its architecture, extracts the patterns that matter to your stack, and installs them as skills — all from one photo.
+
+**Wake up to new skills you didn't write**
+> The daily `/evolve` cron fires at 6 AM. By the time you check Telegram, the agent has scanned GitHub trending, found a new testing framework, built a skill for it, passed it through 2-layer security, auto-installed it, and pushed to your repo. You just got smarter overnight.
+
+**Talk to your codebase in Cantonese**
+> Send a voice message in Cantonese asking about yesterday's bug. The agent transcribes locally via whisper.cpp (~500ms), auto-detects the language, responds in text, and reads the answer back to you in Cantonese via edge-tts.
+
+**Deep-dive anything with `/learn`**
+> `/learn https://github.com/some/repo` — the agent clones it, reads every file, maps the architecture, evaluates how it could benefit your workflow, gives an ADOPT / ADAPT / SKIP verdict, and optionally builds a skill from it.
+
+**Browse the web for you**
+> "Go to the Anthropic docs and find the latest Claude model pricing." The agent opens ABP browser, navigates, extracts the data, and sends you a clean summary. If Cloudflare blocks it, it auto-switches to Brave.
+
+**Self-improving UX**
+> Every night at 1 AM, the agent reads the day's conversations, finds friction points where you waited too long or got confusing responses, and patches its own code to fix them. You wake up to a better agent.
+
+---
+
 ## Capabilities
 
 | Capability | Description |
