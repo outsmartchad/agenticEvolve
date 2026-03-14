@@ -473,9 +473,12 @@ class TelegramAdapter(BasePlatformAdapter):
         cfg = gw.config if gw else {}
         autonomy_info = format_autonomy_status(cfg) if cfg else "Autonomy: unknown"
 
+        current_model = cfg.get("model", "sonnet") if cfg else "sonnet"
+
         text = (
             f"*agenticEvolve status*\n\n"
             f"Gateway: running\n"
+            f"Model: {current_model}\n"
             f"Memory: {mem_chars}/2200 chars\n"
             f"User profile: {user_chars}/1375 chars\n"
             f"Sessions: {s['total_sessions']} total, {s['total_messages']} msgs\n"
@@ -3507,10 +3510,17 @@ class TelegramAdapter(BasePlatformAdapter):
         chat_id = str(update.message.chat_id)
         text = update.message.text
 
-        # Prepend reply context so Claude knows what's being referenced
+        # Prepend reply context so Claude knows what's being referenced.
+        # Label it clearly so Claude understands it is the QUOTED prior message,
+        # not the user's new request — this prevents "which project?" confusion.
         reply_text, reply_urls = self._get_reply_context(update)
         if reply_text:
-            text = f"[Replying to previous message: {reply_text[:1500]}]\n\n{text}"
+            text = (
+                f"[Context: the user is replying to this prior assistant message — "
+                f"use it as reference, do NOT re-answer it]\n"
+                f"{reply_text[:1500]}\n\n"
+                f"[User's new message:]\n{text}"
+            )
 
         # Detect URLs — offer absorb/learn if the message is primarily a link
         urls = self._extract_urls(text)
@@ -3540,7 +3550,12 @@ class TelegramAdapter(BasePlatformAdapter):
             response = await self.on_message("telegram", chat_id, str(user_id), text)
             if response:
                 for i in range(0, len(response), 4000):
-                    await update.message.reply_text(response[i:i+4000])
+                    chunk = response[i:i+4000]
+                    try:
+                        await update.message.reply_text(chunk, parse_mode="Markdown")
+                    except Exception:
+                        # Fallback: send without Markdown if parse fails (e.g. unbalanced fences)
+                        await update.message.reply_text(chunk)
 
             # Send any screenshots captured by browser MCP during this turn
             if self._gateway:
