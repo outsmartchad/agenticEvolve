@@ -1,0 +1,10 @@
+# Extracted keys (sensitive - contains encryption keys)
+wechat_keys.json
+all_keys.json
+
+# Decrypted databases (sensitive - contains personal messages)
+decrypted/
+
+# Compiled binaries (build locally)
+find_keys
+find_keys_yl
