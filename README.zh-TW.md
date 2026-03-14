@@ -161,6 +161,20 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ---
 
+## 排程任務
+
+3 個自治任務每天自動執行——無需人工觸發。
+
+| 任務 | 時間（HKT） | 功能 |
+|------|------------|------|
+| **evolve-daily** | 6:00 AM | 收集 GitHub Trending + HN 訊號，評分候選項，建構最多 3 個新技能，安全審查，自動安裝，推送到 git |
+| **daily-digest** | 8:00 AM | 每日簡報——熱門訊號、已建構技能、工作階段數、費用摘要。推送到 Telegram |
+| **daily-ux-review** | 1:00 AM | 讀取當天對話，發現摩擦點，識別 Top 3 體驗改進，直接實施修改 |
+
+透過 `/loop`、`/loops`、`/unloop`、`/pause`、`/unpause` 管理。設定檔：`cron/jobs.json`。
+
+---
+
 ## 技能（已安裝 20 個）
 
 | 技能 | 用途 |

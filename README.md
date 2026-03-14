@@ -13,7 +13,7 @@
 
 ---
 
-Built on Claude Code (`claude -p`) with a Python asyncio gateway. The agent scans GitHub trending and Hacker News, synthesizes new skills, reviews them through a 2-layer security scanner, and auto-installs them — every day, without human intervention. It remembers everything across a 6-layer memory system with cross-layer auto-recall, talks back via voice (whisper.cpp STT + edge-tts), browses the web through ABP/Brave/Chrome, runs scheduled tasks via built-in cron, and is fully controllable from Telegram with 32 commands. Your entire dev machine in your pocket.
+Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. 32 Telegram commands — your entire dev machine in your pocket.
 
 ---
 
