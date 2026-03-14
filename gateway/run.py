@@ -56,6 +56,7 @@ class GatewayRunner:
         self._watchdog_task: Optional[asyncio.Task] = None
         self._draining: bool = False
         self._inflight: set[asyncio.Future] = set()
+        self._pending_images: dict[str, list[bytes]] = {}  # session_key -> screenshot bytes
 
     # ── Session key ──────────────────────────────────────────────
 
@@ -92,6 +93,10 @@ class GatewayRunner:
         if session_key not in self._locks:
             self._locks[session_key] = asyncio.Lock()
         return self._locks[session_key]
+
+    def pop_pending_images(self, session_key: str) -> list[bytes]:
+        """Return and clear any screenshot images captured during the last agent turn."""
+        return self._pending_images.pop(session_key, [])
 
     # ── Cost cap ─────────────────────────────────────────────────
 
@@ -200,6 +205,9 @@ class GatewayRunner:
 
             response_text = result.get("text", "No response.")
             cost = result.get("cost", 0)
+            images = result.get("images", [])
+            if images:
+                self._pending_images[key] = images
 
             # Persist assistant response
             add_message(session_id, "assistant", response_text)

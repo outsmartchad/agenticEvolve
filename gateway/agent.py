@@ -376,9 +376,11 @@ def invoke_claude(message: str, model: str = "sonnet",
                     continue
                 return {"text": f"Claude returned no output (exit code {result.returncode}). Try again.", "cost": 0, "success": False}
 
-            # Parse stream-json: extract text from assistant messages and cost from result
+            # Parse stream-json: extract text from assistant messages and cost from result.
+            # Also collect base64 screenshot images from browser_screenshot tool results.
             text_parts = []
             cost = 0
+            images: list[bytes] = []
             for line in output.split("\n"):
                 line = line.strip()
                 if not line:
@@ -389,6 +391,19 @@ def invoke_claude(message: str, model: str = "sonnet",
                         for block in obj.get("message", {}).get("content", []):
                             if block.get("type") == "text":
                                 text_parts.append(block["text"])
+                    elif obj.get("type") == "user":
+                        # Tool results live in user messages; extract browser screenshot images.
+                        for block in obj.get("message", {}).get("content", []):
+                            if block.get("type") != "tool_result":
+                                continue
+                            result_content = block.get("content", [])
+                            if isinstance(result_content, list):
+                                for item in result_content:
+                                    if item.get("type") == "image":
+                                        src = item.get("source", {})
+                                        if src.get("type") == "base64" and src.get("data"):
+                                            import base64 as _b64
+                                            images.append(_b64.b64decode(src["data"]))
                     elif obj.get("type") == "result":
                         result_text = obj.get("result", "")
                         if result_text:
@@ -401,10 +416,10 @@ def invoke_claude(message: str, model: str = "sonnet",
                 log.warning(f"Claude returned output but no text found. Output preview: {output[:300]}")
                 if attempt == 0:
                     continue
-                return {"text": "Claude responded but I couldn't parse the output. Try again.", "cost": cost, "success": False}
+                return {"text": "Claude responded but I couldn't parse the output. Try again.", "cost": cost, "success": False, "images": images}
 
             final_text = text_parts[-1]
-            return {"text": final_text, "cost": cost, "success": True}
+            return {"text": final_text, "cost": cost, "success": True, "images": images}
 
         except subprocess.TimeoutExpired:
             return {"text": "Request timed out (5 min limit).", "cost": 0, "success": False}

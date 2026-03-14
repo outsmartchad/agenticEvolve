@@ -2109,6 +2109,73 @@ class TelegramAdapter(BasePlatformAdapter):
             typing_active = False
             typing_task.cancel()
 
+    # ── /screenshot — capture URL and send as photo ───────────────
+
+    async def _handle_screenshot(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Capture a URL screenshot and send it as a Telegram photo.
+
+        Usage:
+            /screenshot <url>           — screenshot at 1280x800
+            /screenshot <url> --full    — full-page screenshot
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        args = list(context.args) if context.args else []
+        if not args:
+            await update.message.reply_text(
+                "Usage: /screenshot <url> [--full]\n"
+                "Example: /screenshot https://example.com"
+            )
+            return
+
+        full_page = "--full" in args
+        url = next((a for a in args if not a.startswith("--")), None)
+        if not url:
+            await update.message.reply_text("Please provide a URL.")
+            return
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+
+        status_msg = await update.message.reply_text(f"Screenshotting {url} ...")
+
+        try:
+            from playwright.async_api import async_playwright
+            import tempfile
+
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1280, "height": 800})
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                    tmp_path = f.name
+                await page.screenshot(path=tmp_path, full_page=full_page)
+                await browser.close()
+
+            with open(tmp_path, "rb") as f:
+                await update.message.reply_photo(
+                    photo=f,
+                    caption=url[:1024],
+                )
+            Path(tmp_path).unlink(missing_ok=True)
+            await status_msg.delete()
+
+        except Exception as e:
+            log.error(f"Screenshot failed for {url}: {e}")
+            await status_msg.edit_text(f"Screenshot failed: {e}")
+
+    async def send_photo(self, chat_id: str, image_bytes: bytes, caption: str = "") -> None:
+        """Send an image to a Telegram chat."""
+        if self.app and self.app.bot:
+            import io
+            await self.app.bot.send_photo(
+                chat_id=int(chat_id),
+                photo=io.BytesIO(image_bytes),
+                caption=caption[:1024] if caption else "",
+            )
+
     # ── /restart — remote gateway restart ────────────────────────
 
     async def _handle_restart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2120,17 +2187,23 @@ class TelegramAdapter(BasePlatformAdapter):
 
         await update.message.reply_text("Restarting gateway in 2s...")
 
-        # Spawn a detached process that kills us and starts a new instance
+        # Write a restart script to /tmp, then execute it detached.
+        # This avoids pkill matching the script's own command line.
         import subprocess as sp
-        restart_script = (
-            "sleep 2 && "
-            "pkill -9 -f 'gateway.run' && "
-            "sleep 1 && "
-            "cd ~/.agenticEvolve && "
-            "nohup python3 -m gateway.run > /dev/null 2>&1 &"
+        restart_sh = Path("/tmp/ae-restart.sh")
+        restart_sh.write_text(
+            "#!/bin/bash\n"
+            "sleep 2\n"
+            "# Kill gateway by PID file or process match\n"
+            "PID=$(pgrep -f 'python3 -m gateway.run')\n"
+            "if [ -n \"$PID\" ]; then kill -9 $PID; fi\n"
+            "sleep 1\n"
+            "cd ~/.agenticEvolve\n"
+            "nohup python3 -m gateway.run > /dev/null 2>&1 &\n"
         )
+        restart_sh.chmod(0o755)
         sp.Popen(
-            ["bash", "-c", restart_script],
+            [str(restart_sh)],
             start_new_session=True,
             stdout=sp.DEVNULL,
             stderr=sp.DEVNULL,
@@ -2927,6 +3000,17 @@ class TelegramAdapter(BasePlatformAdapter):
             if response:
                 for i in range(0, len(response), 4000):
                     await update.message.reply_text(response[i:i+4000])
+
+            # Send any screenshots captured by browser MCP during this turn
+            if self._gateway:
+                session_key = f"telegram:{chat_id}"
+                images = self._gateway.pop_pending_images(session_key)
+                for img_bytes in images:
+                    try:
+                        import io
+                        await update.message.reply_photo(photo=io.BytesIO(img_bytes))
+                    except Exception as img_err:
+                        log.warning(f"Failed to send screenshot: {img_err}")
         except Exception as e:
             log.error(f"Telegram handler error: {e}")
             await update.message.reply_text(f"Error: {e}")
@@ -2975,6 +3059,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "unpause": self._handle_unpause,
             "do": self._handle_do,
             "speak": self._handle_speak,
+            "screenshot": self._handle_screenshot,
             "restart": self._handle_restart,
         }
         for cmd, handler in commands.items():
