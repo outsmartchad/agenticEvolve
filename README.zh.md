@@ -1,189 +1,194 @@
 # agenticEvolve
 
-一个个人闭环智能体系统，从开发者平台采集信号，分析有用的工具和模式，自动构建 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 技能，每天持续进化你的开发能力。
+**一个每天自动进化你开发能力的个人闭环智能体系统。**
 
-编排层很简单（约 150 行 bash）。智能在 LLM 提示词里。
+<p align="center">
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-20-orange?style=for-the-badge" alt="20 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
+</p>
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                       外层循环 (cron)                            │
-│                                                                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
-│  │  信号         │  │  分析         │  │  技能         │         │
-│  │  采集器       │→ │  智能体       │→ │  构建器       │         │
-│  │  (bash/curl)  │  │  (claude -p) │  │  (claude -p) │         │
-│  └──────────────┘  └──────────────┘  └──────────────┘         │
-│         ↑                                    ↓                  │
-│         │            ┌──────────────┐  ┌──────────────┐        │
-│         └────────────│  记忆         │←─│  审查器       │        │
-│                      │  (4 个文件)   │  │  (claude -p) │        │
-│                      └──────────────┘  └──────────────┘        │
-└─────────────────────────────────────────────────────────────────┘
-```
+---
 
-## 工作原理
+基于 `claude -p` 构建的持久化智能体运行时，配合 Python asyncio 网关。6 层记忆体系 + 跨层自动召回。闭环技能合成。语音输入输出。浏览器自动化。内置定时任务。双层安全机制。通过 Telegram 操控——你的整个开发环境装进口袋。
 
-每个周期（通过 cron 每 2 小时执行一次）：
+---
 
-1. **采集** — bash 脚本从 GitHub、Hacker News 和 X/Twitter 拉取信号
-2. **分析** — 一个全新的 `claude -p` 调用读取信号，挑选最具可操作性的单个项目
-3. **构建** — 一个全新的 `claude -p` 调用根据最优行动项构建一个 Claude Code 技能
-4. **审查** — 一个全新的 `claude -p` 调用（只读）验证安全性、质量和正确性
-5. **通知** — 通过 Telegram 发送消息，附带批准/拒绝按钮
+## 核心能力
 
-每个阶段都是**无状态的 Claude 调用**。没有会话延续。如果某个周期出了问题，下一个周期会从头开始。
+| 能力 | 描述 |
+|------|------|
+| **构建** | 通过 Telegram 使用完整的 Claude Code——终端、文件读写、网络搜索、MCP、20 个技能 |
+| **进化** | 5 阶段流水线：收集 → 分析 → 构建 → 审查 → 自动安装。扫描 GitHub Trending + HN，合成技能 |
+| **吸收** | `/absorb <url>` — 克隆仓库，映射架构，对比模式，将改进融入你的系统 |
+| **学习** | `/learn <target>` — 深度提取，给出 ADOPT / ADAPT / SKIP 判定 |
+| **语音** | 发送语音消息 → 本地 whisper.cpp 转写（~500ms）。`/speak` → edge-tts，300+ 种语音。自动检测粤语/普通话/日语/韩语 |
+| **浏览器** | ABP（Agent Browser Protocol）作为默认浏览器。遇到 Cloudflare 拦截时自动切换到 Brave/Chrome（CDP）。隔离的代理配置文件 |
+| **自动召回** | 每次回复前对 6 层记忆执行 `unified_search()`（约 400 tokens/条消息） |
+| **定时任务** | `/loop every 6h /evolve` — 按计划自主成长 |
+| **安全** | L1：预安装正则扫描（反向 shell、凭证窃取、挖矿程序）。L2：AgentShield 安装后扫描（1282 项测试，102 条规则）。发现严重问题自动回滚 |
+| **钩子** | 类型化异步事件系统 — `message_received`、`before_invoke`、`llm_output`、`tool_call`、`session_start`、`session_end` |
+| **韧性** | 关机排空（等待进行中的请求最多 30 秒）。类型化故障分类（认证/计费/限流）。3 遍上下文压缩。热配置重载 |
 
-## 核心设计决策
-
-- **每周期一个任务** — 防止范围蔓延
-- **每周期全新上下文** — 不使用 `--resume`，不保持会话
-- **双层记忆** — `state.md`（精选知识，每周期优先读取）+ `log.md`（原始日志，仅追加）
-- **技能三道门** — 自动审查智能体、队列、人工审核
-- **成本上限** — 每天 $5，每周 $25（可配置）
-
-## 项目结构
-
-```
-.
-├── ae                      # CLI 入口（人类和智能体共用的单一命令）
-├── config.sh               # 配置（成本上限、API 密钥、目录）
-├── run-cycle.sh            # 主循环编排器（约 150 行）
-├── run-gc.sh               # 每周垃圾回收
-├── notify.sh               # Telegram 通知（带内联键盘）
-├── telegram-listener.sh    # 轮询批准/拒绝按钮回调
-├── collectors/
-│   ├── github.sh           # 热门仓库、星标活动、发布（通过 gh CLI）
-│   ├── hackernews.sh       # 关键词搜索 + Show HN（通过 Algolia API）
-│   └── x-search.sh         # X/Twitter 信号（通过 Brave Search API）
-├── prompts/
-│   ├── initialize.md       # 一次性初始化智能体
-│   ├── analyze.md          # 信号分析智能体
-│   ├── build-skill.md      # 技能构建智能体
-│   ├── review-skill.md     # 技能审查智能体（只读）
-│   └── gc.md               # 垃圾回收智能体
-├── memory/
-│   ├── state.md            # 精选知识（每周期优先读取）
-│   ├── log.md              # 仅追加的原始日志
-│   ├── action-items.md     # 任务跟踪（复选框格式）
-│   └── watchlist.md        # 监控的账号、关键词和筛选条件
-├── signals/                # 原始采集信号（每日 JSON，已 gitignore）
-├── skills-queue/           # 等待人工审核的技能（已 gitignore）
-├── logs/                   # 周期日志 + cost.log（已 gitignore）
-├── BUILD-PLAN.md           # 完整架构和设计决策
-└── VISION.md               # 原始愿景和参考项目
-```
+---
 
 ## 安装
 
-### 前置条件
-
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）
-- [GitHub CLI](https://cli.github.com/)（`gh`）— 已登录
-- `jq` 和 `curl`
-- （可选）Brave Search API 密钥，用于 X/Twitter 信号采集
-- （可选）Telegram 机器人，用于通知
-
-### 安装步骤
-
 ```bash
-# 克隆
 git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-
-# 创建 CLI 软链接
-mkdir -p ~/.local/bin
-ln -sf ~/.agenticEvolve/ae ~/.local/bin/ae
-
-# 确保 ~/.local/bin 在你的 PATH 中
-# 如有需要，添加到 ~/.zshrc 或 ~/.bashrc：
-# export PATH="$HOME/.local/bin:$PATH"
-
-# 初始化（填充记忆文件，验证采集器）
-ae init
+pip install -r ~/.agenticEvolve/requirements.txt
+brew install whisper-cpp ffmpeg  # 语音支持
 ```
-
-### 配置（可选）
-
-编辑 `~/.agenticEvolve/config.sh`：
 
 ```bash
-# 成本上限
-DAILY_CAP=5        # 每天美元上限
-WEEKLY_CAP=25      # 每周美元上限
-
-# Telegram 机器人（通过 @BotFather 创建）
-TELEGRAM_BOT_TOKEN="your-token"
-TELEGRAM_CHAT_ID="your-chat-id"
-
-# Brave Search API（用于 X/Twitter 信号采集）
-BRAVE_API_KEY="your-key"
+# ~/.agenticEvolve/.env
+TELEGRAM_BOT_TOKEN=<token>
 ```
 
-## 使用方法
+```yaml
+# ~/.agenticEvolve/config.yaml
+platforms:
+  telegram:
+    allowed_users: [<user-id>]
+```
 
 ```bash
-# 运行一个完整周期（采集 → 分析 → 构建 → 审查）
-ae cycle
-
-# 仅采集信号
-ae collect              # 所有来源
-ae collect github       # 仅 GitHub
-ae collect hackernews   # 仅 HN
-
-# 查看系统状态
-ae status
-
-# 交互式审核排队中的技能
-ae review
-
-# 批准或拒绝特定技能
-ae approve <skill-name>
-ae reject <skill-name>
-
-# 查看记忆
-ae state                # 精选知识
-ae log 20               # 原始日志最后 20 行
-ae watchlist            # 监控的账号/关键词
-
-# 成本追踪
-ae cost                 # 明细（今天 / 本周 / 累计）
-ae cost check           # 未超限返回 0，超限返回 1
-
-# 管理监控列表
-ae watchlist add github anthropics
-ae watchlist rm github anthropics
-
-# 定时任务管理
-ae start                # 启用（每 2 小时循环，每周 GC）
-ae stop                 # 停用
-ae pause 4              # 暂停 4 小时
+cd ~/.agenticEvolve && python3 -m gateway.run
 ```
 
-## 信号采集器
+---
 
-| 来源 | 方式 | 是否需要认证 |
-|------|------|-------------|
-| GitHub | `gh` CLI（搜索 API、星标仓库、发布） | GitHub CLI 认证 |
-| Hacker News | Algolia API | 不需要 |
-| X/Twitter | Brave Search（`site:x.com`） | Brave API 密钥 |
-| Discord | 计划中（第二阶段） | — |
-| 企业微信/微信 | 计划中（第二阶段） | — |
-| WhatsApp | 计划中（第二阶段） | — |
+## 命令
 
-## 技能构建流程
+| 命令 | 功能 |
+|------|------|
+| _(任意消息)_ | 与 Claude Code 对话 |
+| _(语音消息)_ | 自动转写（whisper.cpp）+ 回复（语音模式下附带语音） |
+| _(发送图片)_ | 视觉分析——截图识别、图表理解、OCR、UI 检查 |
+| _(发送文件)_ | 文件分析——PDF、代码文件、文本文件 |
+| `/evolve` | 扫描信号，构建并自动安装技能 |
+| `/absorb <url>` | 从任意仓库吸收模式 |
+| `/learn <target>` | 深度分析并给出判定 |
+| `/speak <text>` | 文字转语音（自动检测语言） |
+| `/recall <query>` | 跨层搜索（全部 6 层记忆） |
+| `/search <query>` | FTS5 搜索历史会话 |
+| `/do <instruction>` | 自然语言 → 结构化命令 |
+| `/loop <cron> <cmd>` | 调度定期执行 |
+| `/memory` | 查看代理记忆状态 |
+| `/skills` | 列出已安装技能（20 个） |
+| `/cost` | 使用量和开销 |
+| `/restart` | 远程重启网关 |
 
-1. 采集器发现信号（例如热门仓库或 HN 上关于新开发工具的帖子）
-2. 分析器从相关性、可操作性和新颖性三个维度打分 — 选出最优项
-3. 构建器创建 Claude Code 技能（带 YAML frontmatter 的 `SKILL.md`），放入 `skills-queue/`
-4. 审查器验证安全性（无硬编码密钥）、质量（指令清晰、不超过 100 行）和正确性
-5. 审查通过后，通过 Telegram 发送给人工审批
-6. 人工批准 → 技能迁移到 `~/.claude/skills/`，在所有未来的 Claude Code 会话中可用
+[全部 32 个命令 →](docs/commands.md)
 
-## 灵感来源
+---
 
-- [snarktank/ralph](https://github.com/snarktank/ralph) — 主要灵感（113 行 bash 编排器，双层学习，每周期全新上下文）
-- [Anthropic 的编排工程研究](https://www.anthropic.com/) — 初始化智能体模式，内/外层循环框架
-- [OpenAI 的多智能体模式](https://openai.com/) — 确定性检查器，挣扎即信号反馈循环
+## 架构
 
-## 许可证
+```
+用户 (Telegram/语音) → 网关 (asyncio) → 钩子分发器 → 会话 + 费用控制
+  → 自动召回 (6 层) → claude -p → SQLite → Git 同步
+```
 
-私有项目。禁止分发。
+没有自定义代理循环。Claude Code **就是**运行时——25+ 内置工具、MCP 服务器、技能。网关在其周围添加了记忆、路由、召回、定时任务、语音、浏览器和安全层。
+
+### 关键设计决策
+- **不造工具系统** — Claude Code 自带工具。我们构建技能和基础设施，而非抽象层。
+- **有界记忆** — MEMORY.md（2200 字符）+ USER.md（1375 字符）+ SQLite FTS5。无无限增长。
+- **闭环** — `auto_approve_skills: true`。进化 → 构建 → 审查 → 安装 → 同步到 git。无人工审批。
+- **关机排空** — 进行中的请求在重启前完成。不丢失工作。
+
+---
+
+## 语音流水线
+
+| 方向 | 技术 | 延迟 | 费用 |
+|------|------|------|------|
+| **语音 → 文字** | 本地 whisper.cpp（ggml-small 多语言模型） | Apple Silicon 上约 500ms | 免费 |
+| **文字 → 语音** | edge-tts（300+ 神经网络语音） | 约 1 秒 | 免费 |
+| **语言检测** | CJK 启发式（嘅係唔 → 粤语，ひらがな → 日语） | 即时 | 免费 |
+
+自动 TTS 模式：`off`（仅 `/speak`），`always`（每条回复），`inbound`（用户发语音时以语音回复）。
+
+---
+
+## 浏览器自动化
+
+| 浏览器 | 使用场景 | 方式 |
+|--------|----------|------|
+| **ABP**（默认） | 所有代理浏览 | 内置 Chromium，操作间 JS 冻结，Mind2Web 90.5% |
+| **Brave** | 用户要求 / Cloudflare 拦截 ABP | CDP 端口 9222，隔离配置文件 |
+| **Chrome** | 用户要求 / Cloudflare 拦截 ABP | CDP 端口 9223，隔离配置文件 |
+
+代理配置文件沙箱化在 `~/.agenticEvolve/browser-profiles/` — 绝不触碰用户真实浏览器数据。
+
+---
+
+## 安全
+
+| 层级 | 工具 | 时机 | 严重问题处理 |
+|------|------|------|-------------|
+| **L1** | `gateway/security.py` | 预安装：扫描原始文件 | 阻止 + 中止流水线 |
+| **L2** | AgentShield（1282 项测试） | 安装后：扫描 `~/.claude/` 配置 | 自动回滚已安装技能 |
+
+扫描内容：凭证泄露、反向 shell、混淆载荷、加密货币挖矿、macOS 持久化、提示注入、npm 钩子利用。
+
+---
+
+## 技能（已安装 20 个）
+
+| 技能 | 用途 |
+|------|------|
+| agent-browser-protocol | 通过 MCP 的 ABP 浏览器自动化 |
+| browser-switch | 多浏览器 CDP 切换（Brave/Chrome） |
+| brave-search | 通过 Brave API 网络搜索 |
+| firecrawl | 网页抓取、爬取、搜索、结构化提取 |
+| cloudflare-crawl | 免费网页爬取（Cloudflare Browser Rendering API） |
+| session-search | FTS5 会话历史搜索 |
+| cron-manager | 定时任务管理 |
+| skill-creator | 官方 Anthropic 技能创建 |
+| deep-research | 多源研究流水线 |
+| market-research | 市场/竞品分析 |
+| article-writing | 长文内容创作 |
+| video-editing | FFmpeg 视频编辑指南 |
+| security-review | 代码安全检查清单 |
+| security-scan | AgentShield 配置扫描器 |
+| autonomous-loops | 自主导向的代理循环 |
+| continuous-learning-v2 | 模式提取流水线 |
+| eval-harness | 技能评估框架 |
+| claude-agent-sdk-v0.2.74 | Claude Agent SDK 模式 |
+| nah | 快速拒绝/撤销 |
+| unf | 展开/扩展压缩内容 |
+
+---
+
+## 文档
+
+| 文档 | 描述 |
+|------|------|
+| [交互](docs/interface.md) | 使用示例和交互模式 |
+| [记忆](docs/memory.md) | 6 层记忆架构、自动召回、直觉评分 |
+| [命令](docs/commands.md) | 全部 32 个命令及参数和示例 |
+| [流水线](docs/pipelines.md) | Evolve、Absorb、Learn、Do、GC 流水线 |
+| [技能](docs/skills.md) | 完整技能目录 |
+| [安全](docs/security.md) | 扫描器、自治等级、安全门控 |
+| [架构](docs/architecture.md) | 消息流、项目结构、设计决策 |
+| [路线图](docs/roadmap.md) | 集成计划 — Firecrawl、视觉、沙箱 |
+
+---
+
+## 血脉
+
+| 项目 | 采纳的模式 |
+|------|-----------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | 代理运行时 — 25+ 工具、MCP、技能、子代理 |
+| [hermes-agent](https://github.com/NousResearch/hermes-agent) | 有界记忆、会话持久化、消息网关、渐进式状态消息 |
+| [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | 自治等级、默认拒绝、热配置重载、风险分级分类 |
+| [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | 9 个技能改编，AgentShield 安全，评估驱动开发，钩子配置 |
+| [openclaw](https://github.com/openclaw/openclaw) | 语音流水线（TTS/STT），浏览器自动化模式，自动 TTS 模式 |
+| [ABP](https://github.com/theredsix/agent-browser-protocol) | 浏览器 MCP — 操作间冻结的 Chromium，Mind2Web 90.5% |
+
+---
+
+MIT

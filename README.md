@@ -5,9 +5,11 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-18-orange?style=for-the-badge" alt="18 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-20-orange?style=for-the-badge" alt="20 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
 </p>
+
+**[简体中文](README.zh.md)**
 
 ---
 
