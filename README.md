@@ -37,11 +37,11 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 **Browse the web for you**
 > "Go to the Anthropic docs and find the latest Claude model pricing." The agent opens ABP browser, navigates, extracts the data, and sends you a clean summary. If Cloudflare blocks it, it auto-switches to Brave.
 
-**Decrypt and read your WeChat messages**
-> You want to search your WeChat history but the app's search is terrible. The agent extracts SQLCipher keys from WeChat's process memory via Mach VM API, decrypts all 16 databases, and gives you a searchable export — contacts, messages, groups, favorites. All local, no network calls.
+**Search your own WeChat history**
+> WeChat's built-in search is terrible. The agent reads your local WeChat databases and gives you a searchable export — contacts, messages, groups, favorites. All offline, all on your machine.
 
 **Absorb ideas from your group chats overnight**
-> Your `/evolve` cron at 6 AM doesn't just scan GitHub. It also decrypts your WeChat tech group chats, summarizes the last 24 hours of discussions — new tools people mentioned, repos shared, techniques debated — and absorbs the best ideas into skills. You wake up with your group's collective intelligence baked in.
+> Your `/evolve` cron at 6 AM doesn't just scan GitHub. It also reads your WeChat tech group chats, summarizes the last 24 hours of discussions — new tools people mentioned, repos shared, techniques debated — and absorbs the best ideas into skills. You wake up with your group's collective intelligence baked in.
 
 **Self-improving UX**
 > Every night at 1 AM, the agent reads the day's conversations, finds friction points where you waited too long or got confusing responses, and patches its own code to fix them. You wake up to a better agent.
@@ -191,7 +191,7 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 | firecrawl | Web scraping, crawling, search, structured extraction |
 | cloudflare-crawl | Free web crawling via Cloudflare Browser Rendering API |
 | jshook-messenger | Discord/WeChat/Telegram/Slack interception via jshookmcp MCP |
-| wechat-decrypt | Extract keys, decrypt SQLCipher DBs, export WeChat messages on macOS |
+| wechat-decrypt | Read local WeChat databases and export messages, contacts, groups on macOS |
 | session-search | FTS5 session history search |
 | cron-manager | Cron job management |
 | skill-creator | Official Anthropic skill creation |
