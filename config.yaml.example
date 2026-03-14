@@ -31,12 +31,14 @@ browser:
       name: "Brave Browser"
       path: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
       debug_port: 9222
-      description: "User's Brave with existing cookies/sessions. Use when user explicitly asks."
+      profile_dir: "~/.agenticEvolve/browser-profiles/brave"  # NEVER use real profile
+      description: "Brave with isolated agent profile. Use when user asks or Cloudflare blocks ABP."
     chrome:
       name: "Google Chrome"
       path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
       debug_port: 9223
-      description: "User's Chrome with existing cookies/sessions. Use when user explicitly asks."
+      profile_dir: "~/.agenticEvolve/browser-profiles/chrome"  # NEVER use real profile
+      description: "Chrome with isolated agent profile. Use when user asks or Cloudflare blocks ABP."
 
 # Explicit tool override (empty = use autonomy level defaults)
 allowed_tools: []
