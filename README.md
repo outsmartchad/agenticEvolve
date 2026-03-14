@@ -1,5 +1,7 @@
 # agenticEvolve
 
+Self-evolving AI agent on Claude Code. Telegram gateway, 6-layer memory, voice, browser automation, 20 skills, closed-loop skill synthesis, and a personal closed-loop agentic system that evolves your development capabilities daily.
+
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
@@ -8,10 +10,6 @@
 </p>
 
 **[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)** | **[日本語](README.ja.md)**
-
----
-
-Self-evolving AI agent on Claude Code. Telegram gateway, 6-layer memory, voice, browser automation, 20 skills, closed-loop skill synthesis, and a personal closed-loop agentic system that evolves your development capabilities daily.
 
 ---
 
