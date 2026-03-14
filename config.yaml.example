@@ -4,8 +4,8 @@
 model: sonnet
 
 # Cost limits (USD)
-daily_cost_cap: 5.0
-weekly_cost_cap: 25.0
+daily_cost_cap: 999999
+weekly_cost_cap: 999999
 
 # Session reset after N minutes of inactivity
 session_idle_minutes: 120
@@ -18,6 +18,25 @@ autonomy: full
 
 # Closed-loop autonomy — auto-install skills after review passes
 auto_approve_skills: true
+
+# Browser automation
+browser:
+  default: abp                    # abp = Agent Browser Protocol (bundled Chromium, best for agents)
+  options:
+    abp:
+      name: "Agent Browser Protocol"
+      command: "npx -y agent-browser-protocol --mcp"
+      description: "Bundled Chromium with JS freeze-between-actions. Default for all agent browsing."
+    brave:
+      name: "Brave Browser"
+      path: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+      debug_port: 9222
+      description: "User's Brave with existing cookies/sessions. Use when user explicitly asks."
+    chrome:
+      name: "Google Chrome"
+      path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      debug_port: 9223
+      description: "User's Chrome with existing cookies/sessions. Use when user explicitly asks."
 
 # Explicit tool override (empty = use autonomy level defaults)
 allowed_tools: []
