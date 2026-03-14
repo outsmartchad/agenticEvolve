@@ -1,0 +1,194 @@
+# agenticEvolve
+
+**開発能力を毎日自動進化させるパーソナル・クローズドループ・エージェントシステム。**
+
+<p align="center">
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-20-orange?style=for-the-badge" alt="20 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
+</p>
+
+---
+
+`claude -p` 上に構築された永続エージェントランタイム。Python asyncio ゲートウェイ搭載。6層メモリ + クロスレイヤー自動リコール。クローズドループスキル合成。音声入出力。ブラウザ自動化。組み込みcron。2層セキュリティ。Telegram経由でアクセス——開発環境をポケットに。
+
+---
+
+## コア機能
+
+| 機能 | 説明 |
+|------|------|
+| **ビルド** | Telegram経由でフルClaude Code——ターミナル、ファイルI/O、Web検索、MCP、20スキル |
+| **進化** | 5段階パイプライン：収集 → 分析 → 構築 → レビュー → 自動インストール。GitHub Trending + HNをスキャンし、スキルを合成 |
+| **吸収** | `/absorb <url>` — リポジトリをクローン、アーキテクチャをマッピング、パターンを比較、改善をシステムに統合 |
+| **学習** | `/learn <target>` — 深掘り抽出、ADOPT / ADAPT / SKIP の判定を出力 |
+| **音声** | 音声メッセージ送信 → ローカルwhisper.cpp転写（~500ms）。`/speak` → edge-tts、300+音声。広東語/北京語/日本語/韓国語を自動検出 |
+| **ブラウザ** | ABP（Agent Browser Protocol）をデフォルトブラウザとして使用。Cloudflareブロック時はBrave/Chrome（CDP）に自動切替。隔離されたエージェントプロファイル |
+| **自動リコール** | 毎回の応答前に6層メモリに対して `unified_search()` を実行（約400 tokens/メッセージ） |
+| **cron** | `/loop every 6h /evolve` — スケジュールに従い自律的に成長 |
+| **セキュリティ** | L1：インストール前の正規表現スキャン（リバースシェル、認証情報窃取、マイナー）。L2：AgentShieldインストール後スキャン（1282テスト、102ルール）。重大な問題は自動ロールバック |
+| **フック** | 型付き非同期イベントシステム — `message_received`、`before_invoke`、`llm_output`、`tool_call`、`session_start`、`session_end` |
+| **耐障害性** | シャットダウン時ドレイン（処理中リクエストを最大30秒待機）。型付き障害分類（認証/課金/レート制限）。3パスコンテキスト圧縮。ホットコンフィグリロード |
+
+---
+
+## セットアップ
+
+```bash
+git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
+pip install -r ~/.agenticEvolve/requirements.txt
+brew install whisper-cpp ffmpeg  # 音声サポート
+```
+
+```bash
+# ~/.agenticEvolve/.env
+TELEGRAM_BOT_TOKEN=<token>
+```
+
+```yaml
+# ~/.agenticEvolve/config.yaml
+platforms:
+  telegram:
+    allowed_users: [<user-id>]
+```
+
+```bash
+cd ~/.agenticEvolve && python3 -m gateway.run
+```
+
+---
+
+## コマンド
+
+| コマンド | 機能 |
+|----------|------|
+| _(任意のメッセージ)_ | Claude Codeとチャット |
+| _(音声メッセージ)_ | 自動転写（whisper.cpp）+ 応答（音声モード時は音声も返信） |
+| _(画像送信)_ | ビジョン分析——スクリーンショット認識、図表理解、OCR、UI検査 |
+| _(ファイル送信)_ | ファイル分析——PDF、コードファイル、テキストファイル |
+| `/evolve` | シグナルをスキャン、スキルを構築・自動インストール |
+| `/absorb <url>` | 任意のリポジトリからパターンを吸収 |
+| `/learn <target>` | 深掘り分析と判定 |
+| `/speak <text>` | テキスト→音声変換（言語自動検出） |
+| `/recall <query>` | クロスレイヤー検索（全6層メモリ） |
+| `/search <query>` | FTS5セッション履歴検索 |
+| `/do <instruction>` | 自然言語 → 構造化コマンド |
+| `/loop <cron> <cmd>` | 定期実行をスケジュール |
+| `/memory` | エージェントメモリ状態を表示 |
+| `/skills` | インストール済みスキル一覧（20個） |
+| `/cost` | 使用量とコスト |
+| `/restart` | ゲートウェイをリモート再起動 |
+
+[全32コマンド →](docs/commands.md)
+
+---
+
+## アーキテクチャ
+
+```
+ユーザー (Telegram/音声) → ゲートウェイ (asyncio) → フックディスパッチャー → セッション + コスト制御
+  → 自動リコール (6層) → claude -p → SQLite → Git同期
+```
+
+カスタムエージェントループなし。Claude Codeが**そのまま**ランタイム——25+組み込みツール、MCPサーバー、スキル。ゲートウェイがその周囲にメモリ、ルーティング、リコール、cron、音声、ブラウザ、セキュリティを追加。
+
+### 設計上の重要な決定
+- **ツールシステムを作らない** — Claude Code自体がツールを持つ。スキルとインフラを構築し、抽象化層は作らない。
+- **有界メモリ** — MEMORY.md（2200文字）+ USER.md（1375文字）+ SQLite FTS5。無制限な増加なし。
+- **クローズドループ** — `auto_approve_skills: true`。進化 → 構築 → レビュー → インストール → gitに同期。人手による承認なし。
+- **シャットダウン時ドレイン** — 処理中のリクエストは再起動前に完了。作業の損失なし。
+
+---
+
+## 音声パイプライン
+
+| 方向 | 技術 | レイテンシ | コスト |
+|------|------|-----------|--------|
+| **音声 → テキスト** | ローカルwhisper.cpp（ggml-small多言語モデル） | Apple Siliconで約500ms | 無料 |
+| **テキスト → 音声** | edge-tts（300+ニューラル音声） | 約1秒 | 無料 |
+| **言語検出** | CJKヒューリスティック（嘅係唔 → 広東語、ひらがな → 日本語） | 即時 | 無料 |
+
+自動TTSモード：`off`（`/speak`のみ）、`always`（毎回の応答）、`inbound`（ユーザーが音声を送信した場合に音声で返信）。
+
+---
+
+## ブラウザ自動化
+
+| ブラウザ | 使用場面 | 方式 |
+|----------|----------|------|
+| **ABP**（デフォルト） | すべてのエージェントブラウジング | 組み込みChromium、アクション間JSフリーズ、Mind2Web 90.5% |
+| **Brave** | ユーザー指定 / CloudflareがABPをブロック | CDPポート9222、隔離プロファイル |
+| **Chrome** | ユーザー指定 / CloudflareがABPをブロック | CDPポート9223、隔離プロファイル |
+
+エージェントプロファイルは `~/.agenticEvolve/browser-profiles/` にサンドボックス化——ユーザーの実ブラウザデータには一切触れません。
+
+---
+
+## セキュリティ
+
+| レイヤー | ツール | タイミング | 重大問題時 |
+|----------|--------|-----------|-----------|
+| **L1** | `gateway/security.py` | インストール前：生ファイルをスキャン | ブロック + パイプライン中止 |
+| **L2** | AgentShield（1282テスト） | インストール後：`~/.claude/` 設定をスキャン | インストール済みスキルを自動ロールバック |
+
+スキャン対象：認証情報窃取、リバースシェル、難読化ペイロード、暗号通貨マイナー、macOS永続化、プロンプトインジェクション、npmフック悪用。
+
+---
+
+## スキル（20個インストール済み）
+
+| スキル | 用途 |
+|--------|------|
+| agent-browser-protocol | MCP経由のABPブラウザ自動化 |
+| browser-switch | マルチブラウザCDP切替（Brave/Chrome） |
+| brave-search | Brave API経由のWeb検索 |
+| firecrawl | Webスクレイピング、クロール、検索、構造化抽出 |
+| cloudflare-crawl | 無料Webクロール（Cloudflare Browser Rendering API） |
+| session-search | FTS5セッション履歴検索 |
+| cron-manager | cronジョブ管理 |
+| skill-creator | Anthropic公式スキル作成 |
+| deep-research | マルチソースリサーチパイプライン |
+| market-research | 市場/競合分析 |
+| article-writing | 長文コンテンツ作成 |
+| video-editing | FFmpeg動画編集ガイド |
+| security-review | コードセキュリティチェックリスト |
+| security-scan | AgentShield設定スキャナー |
+| autonomous-loops | 自律型エージェントループ |
+| continuous-learning-v2 | パターン抽出パイプライン |
+| eval-harness | スキル評価フレームワーク |
+| claude-agent-sdk-v0.2.74 | Claude Agent SDKパターン |
+| nah | クイック拒否/取消 |
+| unf | 圧縮コンテンツの展開/拡張 |
+
+---
+
+## ドキュメント
+
+| ドキュメント | 説明 |
+|-------------|------|
+| [インターフェース](docs/interface.md) | 使用例とインタラクションパターン |
+| [メモリ](docs/memory.md) | 6層メモリアーキテクチャ、自動リコール、直感スコアリング |
+| [コマンド](docs/commands.md) | 全32コマンドのフラグと使用例 |
+| [パイプライン](docs/pipelines.md) | Evolve、Absorb、Learn、Do、GCパイプライン |
+| [スキル](docs/skills.md) | 完全スキルカタログ |
+| [セキュリティ](docs/security.md) | スキャナー、自律レベル、セーフティゲート |
+| [アーキテクチャ](docs/architecture.md) | メッセージフロー、プロジェクト構造、設計決定 |
+| [ロードマップ](docs/roadmap.md) | 統合計画 — Firecrawl、ビジョン、サンドボックス |
+
+---
+
+## 系譜
+
+| プロジェクト | 採用したパターン |
+|-------------|-----------------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | エージェントランタイム — 25+ツール、MCP、スキル、サブエージェント |
+| [hermes-agent](https://github.com/NousResearch/hermes-agent) | 有界メモリ、セッション永続化、メッセージングゲートウェイ、プログレッシブステータスメッセージ |
+| [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | 自律レベル、デフォルト拒否、ホットコンフィグリロード、リスク階層分類 |
+| [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | 9スキル改編、AgentShieldセキュリティ、評価駆動開発、フックプロファイル |
+| [openclaw](https://github.com/openclaw/openclaw) | 音声パイプライン（TTS/STT）、ブラウザ自動化パターン、自動TTSモード |
+| [ABP](https://github.com/theredsix/agent-browser-protocol) | ブラウザMCP — アクション間フリーズChromium、Mind2Web 90.5% |
+
+---
+
+MIT

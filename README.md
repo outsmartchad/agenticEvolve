@@ -9,7 +9,7 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-32-blue?style=for-the-badge" alt="32 Commands"></a>
 </p>
 
-**[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)**
+**[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)** | **[日本語](README.ja.md)**
 
 ---
 
