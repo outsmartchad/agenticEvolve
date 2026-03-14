@@ -28,8 +28,8 @@ Built on Claude Code (`claude -p`) with a Python asyncio gateway. The agent scan
 **Wake up to new skills you didn't write**
 > The daily `/evolve` cron fires at 6 AM. By the time you check Telegram, the agent has scanned GitHub trending, found a new testing framework, built a skill for it, passed it through 2-layer security, auto-installed it, and pushed to your repo. You just got smarter overnight.
 
-**Talk to your codebase in Cantonese**
-> Send a voice message in Cantonese asking about yesterday's bug. The agent transcribes locally via whisper.cpp (~500ms), auto-detects the language, responds in text, and reads the answer back to you in Cantonese via edge-tts.
+**Talk to your codebase in any language**
+> Send a voice message in English, Cantonese, Mandarin, Japanese, Korean, or any of 40+ supported languages. The agent transcribes locally via whisper.cpp (~500ms), auto-detects the language, responds in text, and reads the answer back to you in the same language via edge-tts.
 
 **Deep-dive anything with `/learn`**
 > `/learn https://github.com/some/repo` — the agent clones it, reads every file, maps the architecture, evaluates how it could benefit your workflow, gives an ADOPT / ADAPT / SKIP verdict, and optionally builds a skill from it.
