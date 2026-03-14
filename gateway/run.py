@@ -31,6 +31,10 @@ from .platforms.whatsapp import WhatsAppAdapter
 log = logging.getLogger("agenticEvolve.gateway")
 
 EXODIR = Path.home() / ".agenticEvolve"
+
+# mtime-based config reload: tracks last-seen mtime of config.yaml so the
+# cron loop can pick up changes (cost cap, model) without a Telegram message.
+_config_mtime: float = 0.0
 PID_FILE = EXODIR / "gateway.pid"
 LOG_DIR = EXODIR / "logs"
 CRON_DIR = EXODIR / "cron"
@@ -273,7 +277,13 @@ class GatewayRunner:
     # ── Cron scheduler ───────────────────────────────────────────
 
     async def _cron_loop(self):
-        """Tick-based cron scheduler. Checks jobs.json every 60s."""
+        """Tick-based cron scheduler. Checks jobs.json every 60s.
+
+        Also performs mtime-based config reload so overnight cron jobs pick up
+        config changes (cost cap, model) without waiting for a Telegram message.
+        """
+        global _config_mtime
+
         if not self.config.get("cron", {}).get("enabled", True):
             log.info("Cron scheduler: disabled")
             return
@@ -282,6 +292,21 @@ class GatewayRunner:
         while not self._shutdown_event.is_set():
             try:
                 await asyncio.sleep(60)
+
+                # mtime-based config reload — read-only stat check on every tick
+                from .config import CONFIG_PATH as _config_path
+                if _config_path.exists():
+                    try:
+                        current_mtime = _config_path.stat().st_mtime
+                        if current_mtime != _config_mtime:
+                            is_init = _config_mtime == 0.0
+                            _config_mtime = current_mtime
+                            if not is_init:  # skip first-tick init; just record baseline
+                                self.config, changes = reload_config()
+                                log.info(f"Cron: hot-reloaded config: {changes}")
+                    except OSError as e:
+                        log.warning(f"Cron: config stat failed: {e}")
+
                 await self._run_due_jobs()
             except asyncio.CancelledError:
                 break

@@ -28,3 +28,11 @@ When providing URLs, always verify first rather than generating from memory — 
 Prefer official App Store downloads over direct website URLs for native macOS apps to avoid security risks
 §
 For critical user requests like app installation, provide multiple verification paths so user can independently confirm legitimacy
+§
+User is actively researching AI agent architectures and memory systems, particularly interested in production-grade multi-agent frameworks like deer-flow with sophisticated context management patterns for long-horizon tasks.
+§
+User prefers concise, high-signal repo summaries focused on architectural novelty and practical relevance rather than hype metrics — repos are evaluated by pattern applicability to agenticEvolve project.
+§
+User wants assistant to proactively identify which patterns from external repos map back to current projects (e.g., deer-flow memory architecture → agenticEvolve instinct system) without being asked.
+§
+When assistant identifies a relevant pattern or repo, user engagement is highest when connection to current work is explicitly stated upfront rather than left implicit.

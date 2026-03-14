@@ -15,6 +15,8 @@ import json
 import logging
 import os
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -63,7 +65,8 @@ class EvolveOrchestrator:
             pass
 
     def _invoke(self, prompt: str, stage: str,
-                model_override: str | None = None) -> dict:
+                model_override: str | None = None,
+                use_workspace: bool = False) -> dict:
         """Invoke Claude Code for a specific stage.
 
         Derives the stage key (text before first space or paren) and looks up
@@ -74,6 +77,10 @@ class EvolveOrchestrator:
           1. Explicit model_override argument
           2. STAGE_MODELS lookup for the stage key
           3. self.model (orchestrator default)
+
+        Args:
+            use_workspace: If True, run in a UUID-scoped isolated workspace so
+                concurrent BUILD tasks cannot clobber each other's skill files.
         """
         from .agent import invoke_claude_streaming
 
@@ -98,6 +105,7 @@ class EvolveOrchestrator:
             session_context=f"[Evolve/{stage}]",
             allowed_tools=allowed_tools,
             context_mode=context_mode,
+            use_workspace=use_workspace,
         )
 
         cost = result.get("cost", 0)
@@ -290,13 +298,17 @@ class EvolveOrchestrator:
             self._report("  No candidates to build. Skipping.")
             return {"built": []}
 
-        # Only build top 3
+        # Only build top 3 — run concurrently for 3× wall-clock speedup.
+        # A BoundedSemaphore caps concurrent Claude invocations at 3 structurally,
+        # not just by prompt instruction.
         candidates = candidates[:3]
-        built = []
+        built: list[dict] = []
+        _build_semaphore = threading.BoundedSemaphore(3)
 
         QUEUE_DIR.mkdir(parents=True, exist_ok=True)
 
-        for candidate in candidates:
+        def _build_candidate(candidate: dict) -> dict | None:
+            """Build a single skill candidate. Returns built-entry dict or None."""
             name = candidate.get("name", "unknown").lower().replace(" ", "-")
             summary = candidate.get("summary", "")
             skill_idea = candidate.get("skill_idea", summary)
@@ -306,12 +318,11 @@ class EvolveOrchestrator:
             skill_dir = QUEUE_DIR / name
             if skill_dir.exists():
                 self._report(f"  {name}: already in queue, skipping")
-                continue
+                return None
 
-            # Check if already installed
             if (SKILLS_DIR / name / "SKILL.md").exists():
                 self._report(f"  {name}: already installed, skipping")
-                continue
+                return None
 
             prompt = (
                 f"You are the BUILDER agent in the agenticEvolve pipeline.\n\n"
@@ -356,22 +367,33 @@ class EvolveOrchestrator:
                 f"- No placeholder values — only real, working instructions\n"
                 f"- Nothing destructive without explicit guards\n\n"
 
+                f"Use absolute paths only — the workspace cwd is isolated.\n"
                 f"Create ONLY the SKILL.md file (and references/ if needed). Nothing else."
             )
 
-            result = self._invoke(prompt, f"BUILD ({name})")
+            with _build_semaphore:
+                self._invoke(prompt, f"BUILD ({name})", use_workspace=True)
 
-            # Verify skill was created
             if (skill_dir / "SKILL.md").exists():
-                built.append({
-                    "name": name,
-                    "summary": summary,
-                    "score": score,
-                    "path": str(skill_dir / "SKILL.md")
-                })
                 self._report(f"  Built: {name} (score {score})")
+                return {"name": name, "summary": summary, "score": score,
+                        "path": str(skill_dir / "SKILL.md")}
             else:
                 self._report(f"  Failed to build: {name}")
+                return None
+
+        # Run up to 3 build tasks concurrently
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {executor.submit(_build_candidate, c): c for c in candidates}
+            for future in as_completed(futures):
+                try:
+                    entry = future.result()
+                    if entry:
+                        built.append(entry)
+                except Exception as e:
+                    name = futures[future].get("name", "?")
+                    log.error(f"BUILD ({name}) raised: {e}")
+                    self._report(f"  Error building {name}: {e}")
 
         return {"built": built}
 

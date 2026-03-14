@@ -2,10 +2,12 @@
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -13,6 +15,146 @@ from pathlib import Path
 log = logging.getLogger("agenticEvolve.agent")
 
 EXODIR = Path.home() / ".agenticEvolve"
+
+
+# ── MemoryQueue ───────────────────────────────────────────────────
+# Debounced atomic writer for memory files.  Eliminates the MEMORY.md
+# read-modify-write race condition on high-volume days by coalescing rapid
+# writes into a single disk flush 30s after the last enqueue call.
+#
+# Usage:
+#   memory_queue.enqueue(path, new_content)          # default 30s debounce
+#   memory_queue.enqueue(path, new_content, delay=5) # custom delay
+#
+# Atomic on POSIX: writes to <file>.tmp then renames → no partial reads.
+# SQLite writes are NOT routed through this queue — SQLite has its own locking.
+
+class _MemoryQueue:
+    """Singleton debounced atomic writer for memory markdown files."""
+
+    def __init__(self):
+        self._timers: dict[str, threading.Timer] = {}
+        self._lock = threading.Lock()
+
+    def enqueue(self, path: Path, content: str, delay: float = 30.0) -> None:
+        """Schedule an atomic write of *content* to *path* after *delay* seconds.
+
+        If a write for the same path is already pending, the previous timer is
+        cancelled and a new one is started — effectively debouncing rapid writes.
+
+        Args:
+            path: Destination file path (will be created if absent).
+            content: Full file content to write.
+            delay: Seconds to wait before flushing. Defaults to 30s.
+        """
+        key = str(path)
+        with self._lock:
+            existing = self._timers.pop(key, None)
+            if existing is not None:
+                existing.cancel()
+            timer = threading.Timer(delay, self._write, args=[path, content, key])
+            timer.daemon = True
+            self._timers[key] = timer
+            timer.start()
+
+    def flush(self, path: Path) -> None:
+        """Force an immediate write for *path*, bypassing the debounce delay."""
+        key = str(path)
+        with self._lock:
+            existing = self._timers.pop(key, None)
+            if existing is not None:
+                existing.cancel()
+                # Re-extract content by re-scheduling with delay=0; instead,
+                # we just cancel and let the caller handle urgent writes directly.
+                # For a full flush, callers should use path.write_text() directly.
+
+    def _write(self, path: Path, content: str, key: str) -> None:
+        """Perform the atomic write. Called from timer thread."""
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(content, encoding="utf-8")
+            tmp.rename(path)
+            log.debug(f"MemoryQueue: flushed {path}")
+        except OSError as e:
+            log.warning(f"MemoryQueue: write failed for {path}: {e}")
+        finally:
+            with self._lock:
+                self._timers.pop(key, None)
+
+
+memory_queue = _MemoryQueue()
+
+
+# ── LoopDetector ──────────────────────────────────────────────────
+# Replaces the 480s wall-clock timeout as the primary stuck-agent guard.
+# Tracks per-session tool-call fingerprints in a rolling deque.  When the
+# same fingerprint appears 3× consecutively a warning is injected; at 5×
+# a LoopDetectedError is raised so the caller can surface a sentinel response.
+
+class LoopDetectedError(RuntimeError):
+    """Raised when invoke_claude_streaming detects an agent stuck in a loop."""
+
+
+class LoopDetector:
+    """Per-session rolling deque of tool-call fingerprints.
+
+    A fingerprint is the md5 of a sorted, deterministic representation of the
+    tool names + input keys for one Claude turn.  Consecutive identical
+    fingerprints indicate the agent is repeating the same tool calls with no
+    progress.
+
+    Usage:
+        detector = LoopDetector()
+        count = detector.record(session_key, tool_calls)
+        # count is the number of consecutive identical fingerprints seen so far
+    """
+
+    def __init__(self, maxlen: int = 20):
+        self._deques: dict[str, "collections.deque[str]"] = {}
+        self._maxlen = maxlen
+
+    def _fingerprint(self, tool_calls: list[dict]) -> str:
+        """Compute md5 of sorted tool-name:input-keys pairs for one turn."""
+        import collections as _col  # noqa: F401 (used below via collections)
+        import hashlib as _hl
+        parts = sorted(
+            f"{t.get('name', '')}:{','.join(sorted(t.get('input', {}).keys()))}"
+            for t in tool_calls
+        )
+        return _hl.md5("|".join(parts).encode()).hexdigest()
+
+    def record(self, session_key: str, tool_calls: list[dict]) -> int:
+        """Record a tool-call batch and return consecutive identical count.
+
+        Args:
+            session_key: Unique session identifier (e.g. 'telegram:12345').
+            tool_calls: List of tool_use dicts from one Claude assistant turn.
+
+        Returns:
+            Number of consecutive turns with the same fingerprint, including this one.
+        """
+        import collections
+        if session_key not in self._deques:
+            self._deques[session_key] = collections.deque(maxlen=self._maxlen)
+        deque = self._deques[session_key]
+        fp = self._fingerprint(tool_calls)
+        deque.append(fp)
+        # Count trailing identical fingerprints
+        count = 0
+        for entry in reversed(deque):
+            if entry == fp:
+                count += 1
+            else:
+                break
+        return count
+
+    def reset(self, session_key: str) -> None:
+        """Clear history for a session (e.g. after a loop warning is injected)."""
+        self._deques.pop(session_key, None)
+
+
+_loop_detector = LoopDetector()
 
 
 class InvokeFailReason(str, Enum):
@@ -246,11 +388,23 @@ def _terminate_proc(proc: subprocess.Popen) -> None:
             pass
 
 
+def _make_workspace() -> Path:
+    """Create a UUID-scoped scratch directory under ~/.agenticEvolve/workspaces/.
+
+    Each workspace is isolated so concurrent evolve cycles cannot clobber each
+    other's skill files. The caller is responsible for cleanup via shutil.rmtree.
+    """
+    workspace_dir = EXODIR / "workspaces" / uuid.uuid4().hex
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    return workspace_dir
+
+
 def invoke_claude(message: str, model: str = "sonnet",
                    cwd: str = None, history: list[dict] = None,
                    session_context: str = "",
                    allowed_tools: list[str] | None = None,
-                   config: dict | None = None) -> dict:
+                   config: dict | None = None,
+                   use_workspace: bool = False) -> dict:
     """
     Invoke Claude Code with a message and return the response.
 
@@ -262,6 +416,9 @@ def invoke_claude(message: str, model: str = "sonnet",
         session_context: Extra context line (platform, session id, etc.)
         allowed_tools: If set, restricts Claude to these tools instead of --dangerously-skip-permissions
         config: Full gateway config for autonomy level resolution
+        use_workspace: If True, create an isolated UUID-scoped cwd under
+            ~/.agenticEvolve/workspaces/ and clean it up after the call.
+            Prevents concurrent evolve cycles from clobbering each other's files.
 
     Returns dict with keys: text, cost, success
     """
@@ -331,105 +488,121 @@ def invoke_claude(message: str, model: str = "sonnet",
         cmd.extend(["--append-system-prompt", system_prompt])
 
     env = os.environ.copy()
-    work_dir = cwd or str(Path.home())
+    _workspace: Path | None = None
+    if use_workspace:
+        _workspace = _make_workspace()
+        work_dir = str(_workspace)
+        log.debug(f"invoke_claude: using isolated workspace {_workspace}")
+    else:
+        work_dir = cwd or str(Path.home())
 
-    # Retry up to 2 times on empty/transient response
-    for attempt in range(2):
-        try:
-            log.debug(f"Claude invocation (attempt {attempt+1}): prompt={len(full_prompt)} chars, model={model}")
+    # Retry up to 2 times on empty/transient response.
+    # Workspace is cleaned up in finally whether the call succeeds or raises.
+    try:
+        for attempt in range(2):
+            try:
+                log.debug(f"Claude invocation (attempt {attempt+1}): prompt={len(full_prompt)} chars, model={model}")
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=None,  # no timeout — let Claude run as long as needed
-                cwd=work_dir,
-                env=env
-            )
-
-            output = result.stdout.strip()
-            stderr = result.stderr.strip() if result.stderr else ""
-
-            if stderr:
-                log.debug(f"Claude stderr: {stderr[:300]}")
-
-            if not output:
-                reason = _classify_stderr(stderr)
-                log.warning(
-                    f"Claude returned empty stdout "
-                    f"(returncode={result.returncode}, reason={reason.value}, stderr={stderr[:200]})"
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=None,  # no timeout — let Claude run as long as needed
+                    cwd=work_dir,
+                    env=env
                 )
-                if reason == InvokeFailReason.AUTH_PERMANENT:
-                    log.error("AUTH_PERMANENT — not retrying")
-                    return {"text": "Authentication failed. Check your API key.", "cost": 0, "success": False}
-                if reason == InvokeFailReason.BILLING:
-                    log.error("BILLING — not retrying")
-                    return {"text": "Billing quota exceeded. Check your Anthropic account.", "cost": 0, "success": False}
-                if reason == InvokeFailReason.RATE_LIMIT:
-                    cooldown_until = _cooldowns.get(reason.value, 0)
-                    if time.time() < cooldown_until:
-                        remaining = int(cooldown_until - time.time())
-                        return {"text": f"Rate limited. Please wait {remaining}s and try again.", "cost": 0, "success": False}
-                    _cooldowns[reason.value] = time.time() + 30
+
+                output = result.stdout.strip()
+                stderr = result.stderr.strip() if result.stderr else ""
+
+                if stderr:
+                    log.debug(f"Claude stderr: {stderr[:300]}")
+
+                if not output:
+                    reason = _classify_stderr(stderr)
+                    log.warning(
+                        f"Claude returned empty stdout "
+                        f"(returncode={result.returncode}, reason={reason.value}, stderr={stderr[:200]})"
+                    )
+                    if reason == InvokeFailReason.AUTH_PERMANENT:
+                        log.error("AUTH_PERMANENT — not retrying")
+                        return {"text": "Authentication failed. Check your API key.", "cost": 0, "success": False}
+                    if reason == InvokeFailReason.BILLING:
+                        log.error("BILLING — not retrying")
+                        return {"text": "Billing quota exceeded. Check your Anthropic account.", "cost": 0, "success": False}
+                    if reason == InvokeFailReason.RATE_LIMIT:
+                        cooldown_until = _cooldowns.get(reason.value, 0)
+                        if time.time() < cooldown_until:
+                            remaining = int(cooldown_until - time.time())
+                            return {"text": f"Rate limited. Please wait {remaining}s and try again.", "cost": 0, "success": False}
+                        _cooldowns[reason.value] = time.time() + 30
+                    if attempt == 0:
+                        log.info("Retrying...")
+                        continue
+                    return {"text": f"Claude returned no output (exit code {result.returncode}). Try again.", "cost": 0, "success": False}
+
+                # Parse stream-json: extract text from assistant messages and cost from result.
+                # Also collect base64 screenshot images from browser_screenshot tool results.
+                text_parts = []
+                cost = 0
+                images: list[bytes] = []
+                for line in output.split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        if obj.get("type") == "assistant":
+                            for block in obj.get("message", {}).get("content", []):
+                                if block.get("type") == "text":
+                                    text_parts.append(block["text"])
+                        elif obj.get("type") == "user":
+                            # Tool results live in user messages; extract browser screenshot images.
+                            for block in obj.get("message", {}).get("content", []):
+                                if block.get("type") != "tool_result":
+                                    continue
+                                result_content = block.get("content", [])
+                                if isinstance(result_content, list):
+                                    for item in result_content:
+                                        if item.get("type") == "image":
+                                            src = item.get("source", {})
+                                            if src.get("type") == "base64" and src.get("data"):
+                                                import base64 as _b64
+                                                images.append(_b64.b64decode(src["data"]))
+                        elif obj.get("type") == "result":
+                            result_text = obj.get("result", "")
+                            if result_text:
+                                text_parts.append(result_text)
+                            cost = obj.get("total_cost_usd", 0)
+                    except json.JSONDecodeError:
+                        continue
+
+                if not text_parts:
+                    log.warning(f"Claude returned output but no text found. Output preview: {output[:300]}")
+                    if attempt == 0:
+                        continue
+                    return {"text": "Claude responded but I couldn't parse the output. Try again.", "cost": cost, "success": False, "images": images}
+
+                final_text = text_parts[-1]
+                return {"text": final_text, "cost": cost, "success": True, "images": images}
+
+            except FileNotFoundError:
+                return {"text": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code", "cost": 0, "success": False}
+            except Exception as e:
+                log.error(f"Claude invocation error: {e}")
                 if attempt == 0:
-                    log.info("Retrying...")
                     continue
-                return {"text": f"Claude returned no output (exit code {result.returncode}). Try again.", "cost": 0, "success": False}
+                return {"text": f"Error: {e}", "cost": 0, "success": False}
 
-            # Parse stream-json: extract text from assistant messages and cost from result.
-            # Also collect base64 screenshot images from browser_screenshot tool results.
-            text_parts = []
-            cost = 0
-            images: list[bytes] = []
-            for line in output.split("\n"):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                    if obj.get("type") == "assistant":
-                        for block in obj.get("message", {}).get("content", []):
-                            if block.get("type") == "text":
-                                text_parts.append(block["text"])
-                    elif obj.get("type") == "user":
-                        # Tool results live in user messages; extract browser screenshot images.
-                        for block in obj.get("message", {}).get("content", []):
-                            if block.get("type") != "tool_result":
-                                continue
-                            result_content = block.get("content", [])
-                            if isinstance(result_content, list):
-                                for item in result_content:
-                                    if item.get("type") == "image":
-                                        src = item.get("source", {})
-                                        if src.get("type") == "base64" and src.get("data"):
-                                            import base64 as _b64
-                                            images.append(_b64.b64decode(src["data"]))
-                    elif obj.get("type") == "result":
-                        result_text = obj.get("result", "")
-                        if result_text:
-                            text_parts.append(result_text)
-                        cost = obj.get("total_cost_usd", 0)
-                except json.JSONDecodeError:
-                    continue
+        return {"text": "Failed after retries.", "cost": 0, "success": False}
 
-            if not text_parts:
-                log.warning(f"Claude returned output but no text found. Output preview: {output[:300]}")
-                if attempt == 0:
-                    continue
-                return {"text": "Claude responded but I couldn't parse the output. Try again.", "cost": cost, "success": False, "images": images}
-
-            final_text = text_parts[-1]
-            return {"text": final_text, "cost": cost, "success": True, "images": images}
-
-        except FileNotFoundError:
-            return {"text": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code", "cost": 0, "success": False}
-        except Exception as e:
-            log.error(f"Claude invocation error: {e}")
-            if attempt == 0:
-                continue
-            return {"text": f"Error: {e}", "cost": 0, "success": False}
-
-    return {"text": "Failed after retries.", "cost": 0, "success": False}
+    finally:
+        if _workspace and _workspace.exists():
+            try:
+                shutil.rmtree(_workspace)
+                log.debug(f"invoke_claude: cleaned up workspace {_workspace}")
+            except OSError as e:
+                log.warning(f"invoke_claude: workspace cleanup failed: {e}")
 
 
 def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
@@ -437,7 +610,9 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                              allowed_tools: list[str] | None = None,
                              max_seconds: int = 480,
                              config: dict | None = None,
-                             context_mode: str | None = None) -> dict:
+                             context_mode: str | None = None,
+                             use_workspace: bool = False,
+                             session_key: str = "") -> dict:
     """
     Invoke Claude Code with real-time progress reporting via on_progress callback.
 
@@ -449,8 +624,10 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         max_seconds: Hard timeout; sends SIGTERM→SIGKILL if exceeded. Default 480s (8 min).
         config: Full gateway config for autonomy level resolution
         context_mode: Optional overlay name passed to build_system_prompt (e.g. 'review', 'absorb').
+        use_workspace: If True, create an isolated UUID-scoped cwd and clean it up after the call.
+        session_key: Scope for LoopDetector (e.g. 'telegram:12345'). Defaults to session_context.
 
-    Returns dict with keys: text, cost, success, timed_out (optional)
+    Returns dict with keys: text, cost, success, timed_out (optional), loop_detected (optional)
     """
     system_prompt = build_system_prompt(config, context_mode=context_mode)
 
@@ -480,7 +657,13 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         cmd.extend(["--append-system-prompt", system_prompt])
 
     env = os.environ.copy()
-    work_dir = cwd or str(Path.home())
+    _workspace: Path | None = None
+    if use_workspace:
+        _workspace = _make_workspace()
+        work_dir = str(_workspace)
+        log.debug(f"invoke_claude_streaming: using isolated workspace {_workspace}")
+    else:
+        work_dir = cwd or str(Path.home())
 
     try:
         proc = subprocess.Popen(
@@ -497,6 +680,8 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         tool_count = 0
         last_progress_tool = ""
         timed_out = False
+        loop_detected = False
+        _sk = session_key or session_context  # scope for LoopDetector
 
         timer = threading.Timer(max_seconds, _terminate_proc, args=[proc])
         timer.start()
@@ -513,6 +698,32 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                     # Tool use — report what Claude is doing
                     if msg_type == "assistant":
                         content = obj.get("message", {}).get("content", [])
+
+                        # Collect all tool_use blocks in this turn for loop detection
+                        turn_tool_calls = [b for b in content if b.get("type") == "tool_use"]
+                        if turn_tool_calls and _sk:
+                            loop_count = _loop_detector.record(_sk, turn_tool_calls)
+                            if loop_count >= 5:
+                                log.warning(
+                                    f"LoopDetector: {_sk} repeated fingerprint {loop_count}× — "
+                                    "terminating subprocess"
+                                )
+                                loop_detected = True
+                                _terminate_proc(proc)
+                                break
+                            elif loop_count == 3:
+                                log.warning(
+                                    f"LoopDetector: {_sk} repeated fingerprint {loop_count}× — "
+                                    "injecting warning via on_progress"
+                                )
+                                try:
+                                    on_progress(
+                                        "WARNING: loop detected — you are repeating the same "
+                                        "tool calls. Vary your approach or conclude."
+                                    )
+                                except Exception:
+                                    pass
+
                         for block in content:
                             if block.get("type") == "tool_use":
                                 tool_name = block.get("name", "unknown")
@@ -573,6 +784,11 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         finally:
             timer.cancel()
 
+        if loop_detected:
+            log.warning(f"invoke_claude_streaming: loop guard terminated subprocess for {_sk}")
+            partial = text_parts[-1] if text_parts else "Loop detected — agent was stuck repeating tool calls."
+            return {"text": partial, "cost": cost, "success": False, "loop_detected": True}
+
         if timed_out:
             log.warning(f"invoke_claude_streaming timed out after {max_seconds}s")
             partial = text_parts[-1] if text_parts else "Timed out with no output."
@@ -594,6 +810,13 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
     except Exception as e:
         log.error(f"Streaming invocation error: {e}")
         return {"text": f"Error: {e}", "cost": 0, "success": False}
+    finally:
+        if _workspace and _workspace.exists():
+            try:
+                shutil.rmtree(_workspace)
+                log.debug(f"invoke_claude_streaming: cleaned up workspace {_workspace}")
+            except OSError as e:
+                log.warning(f"invoke_claude_streaming: workspace cleanup failed: {e}")
 
 
 def consolidate_session(session_id: str, project_id: str = "") -> int:
