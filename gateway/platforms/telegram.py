@@ -2033,7 +2033,16 @@ class TelegramAdapter(BasePlatformAdapter):
     # ── Photo/image handler ──────────────────────────────────────
 
     async def _handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle photos sent to the bot — download and pass to Claude."""
+        """Handle photos sent to the bot — download and pass to Claude for vision analysis.
+
+        Workflow:
+        1. Download highest-res photo to tmp/images/
+        2. Build prompt with image path + caption + reply context
+        3. Send to Claude (which uses Read tool to see the image)
+        4. Auto-TTS if voice mode is active
+        5. Offer absorb/learn if response contains URLs
+        6. Cleanup temp image file
+        """
         if not update.message:
             return
         if not self._is_allowed(update.message.from_user.id):
@@ -2041,11 +2050,16 @@ class TelegramAdapter(BasePlatformAdapter):
 
         caption = update.message.caption or ""
 
-        # If photo has a URL in the caption, offer absorb/learn
+        # If photo has a URL in the caption AND no other meaningful text, offer absorb/learn
         urls = self._extract_urls(caption) if caption else []
         if urls:
-            await self._offer_absorb_learn(update, urls[0], "link in image caption")
-            return
+            non_url_text = caption
+            for url in urls:
+                non_url_text = non_url_text.replace(url, "").strip()
+            if len(non_url_text) < 30:
+                # Caption is just a URL — user wants to absorb/learn, not analyze the photo
+                await self._offer_absorb_learn(update, urls[0], "link in image caption")
+                return
 
         # Download the photo (get highest resolution)
         photo = update.message.photo[-1]  # largest size
@@ -2057,7 +2071,7 @@ class TelegramAdapter(BasePlatformAdapter):
         try:
             file = await context.bot.get_file(photo.file_id)
             await file.download_to_drive(str(img_path))
-            log.info(f"Photo saved: {img_path}")
+            log.info(f"Photo saved: {img_path} ({photo.width}x{photo.height})")
         except Exception as e:
             log.error(f"Failed to download photo: {e}")
             await update.message.reply_text(f"Failed to download image: {e}")
@@ -2066,17 +2080,171 @@ class TelegramAdapter(BasePlatformAdapter):
         # Build prompt for Claude with the image path
         chat_id = str(update.message.chat_id)
         user_id = str(update.message.from_user.id)
+
+        # Resolve reply-to context (user may be replying to a message with a photo)
+        reply_text, reply_urls = self._get_reply_context(update)
+
         prompt = (
-            f"The user sent an image saved at: {img_path}\n"
+            f"[The user sent an image. It is saved at: {img_path}]\n"
             f"Read this image file and analyze it.\n"
         )
         if caption:
-            prompt += f"Caption: {caption}\n"
-        prompt += (
-            "\nDescribe what you see. If it's a screenshot of a tool, library, repo, "
-            "or technical content, extract the key info (name, URL, purpose). "
-            "If it contains code, transcribe and explain it."
+            prompt += f"\nUser's message with the image: {caption}\n"
+        if reply_text:
+            prompt += f"\n[This was sent as a reply to: {reply_text[:1500]}]\n"
+        if not caption:
+            prompt += (
+                "\nDescribe what you see. If it's a screenshot of a tool, library, repo, "
+                "or technical content, extract the key info (name, URL, purpose). "
+                "If it contains code, transcribe and explain it."
+            )
+
+        # Keep typing indicator alive
+        typing_active = True
+        async def keep_typing():
+            while typing_active:
+                try:
+                    await update.message.chat.send_action("typing")
+                except Exception:
+                    pass
+                await asyncio.sleep(4)
+
+        typing_task = asyncio.create_task(keep_typing())
+
+        try:
+            response = await self.on_message("telegram", chat_id, user_id, prompt)
+            if response:
+                # Check TTS auto-mode
+                config = self._gateway.config if self._gateway else {}
+                audio_reply, clean_response = await maybe_tts_reply(response, config, inbound_was_voice=False)
+
+                # Check if response mentions a URL or tool — offer absorb/learn
+                resp_urls = self._extract_urls(clean_response)
+
+                if audio_reply and audio_reply.exists():
+                    try:
+                        for i in range(0, len(clean_response), 4000):
+                            await update.message.reply_text(clean_response[i:i+4000])
+                        with open(audio_reply, "rb") as af:
+                            await update.message.reply_voice(voice=af)
+                    except Exception as e:
+                        log.warning(f"Failed to send TTS reply for photo: {e}")
+                    finally:
+                        audio_reply.unlink(missing_ok=True)
+                else:
+                    for i in range(0, len(clean_response), 4000):
+                        await update.message.reply_text(clean_response[i:i+4000])
+
+                if resp_urls:
+                    await self._offer_absorb_learn(update, resp_urls[0], "tool/repo detected in image")
+        except Exception as e:
+            log.error(f"Photo processing error: {e}")
+            await update.message.reply_text(f"Error processing image: {e}")
+        finally:
+            typing_active = False
+            typing_task.cancel()
+            # Cleanup temp image
+            try:
+                img_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    # ── Document/file handler ──────────────────────────────────────
+
+    async def _handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle documents sent to the bot — download and pass to Claude for analysis.
+
+        Supports: PDFs, code files, text files, images sent as documents, etc.
+        Claude's Read tool can handle images, PDFs, and text files natively.
+
+        Workflow:
+        1. Download document to tmp/documents/
+        2. Build prompt with file path + caption + reply context
+        3. Send to Claude (which uses Read tool to analyze the file)
+        4. Offer absorb/learn if response contains URLs
+        5. Cleanup temp file
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        doc = update.message.document
+        if not doc:
+            return
+
+        caption = update.message.caption or ""
+
+        # If caption is just a URL, offer absorb/learn
+        urls = self._extract_urls(caption) if caption else []
+        if urls:
+            non_url_text = caption
+            for url in urls:
+                non_url_text = non_url_text.replace(url, "").strip()
+            if len(non_url_text) < 30:
+                await self._offer_absorb_learn(update, urls[0], "link in document caption")
+                return
+
+        # Size guard — skip files > 50MB
+        file_size = doc.file_size or 0
+        if file_size > 50 * 1024 * 1024:
+            await update.message.reply_text(
+                f"File too large ({file_size / 1024 / 1024:.1f} MB). Max supported: 50 MB."
+            )
+            return
+
+        # Download the document
+        doc_dir = EXODIR / "tmp" / "documents"
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        original_name = doc.file_name or "unnamed"
+        # Sanitize filename
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in original_name)
+        doc_path = doc_dir / f"{timestamp}_{safe_name}"
+
+        try:
+            file = await context.bot.get_file(doc.file_id)
+            await file.download_to_drive(str(doc_path))
+            log.info(f"Document saved: {doc_path} ({file_size} bytes, mime={doc.mime_type})")
+        except Exception as e:
+            log.error(f"Failed to download document: {e}")
+            await update.message.reply_text(f"Failed to download file: {e}")
+            return
+
+        # Build prompt for Claude with the file path
+        chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+
+        # Resolve reply-to context
+        reply_text, reply_urls = self._get_reply_context(update)
+
+        # Determine file type hint
+        mime = doc.mime_type or ""
+        if mime.startswith("image/"):
+            file_hint = "image file"
+        elif mime == "application/pdf":
+            file_hint = "PDF document"
+        elif mime.startswith("text/") or mime in ("application/json", "application/xml", "application/javascript"):
+            file_hint = "text/code file"
+        elif any(safe_name.endswith(ext) for ext in (".py", ".ts", ".js", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".sol", ".md", ".txt", ".csv", ".toml", ".yaml", ".yml", ".json", ".xml", ".html", ".css", ".sh", ".sql")):
+            file_hint = "text/code file"
+        else:
+            file_hint = f"file (MIME: {mime})" if mime else "file"
+
+        prompt = (
+            f"[The user sent a {file_hint}: \"{original_name}\" saved at: {doc_path}]\n"
+            f"Read this file and analyze its contents.\n"
         )
+        if caption:
+            prompt += f"\nUser's message with the file: {caption}\n"
+        if reply_text:
+            prompt += f"\n[This was sent as a reply to: {reply_text[:1500]}]\n"
+        if not caption:
+            prompt += (
+                "\nProvide a summary of the file contents. If it's code, explain what it does. "
+                "If it's a PDF or document, extract key information. "
+                "If it's an image, describe what you see."
+            )
 
         # Keep typing indicator alive
         typing_active = True
@@ -2095,19 +2263,21 @@ class TelegramAdapter(BasePlatformAdapter):
             if response:
                 # Check if response mentions a URL or tool — offer absorb/learn
                 resp_urls = self._extract_urls(response)
+                for i in range(0, len(response), 4000):
+                    await update.message.reply_text(response[i:i+4000])
                 if resp_urls:
-                    for i in range(0, len(response), 4000):
-                        await update.message.reply_text(response[i:i+4000])
-                    await self._offer_absorb_learn(update, resp_urls[0], "tool/repo detected in image")
-                else:
-                    for i in range(0, len(response), 4000):
-                        await update.message.reply_text(response[i:i+4000])
+                    await self._offer_absorb_learn(update, resp_urls[0], "tool/repo detected in document")
         except Exception as e:
-            log.error(f"Photo processing error: {e}")
-            await update.message.reply_text(f"Error processing image: {e}")
+            log.error(f"Document processing error: {e}")
+            await update.message.reply_text(f"Error processing file: {e}")
         finally:
             typing_active = False
             typing_task.cancel()
+            # Cleanup temp document
+            try:
+                doc_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     # ── /screenshot — capture URL and send as photo ───────────────
 
@@ -3070,6 +3240,9 @@ class TelegramAdapter(BasePlatformAdapter):
 
         # Photo handler
         self.app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo))
+
+        # Document/file handler
+        self.app.add_handler(MessageHandler(filters.Document.ALL, self._handle_document))
 
         # Voice/audio handler
         self.app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, self._handle_voice))

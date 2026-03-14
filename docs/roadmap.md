@@ -82,10 +82,11 @@ Integration plan for new capabilities. Ordered by impact/effort ratio.
 
 | Item | Priority | Status |
 |------|----------|--------|
-| Firecrawl CLI + Skill | P0 | Planned |
-| Cloudflare /crawl Skill | P0 | Planned |
-| Vision (photo handler) | P1 | Planned |
-| Edge TTS / `/speak` | P1 | Planned |
+| Firecrawl CLI + Skill | P0 | **Done** — CLI installed, skill created. Needs `firecrawl login` to authenticate. |
+| Cloudflare /crawl Skill | P0 | **Done** — skill created. Needs `CF_API_TOKEN` + `CF_ACCOUNT_ID` in .env. |
+| Vision (photo handler) | P1 | **Done** — `_handle_photo` wired with cleanup, reply context, TTS. |
+| Document handler | P1 | **Done** — `_handle_document` for PDFs, code files, text files. |
+| Edge TTS / `/speak` | P1 | **Done** — voice.py with edge-tts + whisper.cpp STT. |
 | Docker Sandbox | P2 | Planned |
 | E2B | P3 | Planned |
 | Daytona | P3 | Planned |
