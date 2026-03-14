@@ -1,7 +1,7 @@
 [
   {
     "id": "evolve-daily",
-    "description": "Daily agenticEvolve pipeline — collect signals, analyze, build skills, push to repo",
+    "description": "Daily agenticEvolve pipeline \u2014 collect signals, analyze, build skills, push to repo",
     "prompt": "Run the full agenticEvolve evolve pipeline now.\n\nDo the following in order:\n\n1. Use the Bash tool to run: bash ~/.agenticEvolve/collectors/github.sh\n2. Use the Bash tool to run: bash ~/.agenticEvolve/collectors/hackernews.sh\n3. Use the Bash tool to run: bash ~/.agenticEvolve/collectors/x-search.sh\n4. Read all signal files from ~/.agenticEvolve/signals/<today's date>/ and score each on RELEVANCE, NOVELTY, and ACTIONABILITY (0-9 each). Keep only candidates with composite score >= 7.0.\n5. For each top candidate (up to 3), build a Claude Code skill in ~/.agenticEvolve/skills-queue/<name>/SKILL.md following the skill-creator quality standards (YAML frontmatter with 'Use when...' description, under 100 lines, no secrets).\n6. Review each built skill for security (no hardcoded secrets), quality (clear instructions, valid YAML), and correctness (no placeholder values). Approve or reject each.\n7. Use the Bash tool to run: cd ~/Desktop/projects/agenticEvolve && git add -A && git commit -m 'chore: evolve cycle $(date +%Y-%m-%d)' && git push origin main\n8. Return a concise summary: signals collected, candidates found, skills built, skills approved/rejected, git push status.",
     "schedule_type": "cron",
     "cron": "0 6 * * *",
@@ -16,7 +16,7 @@
   },
   {
     "id": "daily-digest",
-    "description": "Morning briefing — top signals, skills built, sessions, cost",
+    "description": "Morning briefing \u2014 top signals, skills built, sessions, cost",
     "prompt": "native:digest",
     "schedule_type": "cron",
     "cron": "0 8 * * *",
@@ -39,14 +39,14 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-14T17:00:00Z",
-    "run_count": 0,
+    "next_run_at": "2026-03-15T17:00:00+00:00",
+    "run_count": 1,
     "paused": false,
-    "last_run_at": null
+    "last_run_at": "2026-03-14T17:00:35.532521+00:00"
   },
   {
     "id": "wechat-digest",
-    "description": "Daily WeChat group chat digest — summarize key discussions, tools, and insights",
+    "description": "Daily WeChat group chat digest \u2014 summarize key discussions, tools, and insights",
     "prompt": "native:wechat-digest",
     "schedule_type": "cron",
     "cron": "0 9 * * *",

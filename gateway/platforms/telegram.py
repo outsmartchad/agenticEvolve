@@ -36,6 +36,7 @@ class TelegramAdapter(BasePlatformAdapter):
         self.allowed_users = set(str(u) for u in config.get("allowed_users", []))
         self.app = None
         self._gateway = None  # set by GatewayRunner after creation
+        self._user_lang: dict[str, str] = {}  # user_id -> language code (e.g. "zh", "en", "ja")
 
     def _get_reply_context(self, update) -> tuple[str, list[str]]:
         """Extract text and URLs from the message being replied to.
@@ -175,6 +176,65 @@ class TelegramAdapter(BasePlatformAdapter):
                         raw_args.pop(idx)
                         break
         return result
+
+    # ── Language preference ─────────────────────────────────────
+
+    LANG_NAMES = {
+        "zh": "Simplified Chinese (简体中文)",
+        "zh-tw": "Traditional Chinese (繁體中文)",
+        "en": "English",
+        "ja": "Japanese (日本語)",
+        "ko": "Korean (한국어)",
+        "es": "Spanish (Español)",
+        "fr": "French (Français)",
+        "de": "German (Deutsch)",
+        "pt": "Portuguese (Português)",
+        "ru": "Russian (Русский)",
+    }
+
+    def _get_lang_instruction(self, user_id: str) -> str:
+        """Return a prompt suffix for the user's preferred language, or '' if unset/English."""
+        lang = self._user_lang.get(str(user_id))
+        if not lang or lang == "en":
+            return ""
+        name = self.LANG_NAMES.get(lang, lang)
+        return f"\n\nIMPORTANT: Write your ENTIRE response in {name}."
+
+    async def _handle_lang(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Set or view your preferred output language.
+
+        Usage: /lang [code]  — e.g. /lang zh, /lang en, /lang ja
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        user_id = str(update.message.from_user.id)
+        args = context.args if context.args else []
+
+        if not args:
+            current = self._user_lang.get(user_id, "en")
+            name = self.LANG_NAMES.get(current, current)
+            codes = ", ".join(f"`{k}`" for k in sorted(self.LANG_NAMES))
+            await update.message.reply_text(
+                f"*Current language:* {name} (`{current}`)\n\n"
+                f"*Set:* `/lang <code>`\n"
+                f"Codes: {codes}\n\n"
+                f"This affects all long-running commands (/produce, /learn, /evolve, /absorb, /wechat).",
+                parse_mode="Markdown"
+            )
+            return
+
+        code = args[0].lower().strip()
+        if code == "reset" or code == "off":
+            self._user_lang.pop(user_id, None)
+            await update.message.reply_text("Language reset to English.")
+            return
+
+        self._user_lang[user_id] = code
+        name = self.LANG_NAMES.get(code, code)
+        await update.message.reply_text(f"Output language set to: {name} (`{code}`)", parse_mode="Markdown")
 
     def _make_progress_tracker(self, chat_id: str, loop, pipeline_stages: list[str] | None = None):
         """Create a live-editing progress tracker for long-running commands.
@@ -431,6 +491,8 @@ class TelegramAdapter(BasePlatformAdapter):
             "/digest [--days N] — Morning briefing\n\n"
             "Maintenance\n"
             "/gc [--dry-run] — Garbage collection\n\n"
+            "Settings\n"
+            "/lang [code] — Set output language (zh, en, ja, ko, ...)\n\n"
             "Natural Language\n"
             "/do <instruction> [--preview] — Parse intent + run command\n\n"
             "Or just send any message to chat with Claude."
@@ -1193,6 +1255,11 @@ class TelegramAdapter(BasePlatformAdapter):
             )
 
         model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
+
+        # Inject language preference into prompt
+        lang_instruction = self._get_lang_instruction(user_id)
+        if lang_instruction:
+            learn_prompt += lang_instruction
 
         # Dry run: show security scan result and what would be analyzed, then stop
         if dry_run:
@@ -2786,6 +2853,8 @@ class TelegramAdapter(BasePlatformAdapter):
         model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
 
         chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+        lang_instruction = self._get_lang_instruction(user_id)
         await update.message.reply_text(
             f"Aggregating signals from all sources...\n"
             f"Brainstorming {num_ideas} business ideas.\n~2-4 min."
@@ -2798,7 +2867,7 @@ class TelegramAdapter(BasePlatformAdapter):
         start_reporter()
         try:
             result_text, cost = await loop.run_in_executor(
-                None, lambda: self._build_produce(num_ideas, model, on_progress_sync)
+                None, lambda: self._build_produce(num_ideas, model, on_progress_sync, lang_instruction)
             )
         except Exception as e:
             stop_reporter()
@@ -2824,7 +2893,7 @@ class TelegramAdapter(BasePlatformAdapter):
             self._gateway._log_cost("telegram", "produce", cost)
 
     def _build_produce(self, num_ideas: int, model: str,
-                        on_progress: Callable) -> tuple[str, float]:
+                        on_progress: Callable, lang_instruction: str = "") -> tuple[str, float]:
         """Aggregate signals and brainstorm business ideas. Runs in executor thread."""
         import glob as _glob
         from datetime import datetime as _dt
@@ -2933,6 +3002,7 @@ class TelegramAdapter(BasePlatformAdapter):
             f"Rank ideas by feasibility × market timing × revenue potential.\n"
             f"Be brutally honest about risks and challenges for each.\n"
             f"Use Markdown formatting."
+            + lang_instruction
         )
 
         result = invoke_claude_streaming(
@@ -2974,6 +3044,8 @@ class TelegramAdapter(BasePlatformAdapter):
         model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
 
         chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+        lang_instruction = self._get_lang_instruction(user_id)
         await update.message.reply_text(f"Reading WeChat groups (last {hours}h)...\n~1-2 min.")
 
         loop = asyncio.get_running_loop()
@@ -2983,7 +3055,7 @@ class TelegramAdapter(BasePlatformAdapter):
         start_reporter()
         try:
             summary, cost = await loop.run_in_executor(
-                None, lambda: self._build_wechat_digest(hours, model, on_progress_sync)
+                None, lambda: self._build_wechat_digest(hours, model, on_progress_sync, lang_instruction)
             )
         except Exception as e:
             stop_reporter()
@@ -3009,7 +3081,7 @@ class TelegramAdapter(BasePlatformAdapter):
             self._gateway._log_cost("telegram", "wechat-digest", cost)
 
     def _build_wechat_digest(self, hours: int, model: str,
-                             on_progress: Callable) -> tuple[str, float]:
+                             on_progress: Callable, lang_instruction: str = "") -> tuple[str, float]:
         """Build WeChat group chat digest using Claude. Runs in executor thread."""
         from pathlib import Path as _Path
         import sys
@@ -3083,6 +3155,7 @@ class TelegramAdapter(BasePlatformAdapter):
             f"(Combined actionable items across ALL groups, prioritized)\n\n"
             f"Be concise. Skip small talk and irrelevant messages. Focus on signal, not noise.\n"
             f"Use Markdown formatting. ALWAYS respond in simplified Chinese (简体中文) since the messages are from Chinese group chats."
+            + (lang_instruction if lang_instruction else "")
         )
 
         result = invoke_claude_streaming(
@@ -3441,6 +3514,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "wechat": self._handle_wechat,
             "digest": self._handle_digest,
             "produce": self._handle_produce,
+            "lang": self._handle_lang,
         }
 
         handler = handler_map.get(cmd_name)
@@ -3620,6 +3694,7 @@ class TelegramAdapter(BasePlatformAdapter):
             "wechat": self._handle_wechat,
             "digest": self._handle_digest,
             "produce": self._handle_produce,
+            "lang": self._handle_lang,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -3677,6 +3752,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 BotCommand("pause", "Pause a cron job"),
                 BotCommand("unpause", "Resume a paused cron job"),
                 BotCommand("produce", "Brainstorm business ideas from signals"),
+                BotCommand("lang", "Set output language (e.g. /lang zh)"),
                 BotCommand("wechat", "WeChat group chat digest"),
                 BotCommand("digest", "Morning briefing"),
             ])
