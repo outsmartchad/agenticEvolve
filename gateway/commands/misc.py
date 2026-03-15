@@ -29,13 +29,15 @@ class MiscMixin:
 
     async def _offer_absorb_learn(self, update: Update, target: str, target_type: str = "link"):
         """Show inline keyboard asking user if they want to absorb/learn a target."""
+        # Pass URL as payload so "Just chat" can still respond about it
+        chat_payload = target[:180] if target.startswith("http") else "proceed"
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("Absorb", callback_data=f"absorb:{target[:200]}"),
                 InlineKeyboardButton("Learn", callback_data=f"learn:{target[:200]}"),
             ],
             [
-                InlineKeyboardButton("Just chat", callback_data="chat:proceed"),
+                InlineKeyboardButton("Just chat", callback_data=f"chat:{chat_payload}"),
             ]
         ])
         await update.message.reply_text(
@@ -199,8 +201,29 @@ class MiscMixin:
                 log.error(f"Callback learn error: {e}")
                 await self.app.bot.send_message(chat_id=int(chat_id), text=f"Learn failed: {e}")
 
-        elif data == "chat:proceed":
-            await query.edit_message_text("Got it, continuing as normal chat.")
+        elif data.startswith("chat:"):
+            # Extract the original URL if present, otherwise just acknowledge
+            payload = data[5:]  # everything after "chat:"
+            await query.edit_message_text("Got it.")
+
+            # If there's a URL payload, pass it to Claude so the user gets an actual response
+            if payload and payload != "proceed" and payload.startswith("http"):
+                user_id = str(query.from_user.id)
+                response = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: __import__("gateway.agent", fromlist=["invoke_claude"]).invoke_claude(
+                        f"The user shared this link: {payload}\n\nBriefly describe what this is or answer any implicit question.",
+                        model=self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet",
+                    )
+                )
+                text = response.get("text", "") if isinstance(response, dict) else str(response)
+                if text:
+                    try:
+                        await self.app.bot.send_message(
+                            chat_id=int(chat_id), text=text[:4000], parse_mode="Markdown"
+                        )
+                    except Exception:
+                        await self.app.bot.send_message(chat_id=int(chat_id), text=text[:4000])
 
     async def _handle_restart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Restart the gateway process remotely via Telegram."""

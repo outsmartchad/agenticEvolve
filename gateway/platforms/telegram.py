@@ -322,17 +322,26 @@ class TelegramAdapter(
             return f"{secs // 60}m{secs % 60:02d}s"
 
         def _stage_bar() -> str:
-            """Build compact stage progress indicator."""
+            """Build compact stage progress indicator with done/current/pending states."""
             if not stages:
                 return ""
             current = state["stage"].lower()
+            seen_lower = [s.lower() for s in state["stages_seen"]]
+            # Determine the index of the current stage in the pipeline
+            current_idx = -1
+            for i, s in enumerate(stages):
+                if s.lower() in current or current in s.lower():
+                    current_idx = i
+                    break
             parts = []
-            for s in stages:
+            for i, s in enumerate(stages):
                 sl = s.lower()
-                if sl in current or current in sl:
+                is_current = (sl in current or current in sl)
+                is_done = any(sl in seen or seen in sl for seen in seen_lower) and not is_current
+                if is_current:
                     parts.append(f"[{s.upper()}]")
-                elif any(sl in seen.lower() or seen.lower() in sl for seen in state["stages_seen"]):
-                    parts.append(s.lower())
+                elif is_done or (current_idx > i):
+                    parts.append(f"v{s}")  # v prefix = done
                 else:
                     parts.append(s.lower())
             return " > ".join(parts)
@@ -454,16 +463,26 @@ class TelegramAdapter(
             )
 
         # Detect URLs — offer absorb/learn if the message is primarily a link
+        # Skip social/media URLs — pass them straight to Claude as chat context
+        _SOCIAL_HOSTS = (
+            "youtube.com", "youtu.be",
+            "x.com", "twitter.com",
+            "instagram.com", "tiktok.com",
+            "reddit.com", "facebook.com",
+        )
         urls = self._extract_urls(text)
         if urls:
             # If the message is mostly just a URL (link share), offer absorb/learn
             non_url_text = text
             for url in urls:
                 non_url_text = non_url_text.replace(url, "").strip()
-            if len(non_url_text) < 30:
-                # Message is primarily a link share
-                await self._offer_absorb_learn(update, urls[0], "link")
+            first_url = urls[0]
+            is_social = any(h in first_url for h in _SOCIAL_HOSTS)
+            if len(non_url_text) < 30 and not is_social:
+                # Message is primarily a dev/repo link — offer absorb/learn
+                await self._offer_absorb_learn(update, first_url, "link")
                 return
+            # Social/media links or URLs with context → fall through to Claude chat
 
         # General chat via Claude (use /do for intent parsing)
         typing_active = True
