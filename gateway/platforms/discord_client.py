@@ -216,6 +216,11 @@ class DiscordClientAdapter(BasePlatformAdapter):
                         continue
 
                     # Process messages oldest first
+                    # For served channels: batch all new messages into one combined
+                    # prompt to avoid double-replying
+                    is_served = channel_id in self._serve_channels
+                    pending = []  # (msg_obj, author_id, text) tuples
+
                     for msg in reversed(msgs):
                         self._last_msg_id[channel_id] = msg["id"]
 
@@ -226,7 +231,7 @@ class DiscordClientAdapter(BasePlatformAdapter):
 
                         # Served channels: accept ALL users (no allowed_users gate)
                         # Non-served channels: check allowed_users
-                        if channel_id not in self._serve_channels:
+                        if not is_served:
                             if not self._is_allowed(author_id):
                                 continue
 
@@ -235,7 +240,7 @@ class DiscordClientAdapter(BasePlatformAdapter):
                             continue
 
                         # Store messages from served channels for digests
-                        if channel_id in self._serve_channels:
+                        if is_served:
                             try:
                                 from ..session_db import store_platform_message
                                 author_name = msg.get("author", {}).get("username", "?")
@@ -243,19 +248,44 @@ class DiscordClientAdapter(BasePlatformAdapter):
                             except Exception as e:
                                 log.debug(f"Failed to store Discord message: {e}")
 
-                        log.info(
-                            f"Discord message from {msg['author'].get('username')} "
-                            f"in {channel_id}: {text[:50]}"
-                        )
+                        pending.append((msg, author_id, text))
+
+                    if not pending:
+                        continue
+
+                    if is_served and len(pending) > 1:
+                        # Batch: combine into one message with author labels
+                        lines = []
+                        for msg, aid, text in pending:
+                            username = msg.get("author", {}).get("username", "?")
+                            lines.append(f"{username}: {text}")
+                        combined = "\n".join(lines)
+                        last_msg = pending[-1][0]
+                        log.info(f"Discord batch ({len(pending)} msgs) in {channel_id}")
 
                         try:
                             response = await self.on_message(
-                                "discord", channel_id, author_id, text
+                                "discord", channel_id, pending[-1][1], combined
                             )
                             if response:
-                                await self.send(channel_id, response, reply_to=msg["id"])
+                                await self.send(channel_id, response, reply_to=last_msg["id"])
                         except Exception as e:
                             log.error(f"Discord handler error: {e}")
+                    else:
+                        # Single message or non-served: process individually
+                        for msg, author_id, text in pending:
+                            log.info(
+                                f"Discord message from {msg['author'].get('username')} "
+                                f"in {channel_id}: {text[:50]}"
+                            )
+                            try:
+                                response = await self.on_message(
+                                    "discord", channel_id, author_id, text
+                                )
+                                if response:
+                                    await self.send(channel_id, response, reply_to=msg["id"])
+                            except Exception as e:
+                                log.error(f"Discord handler error: {e}")
 
                 await asyncio.sleep(2)  # Poll every 2 seconds
             except asyncio.CancelledError:
