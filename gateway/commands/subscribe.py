@@ -507,9 +507,9 @@ class SubscribeMixin:
             add_subscription(user_id, platform, target_id, target_name, target_type, mode)
             action = "Subscribed to" if mode == "subscribe" else "Now serving"
 
-            # For serve mode, dynamically update the adapter
-            if mode == "serve":
-                self._update_serve_targets(platform)
+        # For serve mode, dynamically update the adapter (both add and remove)
+        if mode == "serve":
+            self._update_serve_targets(platform)
 
         await query.answer(f"{action} {target_name}")
 
