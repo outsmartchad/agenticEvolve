@@ -76,47 +76,43 @@
 
 ## セットアップ
 
-**前提条件：** Python 3.11+、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）、Node.js 18+
-
-### クイックインストール
+### 1. インストール
 
 ```bash
-git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-cd ~/.agenticEvolve && ae setup
+curl -fsSL https://raw.githubusercontent.com/outsmartchad/agenticEvolve/main/scripts/install.sh | bash
 ```
 
-セットアップウィザードがすべてを処理します——設定ファイル、Telegramボットトークン、ユーザーID、Python依存関係、およびオプションのlaunchdサービスインストール。
+インストーラーがすべてを処理します——クローン、依存関係、PATH設定、対話式セットアップウィザードの実行。前提条件はPython 3とgitのみ。
 
-### 手動インストール
-
-手動で設定する場合：
+インストール後：
 
 ```bash
-git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-cd ~/.agenticEvolve
-pip install -r requirements.txt
-cp config.yaml.example config.yaml
-cp .env.example .env
+source ~/.zshrc    # シェルをリロード（または: source ~/.bashrc）
 ```
 
-`.env` を編集 — Telegramボットトークンを追加（[@BotFather](https://t.me/BotFather) から取得）：
-```bash
-TELEGRAM_BOT_TOKEN=your-token-here
-TELEGRAM_CHAT_ID=your-user-id       # cronジョブの配信用
-```
+> **必要：** [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）— インストーラーが存在を確認し、未インストールの場合はインストールコマンドを表示します。
 
-`config.yaml` を編集 — TelegramユーザーIDを追加（[@userinfobot](https://t.me/userinfobot) から取得）：
-```yaml
-platforms:
-  telegram:
-    allowed_users: [your-user-id]
-```
+### 2. ゲートウェイを起動
 
-ゲートウェイを起動：
 ```bash
 ae gateway start
-# または: cd ~/.agenticEvolve && python3 -m gateway.run
 ```
+
+### 3. チャット
+
+Telegramでボットにメッセージを送る。それだけ。
+
+### 便利なコマンド
+
+| コマンド | 機能 |
+|----------|------|
+| `ae setup` | セットアップウィザードを再実行 |
+| `ae doctor` | 問題を診断 |
+| `ae gateway start` | ゲートウェイを起動 |
+| `ae gateway stop` | ゲートウェイを停止 |
+| `ae gateway install` | launchdサービスとしてインストール（ログイン時に自動起動） |
+| `ae status` | システム概要 |
+| `ae cost` | 使用量とコスト |
 
 ### 音声サポート（オプション）
 
@@ -124,12 +120,6 @@ ae gateway start
 brew install whisper-cpp ffmpeg
 curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
-```
-
-### 診断
-
-```bash
-ae doctor    # すべての前提条件と設定をチェック
 ```
 
 ---
@@ -140,8 +130,6 @@ ae doctor    # すべての前提条件と設定をチェック
 |----------|------|
 | _(任意のメッセージ)_ | Claude Codeとチャット |
 | _(音声メッセージ)_ | 自動転写（whisper.cpp）+ 応答（音声モード時は音声も返信） |
-| _(画像送信)_ | ビジョン分析——スクリーンショット認識、図表理解、OCR、UI検査 |
-| _(ファイル送信)_ | ファイル分析——PDF、コードファイル、テキストファイル |
 | `/evolve` | シグナルをスキャン、スキルを構築・自動インストール |
 | `/absorb <url>` | 任意のリポジトリからパターンを吸収 |
 | `/learn <target>` | 深掘り分析と判定 |

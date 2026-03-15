@@ -76,47 +76,43 @@
 
 ## 安装
 
-**前置条件：** Python 3.11+、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）、Node.js 18+
-
-### 快速安装
+### 1. 安装
 
 ```bash
-git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-cd ~/.agenticEvolve && ae setup
+curl -fsSL https://raw.githubusercontent.com/outsmartchad/agenticEvolve/main/scripts/install.sh | bash
 ```
 
-安装向导会处理一切——配置文件、Telegram 机器人令牌、用户 ID、Python 依赖，以及可选的 launchd 服务安装。
+安装程序会处理一切——克隆、依赖、PATH 配置，并运行交互式安装向导。除 Python 3 和 git 外无需任何前置条件。
 
-### 手动安装
-
-如果你更喜欢手动配置：
+安装完成后：
 
 ```bash
-git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-cd ~/.agenticEvolve
-pip install -r requirements.txt
-cp config.yaml.example config.yaml
-cp .env.example .env
+source ~/.zshrc    # 重载 shell（或：source ~/.bashrc）
 ```
 
-编辑 `.env` — 添加你的 Telegram 机器人令牌（从 [@BotFather](https://t.me/BotFather) 获取）：
-```bash
-TELEGRAM_BOT_TOKEN=your-token-here
-TELEGRAM_CHAT_ID=your-user-id       # 用于定时任务推送
-```
+> **需要：** [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）——安装程序会检测是否已安装，未安装时显示安装命令。
 
-编辑 `config.yaml` — 添加你的 Telegram 用户 ID（从 [@userinfobot](https://t.me/userinfobot) 获取）：
-```yaml
-platforms:
-  telegram:
-    allowed_users: [your-user-id]
-```
+### 2. 启动网关
 
-启动网关：
 ```bash
 ae gateway start
-# 或者: cd ~/.agenticEvolve && python3 -m gateway.run
 ```
+
+### 3. 开始对话
+
+在 Telegram 上给你的机器人发消息。就这么简单。
+
+### 常用命令
+
+| 命令 | 功能 |
+|------|------|
+| `ae setup` | 重新运行安装向导 |
+| `ae doctor` | 诊断问题 |
+| `ae gateway start` | 启动网关 |
+| `ae gateway stop` | 停止网关 |
+| `ae gateway install` | 安装为 launchd 服务（登录时自动启动） |
+| `ae status` | 系统概览 |
+| `ae cost` | 使用量和开销 |
 
 ### 语音支持（可选）
 
@@ -124,12 +120,6 @@ ae gateway start
 brew install whisper-cpp ffmpeg
 curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
-```
-
-### 诊断
-
-```bash
-ae doctor    # 检查所有前置条件和配置
 ```
 
 ---
@@ -140,8 +130,6 @@ ae doctor    # 检查所有前置条件和配置
 |------|------|
 | _(任意消息)_ | 与 Claude Code 对话 |
 | _(语音消息)_ | 自动转写（whisper.cpp）+ 回复（语音模式下附带语音） |
-| _(发送图片)_ | 视觉分析——截图识别、图表理解、OCR、UI 检查 |
-| _(发送文件)_ | 文件分析——PDF、代码文件、文本文件 |
 | `/evolve` | 扫描信号，构建并自动安装技能 |
 | `/absorb <url>` | 从任意仓库吸收模式 |
 | `/learn <target>` | 深度分析并给出判定 |
