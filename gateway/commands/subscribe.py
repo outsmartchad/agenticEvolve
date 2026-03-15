@@ -601,7 +601,9 @@ class SubscribeMixin:
 
         if platform == "discord" and hasattr(adapter, "watch_channels"):
             channel_ids = {t["target_id"] for t in targets if t["target_type"] in ("channel", "dm")}
-            adapter.watch_channels = channel_ids
+            # Merge serve channels into watch_channels (keep config channels too)
+            adapter._serve_channels = channel_ids
+            adapter.watch_channels |= channel_ids
             # Restart polling if needed
             if hasattr(adapter, "_poll_task") and adapter._poll_task:
                 adapter._poll_task.cancel()

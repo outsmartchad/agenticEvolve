@@ -29,6 +29,7 @@ class DiscordClientAdapter(BasePlatformAdapter):
         super().__init__(config, on_message)
         self.allowed_users = set(str(u) for u in config.get("allowed_users", []))
         self.watch_channels = set(str(c) for c in config.get("watch_channels", []))
+        self._serve_channels: set[str] = set()  # channels where agent responds to ALL users
         self.token: Optional[str] = None
         self.user_id: Optional[str] = None
         self._cdp_ws = None
@@ -87,7 +88,20 @@ class DiscordClientAdapter(BasePlatformAdapter):
             self.user_id = user.get("id")
             log.info(f"Discord client connected as {user.get('username')} (ID: {self.user_id})")
 
-        # Step 4: Start message polling
+        # Step 4: Load serve targets from DB and merge into watch_channels
+        try:
+            from ..session_db import get_serve_targets
+            targets = get_serve_targets("discord")
+            for t in targets:
+                tid = str(t["target_id"])
+                self.watch_channels.add(tid)
+                self._serve_channels.add(tid)
+            if targets:
+                log.info(f"Loaded {len(targets)} Discord serve targets from DB")
+        except Exception as e:
+            log.warning(f"Failed to load Discord serve targets: {e}")
+
+        # Step 5: Start message polling
         # CDP WebSocket frame interception doesn't work for ETF+zstd,
         # so we poll the REST API for new messages in watched channels
         if self.watch_channels:
@@ -210,9 +224,11 @@ class DiscordClientAdapter(BasePlatformAdapter):
                         if author_id == self.user_id:
                             continue
 
-                        # Check allowed users
-                        if not self._is_allowed(author_id):
-                            continue
+                        # Served channels: accept ALL users (no allowed_users gate)
+                        # Non-served channels: check allowed_users
+                        if channel_id not in self._serve_channels:
+                            if not self._is_allowed(author_id):
+                                continue
 
                         text = msg.get("content", "")
                         if not text:
