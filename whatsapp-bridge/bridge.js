@@ -6,11 +6,13 @@
  * Inbound (stdout → Python):
  *   { "type": "qr", "qr": "<qr_string>" }
  *   { "type": "ready" }
- *   { "type": "message", "chat_id": "...", "user_id": "...", "text": "..." }
+ *   { "type": "message", "chat_id": "...", "user_id": "...", "text": "...", "message_id": "..." }
  *   { "type": "error", "error": "..." }
+ *   { "type": "history_messages", "request_id": "...", "chat_id": "...", "messages": [...] }
  *
  * Outbound (stdin ← Python):
  *   { "type": "send", "chat_id": "...", "text": "..." }
+ *   { "type": "fetch_messages", "chat_id": "...", "count": 50 }
  */
 
 const {
@@ -33,6 +35,12 @@ let sock = null;
 
 // Track all seen chat JIDs (contacts + groups) from incoming messages
 const seenChats = new Map(); // jid -> { name, lastSeen }
+
+// Track latest message key per chat (needed as anchor for fetchMessageHistory)
+const latestMsgKeys = new Map(); // chatJid -> { key: WAMessageKey, timestamp: number }
+
+// Pending history fetch requests: requestId -> { resolve, timer }
+const pendingHistoryFetches = new Map();
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -107,6 +115,18 @@ async function startBridge() {
       // For groups, participant is the sender. For DMs, it's the chat itself.
       const userId = msg.key.participant || chatId;
 
+      // Track message key as anchor for history fetching
+      const msgTs = typeof msg.messageTimestamp === "number"
+        ? msg.messageTimestamp
+        : (msg.messageTimestamp?.toNumber?.() || Math.floor(Date.now() / 1000));
+      const existing = latestMsgKeys.get(chatId);
+      if (!existing || msgTs > existing.timestamp) {
+        latestMsgKeys.set(chatId, {
+          key: msg.key,
+          timestamp: msgTs,
+        });
+      }
+
       // Track seen JIDs for contact/group listing
       if (chatId && !chatId.endsWith("@broadcast")) {
         seenChats.set(chatId, {
@@ -127,9 +147,6 @@ async function startBridge() {
         msg.message?.extendedTextMessage?.text ||
         null;
 
-
-
-
       if (!text) continue;
 
       emit({
@@ -138,7 +155,66 @@ async function startBridge() {
         user_id: userId,
         sender_name: msg.pushName || userId.split("@")[0],
         text,
+        message_id: msg.key.id,
+        timestamp: msgTs,
       });
+    }
+  });
+
+  // ── History sync handler (for fetchMessageHistory responses) ──
+
+  sock.ev.on("messaging-history.set", ({ messages, peerDataRequestSessionId }) => {
+    // Route history messages to any pending fetch request
+    if (peerDataRequestSessionId) {
+      for (const [reqId, pending] of pendingHistoryFetches) {
+        if (pending.sessionId === peerDataRequestSessionId) {
+          // Extract text messages from history
+          const extracted = [];
+          for (const msg of messages) {
+            const chatId = msg.key?.remoteJid;
+            const userId = msg.key?.participant || chatId;
+            const text =
+              msg.message?.conversation ||
+              msg.message?.extendedTextMessage?.text ||
+              null;
+            if (!text || !chatId) continue;
+
+            const msgTs = typeof msg.messageTimestamp === "number"
+              ? msg.messageTimestamp
+              : (msg.messageTimestamp?.toNumber?.() || 0);
+
+            extracted.push({
+              chat_id: chatId,
+              user_id: userId,
+              sender_name: msg.pushName || userId?.split("@")[0] || "unknown",
+              text,
+              message_id: msg.key?.id,
+              timestamp: msgTs,
+              from_me: !!msg.key?.fromMe,
+            });
+
+            // Update anchor tracking
+            const existing = latestMsgKeys.get(chatId);
+            if (!existing || msgTs > existing.timestamp) {
+              latestMsgKeys.set(chatId, { key: msg.key, timestamp: msgTs });
+            }
+          }
+          pending.messages.push(...extracted);
+          // Don't resolve yet — more chunks may come. Timer handles completion.
+          // Reset the timer on each chunk
+          if (pending.timer) clearTimeout(pending.timer);
+          pending.timer = setTimeout(() => {
+            pendingHistoryFetches.delete(reqId);
+            emit({
+              type: "history_messages",
+              request_id: reqId,
+              chat_id: pending.chatId,
+              messages: pending.messages,
+            });
+          }, 5000); // 5s after last chunk = done
+          break;
+        }
+      }
     }
   });
 
@@ -201,6 +277,60 @@ async function startBridge() {
 
         const contacts = Array.from(contactMap).map(([id, name]) => ({ id, name }));
         emit({ type: "contacts", contacts });
+      } else if (cmd.type === "fetch_messages" && cmd.chat_id) {
+        // Fetch historical messages for a chat using on-demand history sync
+        const chatId = cmd.chat_id;
+        const count = cmd.count || 50;
+        const requestId = cmd.request_id || `fetch_${Date.now()}`;
+
+        // We need an anchor message key for this chat
+        const anchor = latestMsgKeys.get(chatId);
+        if (!anchor) {
+          emit({
+            type: "history_messages",
+            request_id: requestId,
+            chat_id: chatId,
+            messages: [],
+            error: "no_anchor",
+          });
+        } else {
+          try {
+            const sessionId = await sock.fetchMessageHistory(
+              count,
+              anchor.key,
+              anchor.timestamp * 1000 // API expects ms
+            );
+            // Register pending request — results come via messaging-history.set
+            pendingHistoryFetches.set(requestId, {
+              chatId,
+              sessionId,
+              messages: [],
+              timer: setTimeout(() => {
+                // Timeout: no history received after 30s
+                pendingHistoryFetches.delete(requestId);
+                emit({
+                  type: "history_messages",
+                  request_id: requestId,
+                  chat_id: chatId,
+                  messages: [],
+                  error: "timeout",
+                });
+              }, 30000),
+            });
+          } catch (e) {
+            emit({
+              type: "error",
+              error: `fetch_messages failed: ${e.message}`,
+            });
+            emit({
+              type: "history_messages",
+              request_id: requestId,
+              chat_id: chatId,
+              messages: [],
+              error: e.message,
+            });
+          }
+        }
       } else if (cmd.type === "send" && cmd.chat_id && cmd.text) {
         // LID JIDs can't receive messages — resolve to phone JID if available
         let targetJid = cmd.chat_id;

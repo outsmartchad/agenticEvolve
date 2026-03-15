@@ -244,7 +244,10 @@ class DiscordClientAdapter(BasePlatformAdapter):
                             try:
                                 from ..session_db import store_platform_message
                                 author_name = msg.get("author", {}).get("username", "?")
-                                store_platform_message("discord", channel_id, author_id, author_name, text)
+                                store_platform_message(
+                                    "discord", channel_id, author_id, author_name, text,
+                                    message_id=msg.get("id"),
+                                )
                             except Exception as e:
                                 log.debug(f"Failed to store Discord message: {e}")
 

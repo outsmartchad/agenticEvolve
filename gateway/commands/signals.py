@@ -718,13 +718,39 @@ class SignalsMixin:
             )
             return
 
-        # Fetch stored messages
+        # Try to backfill historical messages via bridge before checking stored messages
+        wa_adapter = None
+        if self._gateway:
+            for a in self._gateway.adapters:
+                if a.name == "whatsapp" and hasattr(a, "fetch_messages"):
+                    wa_adapter = a
+                    break
+
+        if wa_adapter:
+            await update.message.reply_text(
+                f"Fetching historical messages for {len(all_ids)} groups...\n"
+                "This requires your phone to be online."
+            )
+            fetch_count = 0
+            for gid in all_ids:
+                try:
+                    fetched = await wa_adapter.fetch_messages(gid, count=50)
+                    fetch_count += len(fetched)
+                except Exception as e:
+                    log.debug(f"fetch_messages failed for {gid}: {e}")
+            if fetch_count > 0:
+                log.info(f"/whatsapp: backfilled {fetch_count} historical messages")
+
+        # Fetch stored messages (includes any just-backfilled ones)
         messages = get_platform_messages("whatsapp", list(all_ids), hours=hours)
         if not messages:
             await update.message.reply_text(
-                f"No WhatsApp messages stored in the last {hours} hours.\n\n"
-                "Messages are stored from served/subscribed groups while the gateway is running. "
-                "If you just set up subscriptions, wait for messages to accumulate."
+                f"No WhatsApp messages in the last {hours} hours.\n\n"
+                "Possible reasons:\n"
+                "- No messages were sent in subscribed groups\n"
+                "- Gateway wasn't running and no anchor messages exist for history fetch\n"
+                "- Your phone was offline during history fetch\n\n"
+                "Messages accumulate automatically while the gateway runs."
             )
             return
 

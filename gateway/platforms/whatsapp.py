@@ -109,7 +109,11 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     if is_group and (chat_id in self._serve_groups or chat_id in self._subscribe_groups):
                         try:
                             from ..session_db import store_platform_message
-                            store_platform_message("whatsapp", chat_id, user_id, sender_name, text)
+                            msg_id = msg.get("message_id")
+                            store_platform_message(
+                                "whatsapp", chat_id, user_id, sender_name, text,
+                                message_id=msg_id
+                            )
                         except Exception as e:
                             log.debug(f"Failed to store WhatsApp message: {e}")
 
@@ -169,6 +173,14 @@ class WhatsAppAdapter(BasePlatformAdapter):
 
                 elif msg.get("type") == "ready":
                     log.info("WhatsApp connected")
+
+                elif msg.get("type") == "history_messages":
+                    # Route history fetch response to pending future
+                    req_id = msg.get("request_id", "")
+                    if hasattr(self, "_pending_responses") and req_id in self._pending_responses:
+                        fut = self._pending_responses.pop(req_id)
+                        if not fut.done():
+                            fut.set_result(msg)
 
                 elif msg.get("type") in ("groups", "contacts"):
                     # Route response to pending _send_command future
@@ -259,3 +271,71 @@ class WhatsAppAdapter(BasePlatformAdapter):
         contacts = resp.get("contacts", []) if resp else []
         log.info(f"list_contacts returned {len(contacts)} contacts")
         return contacts
+
+    async def fetch_messages(self, chat_id: str, count: int = 50) -> list[dict]:
+        """Fetch historical messages for a chat via Baileys on-demand history sync.
+
+        Returns list of message dicts. Requires at least one live message
+        to have been seen in this chat (used as anchor for history request).
+        Messages are also auto-stored in platform_messages.
+        """
+        import time
+        request_id = f"fetch_{chat_id}_{int(time.time())}"
+
+        if not self.process or not self.process.stdin:
+            return []
+
+        cmd = {
+            "type": "fetch_messages",
+            "chat_id": chat_id,
+            "count": count,
+            "request_id": request_id,
+        }
+        self.process.stdin.write((json.dumps(cmd) + "\n").encode())
+        await self.process.stdin.drain()
+
+        # Wait for response keyed by request_id
+        if not hasattr(self, "_pending_responses"):
+            self._pending_responses: dict[str, asyncio.Future] = {}
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_responses[request_id] = fut
+
+        try:
+            resp = await asyncio.wait_for(fut, timeout=40)  # 30s bridge + 10s buffer
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(request_id, None)
+            log.warning(f"fetch_messages timed out for {chat_id}")
+            return []
+
+        messages = resp.get("messages", []) if resp else []
+        error = resp.get("error") if resp else None
+        if error:
+            log.info(f"fetch_messages for {chat_id}: {error}")
+
+        # Store fetched messages in platform_messages (dedup by message_id)
+        if messages:
+            from ..session_db import store_platform_message
+            from datetime import datetime, timezone
+            stored = 0
+            for m in messages:
+                if m.get("from_me"):
+                    continue  # Skip own messages for digest
+                try:
+                    # Convert unix timestamp to ISO format
+                    ts = m.get("timestamp", 0)
+                    if ts:
+                        ts_iso = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                    else:
+                        ts_iso = None
+                    store_platform_message(
+                        "whatsapp", m["chat_id"], m["user_id"],
+                        m.get("sender_name", ""), m["text"],
+                        message_id=m.get("message_id"),
+                        timestamp=ts_iso,
+                    )
+                    stored += 1
+                except Exception as e:
+                    log.debug(f"Failed to store history message: {e}")
+            log.info(f"fetch_messages: stored {stored}/{len(messages)} messages for {chat_id}")
+
+        return messages

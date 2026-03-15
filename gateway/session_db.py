@@ -112,11 +112,22 @@ def init_db():
             user_id TEXT NOT NULL,
             sender_name TEXT,
             content TEXT NOT NULL,
-            timestamp TEXT NOT NULL
+            timestamp TEXT NOT NULL,
+            message_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_pm_platform_chat ON platform_messages(platform, chat_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_pm_timestamp ON platform_messages(timestamp);
     """)
+    # Migrations: add columns/indexes to existing tables (idempotent)
+    for stmt in [
+        "ALTER TABLE platform_messages ADD COLUMN message_id TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_pm_message_id ON platform_messages(platform, message_id)",
+    ]:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # column/index already exists
+
     # FTS5 — ignore errors if already exists
     for stmt in [
         """CREATE VIRTUAL TABLE messages_fts USING fts5(
@@ -1189,15 +1200,26 @@ def is_subscribed(user_id: str, platform: str, target_id: str,
 # ── Platform message storage (for digests) ──────────────────
 
 def store_platform_message(platform: str, chat_id: str, user_id: str,
-                           sender_name: str, content: str):
+                           sender_name: str, content: str,
+                           message_id: str | None = None,
+                           timestamp: str | None = None):
     """Store an incoming message from a platform for digest purposes."""
+    ts = timestamp or datetime.now(timezone.utc).isoformat()
     conn = _connect()
     try:
+        # Deduplicate by message_id if provided
+        if message_id:
+            existing = conn.execute(
+                "SELECT 1 FROM platform_messages WHERE platform=? AND message_id=? LIMIT 1",
+                (platform, message_id)
+            ).fetchone()
+            if existing:
+                return  # Already stored
         conn.execute(
-            """INSERT INTO platform_messages (platform, chat_id, user_id, sender_name, content, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (platform, chat_id, user_id, sender_name, content,
-             datetime.now(timezone.utc).isoformat())
+            """INSERT INTO platform_messages
+               (platform, chat_id, user_id, sender_name, content, timestamp, message_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (platform, chat_id, user_id, sender_name, content, ts, message_id)
         )
         conn.commit()
     finally:
