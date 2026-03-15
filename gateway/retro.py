@@ -49,7 +49,7 @@ def run_retro(
     context_type: str,
     context_data: str,
     on_progress: Callable[[str], None] | None = None,
-    model: str = "claude-haiku-4-5-20251001",
+    model: str = "claude-sonnet-4-6",
 ) -> tuple[str, float]:
     """Run the retro reflection agent.
 

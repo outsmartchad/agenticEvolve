@@ -2840,7 +2840,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 None,
                 lambda: run_retro("digest", text,
                                   on_progress=lambda m: None,
-                                  model="claude-haiku-4-5-20251001")
+                                  model="claude-sonnet-4-6")
             )
             retro_msg = f"*Retro*\n{retro_text}\n\n(${retro_cost:.3f})"
             if self.app and self.app.bot:
@@ -3115,7 +3115,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 None,
                 lambda: run_retro("wechat", summary,
                                   on_progress=lambda m: None,
-                                  model="claude-haiku-4-5-20251001")
+                                  model="claude-sonnet-4-6")
             )
             retro_msg = f"*Retro*\n{retro_text}\n\n(${retro_cost:.3f})"
             for i in range(0, len(retro_msg), 4000):

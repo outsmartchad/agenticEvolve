@@ -876,7 +876,7 @@ def consolidate_session(session_id: str, project_id: str = "") -> int:
 
         result = invoke_claude(
             extract_prompt,
-            model="haiku",
+            model="sonnet",
             allowed_tools=[],  # read-only — no tools needed
         )
 

@@ -42,7 +42,7 @@ STAGE_TOOLS: dict[str, list[str]] = {
 # BUILD uses the orchestrator's default model (sonnet). COLLECT has no LLM call.
 STAGE_MODELS: dict[str, str] = {
     "ANALYZE": "claude-haiku-4-5-20251001",
-    "REVIEW":  "claude-haiku-4-5-20251001",
+    "REVIEW":  "claude-sonnet-4-6",
 }
 
 
