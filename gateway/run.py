@@ -275,6 +275,12 @@ class GatewayRunner:
                             loop.run_in_executor(None, build_corpus)
                         except Exception:
                             pass
+                        # Auto-promote high-confidence instincts to MEMORY.md
+                        try:
+                            from .session_db import auto_promote_instincts
+                            loop.run_in_executor(None, auto_promote_instincts)
+                        except Exception:
+                            pass
             except asyncio.CancelledError:
                 break
             except Exception as e:

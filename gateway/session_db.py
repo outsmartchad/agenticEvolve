@@ -681,6 +681,62 @@ def score_and_route_observation(pattern: str, context: str = "",
         return "memory"
 
 
+def auto_promote_instincts(max_promotions: int = 3) -> list[str]:
+    """Auto-promote high-confidence instincts to MEMORY.md.
+
+    Finds instincts with confidence >= 0.8 across 2+ projects (or seen 5+ times)
+    and appends them to MEMORY.md if there's room under the 2200 char limit.
+
+    Returns list of promoted pattern strings.
+    """
+    # Relax the min_projects requirement — also promote if seen many times
+    candidates = get_promotable_instincts(min_conf=0.8, min_projects=1)
+
+    # Filter: either 2+ projects or seen 5+ times
+    eligible = []
+    for c in candidates:
+        projects = c.get("project_ids", [])
+        if len(projects) >= 2 or c.get("seen_count", 0) >= 5:
+            eligible.append(c)
+
+    if not eligible:
+        return []
+
+    mem_path = Path.home() / ".agenticEvolve" / "memory" / "MEMORY.md"
+    if not mem_path.exists():
+        return []
+
+    existing = mem_path.read_text()
+    char_limit = 2200
+    promoted = []
+
+    for inst in eligible[:max_promotions]:
+        pattern = inst["pattern"]
+        entry = f"\n§ [auto] {pattern}"
+
+        # Check if pattern is already in MEMORY.md (substring match)
+        if pattern[:50] in existing:
+            mark_instinct_promoted(inst["id"], "memory_duplicate")
+            continue
+
+        # Check char budget
+        if len(existing) + len(entry) > char_limit:
+            break
+
+        existing += entry
+        promoted.append(pattern)
+        mark_instinct_promoted(inst["id"], "memory")
+
+    if promoted:
+        mem_path.write_text(existing)
+        import logging
+        logging.getLogger("agenticEvolve.instincts").info(
+            f"Auto-promoted {len(promoted)} instincts to MEMORY.md"
+        )
+
+    return promoted
+
+
 def mark_instinct_promoted(instinct_id: int, promoted_to: str) -> None:
     """Stamp an instinct as promoted to a skill, command, or agent.
 
