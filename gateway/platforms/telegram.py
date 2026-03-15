@@ -572,7 +572,28 @@ class TelegramAdapter(
 
         await self.app.initialize()
         await self.app.start()
-        await self.app.updater.start_polling(drop_pending_updates=True)
+
+        mode = self.config.get("mode", "polling").lower()
+        if mode == "webhook":
+            wh = self.config.get("webhook", {})
+            webhook_url = wh.get("url", "")
+            if not webhook_url:
+                log.error("Telegram webhook mode requires webhook.url in config")
+                return
+            port = int(wh.get("port", 8443))
+            cert = wh.get("cert", "") or None
+            key = wh.get("key", "") or None
+            await self.app.updater.start_webhook(
+                listen="0.0.0.0",
+                port=port,
+                url_path="/telegram",
+                webhook_url=webhook_url + "/telegram",
+                cert=cert,
+                key=key,
+            )
+            log.info(f"Telegram webhook listening on 0.0.0.0:{port}")
+        else:
+            await self.app.updater.start_polling(drop_pending_updates=True)
 
         # Set bot menu commands
         try:

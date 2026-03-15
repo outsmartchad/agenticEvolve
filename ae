@@ -485,14 +485,24 @@ PLIST_EOF
     # ── v2: Doctor ──────────────────────────────────────────────
 
     doctor)
+        FIX=false
+        if [ "${1:-}" = "--fix" ]; then
+            FIX=true
+            shift 2>/dev/null || true
+        fi
+
         echo "=== agenticEvolve doctor ==="
+        $FIX && echo "(auto-fix mode)" || true
         echo ""
+
+        ISSUES=0
 
         # Claude Code
         if command -v claude &>/dev/null; then
             echo "[OK] Claude Code installed"
         else
             echo "[!!] Claude Code not found"
+            ISSUES=$((ISSUES+1))
         fi
 
         # Python
@@ -500,6 +510,7 @@ PLIST_EOF
             echo "[OK] Python $(python3 --version 2>&1 | awk '{print $2}')"
         else
             echo "[!!] Python 3 not found"
+            ISSUES=$((ISSUES+1))
         fi
 
         # Node (for WhatsApp)
@@ -510,18 +521,127 @@ PLIST_EOF
         fi
 
         # Config files
-        [ -f "$EXODIR/config.yaml" ] && echo "[OK] config.yaml" || echo "[!!] config.yaml missing"
-        [ -f "$EXODIR/.env" ] && echo "[OK] .env" || echo "[--] .env missing (no platform tokens)"
+        if [ -f "$EXODIR/config.yaml" ]; then
+            echo "[OK] config.yaml"
+        else
+            echo "[!!] config.yaml missing"
+            ISSUES=$((ISSUES+1))
+            if $FIX; then
+                if [ -f "$EXODIR/config.yaml.example" ]; then
+                    cp "$EXODIR/config.yaml.example" "$EXODIR/config.yaml"
+                    echo "     -> copied from config.yaml.example"
+                else
+                    echo "     -> config.yaml.example not found, cannot fix"
+                fi
+            fi
+        fi
+
+        if [ -f "$EXODIR/.env" ]; then
+            echo "[OK] .env"
+        else
+            echo "[--] .env missing (no platform tokens)"
+            ISSUES=$((ISSUES+1))
+            if $FIX; then
+                if [ -f "$EXODIR/.env.example" ]; then
+                    cp "$EXODIR/.env.example" "$EXODIR/.env"
+                    echo "     -> copied from .env.example"
+                else
+                    echo "     -> .env.example not found, cannot fix"
+                fi
+            fi
+        fi
+
         [ -f "$EXODIR/SOUL.md" ] && echo "[OK] SOUL.md" || echo "[--] SOUL.md missing"
 
-        # Memory
-        [ -f "$EXODIR/memory/MEMORY.md" ] && echo "[OK] MEMORY.md ($(wc -c < "$EXODIR/memory/MEMORY.md" | tr -d ' ')/2200)" || echo "[!!] MEMORY.md missing"
-        [ -f "$EXODIR/memory/USER.md" ] && echo "[OK] USER.md ($(wc -c < "$EXODIR/memory/USER.md" | tr -d ' ')/1375)" || echo "[!!] USER.md missing"
+        # Memory directory
+        if [ -d "$EXODIR/memory" ]; then
+            echo "[OK] memory/"
+        else
+            echo "[!!] memory/ directory missing"
+            ISSUES=$((ISSUES+1))
+            if $FIX; then
+                mkdir -p "$EXODIR/memory"
+                echo "     -> created memory/"
+            fi
+        fi
+
+        # MEMORY.md
+        if [ -f "$EXODIR/memory/MEMORY.md" ]; then
+            echo "[OK] MEMORY.md ($(wc -c < "$EXODIR/memory/MEMORY.md" | tr -d ' ')/2200)"
+        else
+            echo "[!!] MEMORY.md missing"
+            ISSUES=$((ISSUES+1))
+            if $FIX; then
+                mkdir -p "$EXODIR/memory"
+                touch "$EXODIR/memory/MEMORY.md"
+                echo "     -> created MEMORY.md"
+            fi
+        fi
+
+        # USER.md
+        if [ -f "$EXODIR/memory/USER.md" ]; then
+            echo "[OK] USER.md ($(wc -c < "$EXODIR/memory/USER.md" | tr -d ' ')/1375)"
+        else
+            echo "[!!] USER.md missing"
+            ISSUES=$((ISSUES+1))
+            if $FIX; then
+                mkdir -p "$EXODIR/memory"
+                touch "$EXODIR/memory/USER.md"
+                echo "     -> created USER.md"
+            fi
+        fi
+
+        # Logs directory
+        if [ -d "$EXODIR/logs" ]; then
+            echo "[OK] logs/"
+        else
+            echo "[!!] logs/ directory missing"
+            ISSUES=$((ISSUES+1))
+            if $FIX; then
+                mkdir -p "$EXODIR/logs"
+                echo "     -> created logs/"
+            fi
+        fi
+
+        # Python deps
+        if [ -f "$EXODIR/requirements.txt" ]; then
+            if python3 -c "
+import pkg_resources, sys
+with open('$EXODIR/requirements.txt') as f:
+    reqs = [l.strip() for l in f if l.strip() and not l.startswith('#')]
+try:
+    pkg_resources.require(reqs)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null; then
+                echo "[OK] Python deps installed"
+            else
+                echo "[!!] Python deps missing or outdated"
+                ISSUES=$((ISSUES+1))
+                if $FIX; then
+                    echo "     -> running pip install -r requirements.txt ..."
+                    pip install -r "$EXODIR/requirements.txt" -q 2>/dev/null \
+                        && echo "     -> deps installed" \
+                        || echo "     -> pip install failed"
+                fi
+            fi
+        else
+            echo "[--] requirements.txt not found"
+        fi
 
         # Gateway
         if [ -f "$EXODIR/gateway.pid" ]; then
             PID=$(cat "$EXODIR/gateway.pid")
-            kill -0 "$PID" 2>/dev/null && echo "[OK] Gateway running (PID $PID)" || echo "[--] Gateway not running (stale PID)"
+            if kill -0 "$PID" 2>/dev/null; then
+                echo "[OK] Gateway running (PID $PID)"
+            else
+                echo "[!!] Stale gateway.pid (PID $PID not running)"
+                ISSUES=$((ISSUES+1))
+                if $FIX; then
+                    rm -f "$EXODIR/gateway.pid"
+                    echo "     -> removed stale gateway.pid"
+                fi
+            fi
         else
             echo "[--] Gateway not running"
         fi
@@ -529,6 +649,16 @@ PLIST_EOF
         # Skills
         SKILL_COUNT=$(ls -d "$HOME/.claude/skills"/*/SKILL.md 2>/dev/null | wc -l | tr -d ' ')
         echo "[OK] $SKILL_COUNT Claude Code skills installed"
+
+        # Summary
+        echo ""
+        if [ "$ISSUES" -eq 0 ]; then
+            echo "No issues found."
+        elif $FIX; then
+            echo "Fixed $ISSUES issue(s). Re-run 'ae doctor' to verify."
+        else
+            echo "Found $ISSUES issue(s). Run 'ae doctor --fix' to auto-fix."
+        fi
         ;;
 
     # ── v2: Update ──────────────────────────────────────────────
@@ -701,6 +831,7 @@ CONFIG
   ae setup               First-time setup wizard
   ae update              Update to latest version + restart gateway
   ae doctor              Diagnose issues
+  ae doctor --fix        Diagnose and auto-fix common issues
 
 STATUS & COST
   ae status              System status overview

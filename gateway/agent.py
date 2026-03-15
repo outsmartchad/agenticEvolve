@@ -515,6 +515,10 @@ def invoke_claude(message: str, model: str = "sonnet",
     else:
         work_dir = cwd or str(Path.home())
 
+    # Sandbox wrapping (Docker isolation when configured)
+    from .sandbox import wrap_command
+    cmd = wrap_command(cmd, config)
+
     # Retry up to 2 times on empty/transient response.
     # Workspace is cleaned up in finally whether the call succeeds or raises.
     try:
@@ -686,6 +690,10 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         log.debug(f"invoke_claude_streaming: using isolated workspace {_workspace}")
     else:
         work_dir = cwd or str(Path.home())
+
+    # Sandbox wrapping (Docker isolation when configured)
+    from .sandbox import wrap_command
+    cmd = wrap_command(cmd, config)
 
     try:
         proc = subprocess.Popen(

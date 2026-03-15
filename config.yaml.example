@@ -63,6 +63,14 @@ platforms:
     # token: set TELEGRAM_BOT_TOKEN in .env
     allowed_users: []
     home_channel: ""       # set TELEGRAM_CHAT_ID in .env for cron delivery
+    # mode: polling (default) or webhook
+    mode: polling
+    # Webhook settings (only used when mode: webhook)
+    webhook:
+      url: ""              # Public URL (e.g. https://yourdomain.com/telegram)
+      port: 8443           # Local port to listen on
+      cert: ""             # Path to SSL cert (optional, for self-signed)
+      key: ""              # Path to SSL key (optional, for self-signed)
 
   discord:
     enabled: false
@@ -80,6 +88,15 @@ tts:
   voice: en-US-AndrewMultilingualNeural  # edge-tts voice (run /speak --voices to list)
   rate: "+0%"               # speech rate adjustment
   volume: "+0%"             # volume adjustment
+
+# Sandbox mode for claude -p execution
+sandbox:
+  enabled: false
+  backend: docker           # docker or host (default: host)
+  image: "python:3.12-slim" # Docker image to use
+  mount_cwd: true           # Mount working directory into container
+  network: true             # Allow network access
+  timeout: 600              # Container timeout in seconds
 
 # Cron scheduler
 cron:

@@ -66,7 +66,7 @@
 | **语义召回** | TF-IDF 余弦相似度搜索层增强 FTS5 关键词搜索。5000 特征向量化器，支持二元组。语料库从会话、学习记录、直觉、记忆文件重建。缓存在 `~/.agenticEvolve/cache/` |
 | **直觉引擎** | 行为模式观察被评分并路由到直觉表。高置信度直觉（0.8+ 跨 2+ 项目或 5+ 次观察）自动提升到 MEMORY.md |
 | **韧性** | 关机排空（等待进行中的请求最多 30 秒）。类型化故障分类（认证/计费/限流）。3 遍上下文压缩。热配置重载。循环检测（3 次相同轮次警告，5 次终止）。记忆队列读透（去抖动原子写入，无陈旧读取）。并行构建阶段（ThreadPoolExecutor，3 个隔离工作区） |
-| **测试** | 219 个自动化测试（219 通过，1 个 xfail）。覆盖：81 个命令处理器集成测试（全部 35+ 处理器）、会话数据库、FTS5 搜索、安全扫描、信号去重、语义搜索、直觉提升、定时解析、费用上限、循环检测、上下文压缩、参数解析 |
+| **测试** | 379 个自动化测试（379 通过，1 个 xfail）。覆盖：81 个命令处理器集成测试（全部 35+ 处理器）、会话数据库、FTS5 搜索、安全扫描、信号去重、语义搜索、直觉提升、定时解析、费用上限、循环检测、上下文压缩、参数解析 |
 
 ---
 
@@ -295,18 +295,20 @@ ae doctor    # 检查所有前置条件和配置
 - 直觉自动提升：高置信度行为模式（置信度 >= 0.8，跨 2+ 项目或 5+ 次观察）在会话清理时自动提升到 MEMORY.md。
 - 语义语料库从会话、学习记录、直觉和记忆文件重建。缓存为 pickle 文件以快速重载。
 
-**测试体系 — 219 个测试（219 通过，1 个 xfail）**
+**测试体系 — 379 个测试（379 通过，1 个 xfail）**
 
 | 测试文件 | 数量 | 覆盖范围 |
 |----------|------|----------|
 | `test_commands.py` | 81 | 全部 35+ 命令处理器：admin、pipelines、signals、cron、approval、search、media、misc + 30 个授权拒绝测试 |
 | `test_session_db.py` | 25 | 会话、消息、FTS5 搜索、学习记录、用户偏好、直觉、统计 |
 | `test_security.py` | 28 | 严重模式（反向 shell、fork 炸弹、挖矿）、警告、提示注入、安全内容、目录扫描 |
-| `test_evolve.py` | 18 | 信号加载、排名、URL/标题去重、边缘情况 |
+| `test_evolve.py` | 72 | 信号加载、排名、URL/标题去重、边缘情况、采集器、技能批准/拒绝、哈希验证、队列、报告 |
 | `test_agent.py` | 27 | 错误分类、历史压缩（3 遍级联）、标题生成、循环检测 |
 | `test_semantic.py` | 11 | 语料库构建（会话、学习、直觉）、搜索相关性、缓存、分数过滤 |
 | `test_instincts.py` | 8 | 上下文 bug 回归、自动提升（提升、去重、字符限制） |
 | `test_gateway.py` | 10 | Cron 解析器（每分钟/特定/步进/跨天）、会话键、费用上限 |
+| `test_voice.py` | 57 | TTS 配置、语言检测、音频格式转换、STT 转写、TTS 指令 |
+| `test_absorb.py` | 49 | 构造函数、报告、扫描提示、安全预扫描、微信时间解析、试运行、AgentShield |
 | `test_telegram.py` | 13 | 参数解析（布尔/值/别名/类型转换）、用户白名单 |
 
 **Bug 修复**
@@ -314,6 +316,8 @@ ae doctor    # 检查所有前置条件和配置
 - 修复 `gateway/session_db.py` 中的 `upsert_instinct` — SELECT 查询缺少 `context` 列，导致空上下文重复 upsert 时出现 IndexError。
 - 修复 `gateway/commands/admin.py` 中的 `_handle_newsession` — `set_session_title`（不存在的函数）→ `set_title`，且缺少 `generate_session_id()` 导致 UNIQUE 约束冲突。
 - 修复 `gateway/commands/misc.py` 中的 `_extract_urls` — `_URL_RE` 类属性从未定义，导致每条纯文本消息触发 `AttributeError`。
+- 修复 `/restart` 产生重复网关实例的问题 — 现在使用 `os.getpid()` 仅终止当前进程。
+- 修复 `_extract_urls` 崩溃 — `_URL_RE` 类属性从未在 `MiscMixin` 上定义。
 
 ---
 

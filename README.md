@@ -68,7 +68,7 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | **Semantic Recall** | TF-IDF cosine similarity search layer augments FTS5 keyword search. 5000-feature vectorizer with bigrams. Corpus rebuilt from sessions, learnings, instincts, memory files. Cached at `~/.agenticEvolve/cache/` |
 | **Instinct Engine** | Behavioural pattern observations scored and routed to instincts table. High-confidence instincts (0.8+ across 2+ projects or 5+ sightings) auto-promote to MEMORY.md |
 | **Resilience** | Drain-on-shutdown (30s wait for in-flight requests). Typed failure classification (auth/billing/rate-limit). 3-pass context compaction. Hot config reload. Loop detection (warn@3 identical turns, terminate@5). Memory queue read-through (debounced atomic writes, no stale reads). Parallel BUILD stage (ThreadPoolExecutor, 3 isolated workspaces) |
-| **Testing** | 219 automated tests (219 pass, 1 xfail). Covers: 81 command handler integration tests (all 35+ handlers), session DB, FTS5 search, security scanner, signal dedup, semantic search, instinct promotion, cron parser, cost cap, loop detector, context compaction, flag parsing |
+| **Testing** | 379 automated tests (379 pass, 1 xfail). Covers: 81 command handler integration tests (all 35+ handlers), session DB, FTS5 search, security scanner, signal dedup, semantic search, instinct promotion, cron parser, cost cap, loop detector, context compaction, flag parsing |
 
 ---
 
@@ -285,18 +285,20 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 - Instinct auto-promotion: high-confidence behavioural patterns (confidence >= 0.8, seen across 2+ projects or 5+ times) auto-promote to MEMORY.md on session cleanup.
 - Semantic corpus rebuilt from sessions, learnings, instincts, and memory files. Cached as pickle for fast reload.
 
-**Test Harness — 219 tests (219 pass, 1 xfail)**
+**Test Harness — 379 tests (379 pass, 1 xfail)**
 
 | Test File | Tests | Coverage |
 |-----------|-------|----------|
 | `test_commands.py` | 81 | All 35+ command handlers: admin, pipelines, signals, cron, approval, search, media, misc + 30 authorization denial tests |
 | `test_session_db.py` | 25 | Sessions, messages, FTS5 search, learnings, user prefs, instincts, stats |
 | `test_security.py` | 28 | Critical patterns (reverse shell, fork bomb, miners), warnings, prompt injection, safe content, directory scan |
-| `test_evolve.py` | 18 | Signal loading, ranking, URL/title dedup, edge cases |
+| `test_evolve.py` | 72 | Signal loading, ranking, URL/title dedup, edge cases, collectors, skill approval/rejection, hash verification, queue, reporting |
 | `test_agent.py` | 27 | Stderr classification, history compaction (3-pass cascade), title generation, loop detector |
 | `test_semantic.py` | 11 | Corpus build (sessions, learnings, instincts), search relevance, caching, score filtering |
 | `test_instincts.py` | 8 | Context bug regression, auto-promotion (promote, dedup, char limit) |
 | `test_gateway.py` | 10 | Cron parser (every/specific/step/wrap), session key, cost cap |
+| `test_voice.py` | 57 | TTS config, language detection, audio format conversion, STT transcription, TTS directives |
+| `test_absorb.py` | 49 | Constructor, reporting, scan prompts, security prescan, wechat hours parsing, dry run, AgentShield |
 | `test_telegram.py` | 13 | Flag parsing (bool/value/alias/cast), user allowlist |
 
 **Bug Fixes**
@@ -304,6 +306,8 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 - Fixed `upsert_instinct` in `gateway/session_db.py` — SELECT query was missing the `context` column, causing IndexError on repeat upserts with empty context.
 - Fixed `_handle_newsession` in `gateway/commands/admin.py` — `set_session_title` (nonexistent function) → `set_title`, and missing `generate_session_id()` caused UNIQUE constraint violations.
 - Fixed `_extract_urls` in `gateway/commands/misc.py` — `_URL_RE` class attribute was never defined, causing `AttributeError` on every plain text message.
+- Fixed `/restart` spawning duplicate gateway instances — now uses `os.getpid()` to kill only current process.
+- Fixed `_extract_urls` crash — `_URL_RE` class attribute was never defined on `MiscMixin`.
 
 ---
 

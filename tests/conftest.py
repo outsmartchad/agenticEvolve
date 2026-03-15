@@ -13,6 +13,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+# ── Custom markers ──────────────────────────────────────────────────
+def pytest_configure(config):
+    config.addinivalue_line("markers", "e2e: end-to-end tests that call real external services")
+
+
 @pytest.fixture()
 def signals_dir(tmp_path: Path) -> Path:
     """Create a temporary signals directory."""
