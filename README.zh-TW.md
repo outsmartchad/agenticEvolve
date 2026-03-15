@@ -6,12 +6,12 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-37-blue?style=for-the-badge" alt="37 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-39-blue?style=for-the-badge" alt="39 Commands"></a>
 </p>
 
 ---
 
-基於 `claude -p` 建構的持久化智能體執行環境，搭配 Python asyncio 閘道。6 層記憶體系 + 跨層自動召回。閉環技能合成。語音輸入輸出。瀏覽器自動化。內建排程任務。雙層安全機制。多平台（Telegram + Discord + WhatsApp）。37 個 Telegram 指令——你的整個開發環境裝進口袋。
+基於 `claude -p` 建構的持久化智能體執行環境，搭配 Python asyncio 閘道。6 層記憶體系 + 跨層自動召回。閉環技能合成。語音輸入輸出。瀏覽器自動化。內建排程任務。雙層安全機制。多平台（Telegram + Discord + WhatsApp）。39 個 Telegram 指令——你的整個開發環境裝進口袋。
 
 ---
 
@@ -144,12 +144,14 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | `/subscribe` | 選擇 Discord/WhatsApp/微信頻道進行摘要監控 |
 | `/serve` | 選擇代理主動回覆的頻道/聯絡人 |
 | `/wechat [--hours N]` | 微信群組聊天摘要（簡體中文） |
+| `/discord [--hours N]` | Discord 頻道摘要（已訂閱頻道） |
+| `/whatsapp` | WhatsApp 摘要（即將推出） |
 | `/produce [--ideas N]` | 從所有訊號中腦力激盪商業點子 |
 | `/digest` | 每日早間簡報 |
 | `/lang [code]` | 設定 `/produce`、`/learn`、`/wechat` 的持久輸出語言 |
 | `/restart` | 遠端重啟閘道 |
 
-[全部 37 個指令 →](docs/commands.md)
+[全部 39 個指令 →](docs/commands.md)
 
 ---
 
@@ -167,7 +169,7 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 - **有界記憶** — MEMORY.md（2200 字元）+ USER.md（1375 字元）+ SQLite FTS5。無無限增長。
 - **閉環** — `auto_approve_skills: true`。進化 → 建構 → 審查 → 安裝 → 同步到 git。無人工審批。
 - **關機排空** — 進行中的請求在重啟前完成。不遺失工作。
-- **模組化指令** — 37 個 Telegram 指令拆分為 9 個 mixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）。轉接器核心 630 行。
+- **模組化指令** — 39 個 Telegram 指令拆分為 9 個 mixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）。轉接器核心 630 行。
 - **雙層召回** — FTS5 關鍵字搜尋 + TF-IDF 語意搜尋。自動召回在每次 Claude 呼叫前注入相關上下文。
 - **直覺流水線** — 跨工作階段觀察的行為模式被評分、去重，信心度足夠高時自動提升到 MEMORY.md。
 

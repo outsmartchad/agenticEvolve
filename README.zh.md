@@ -6,12 +6,12 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-37-blue?style=for-the-badge" alt="37 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-39-blue?style=for-the-badge" alt="39 Commands"></a>
 </p>
 
 ---
 
-基于 `claude -p` 构建的持久化智能体运行时，配合 Python asyncio 网关。6 层记忆体系 + 跨层自动召回。闭环技能合成。语音输入输出。浏览器自动化。内置定时任务。双层安全机制。多平台（Telegram + Discord + WhatsApp）。37 个 Telegram 命令——你的整个开发环境装进口袋。
+基于 `claude -p` 构建的持久化智能体运行时，配合 Python asyncio 网关。6 层记忆体系 + 跨层自动召回。闭环技能合成。语音输入输出。浏览器自动化。内置定时任务。双层安全机制。多平台（Telegram + Discord + WhatsApp）。39 个 Telegram 命令——你的整个开发环境装进口袋。
 
 ---
 
@@ -144,12 +144,14 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | `/subscribe` | 选择 Discord/WhatsApp/微信频道进行摘要监控 |
 | `/serve` | 选择代理主动回复的频道/联系人 |
 | `/wechat [--hours N]` | 微信群聊摘要（简体中文） |
+| `/discord [--hours N]` | Discord 频道摘要（已订阅频道） |
+| `/whatsapp` | WhatsApp 摘要（即将推出） |
 | `/produce [--ideas N]` | 从所有信号中头脑风暴商业点子 |
 | `/digest` | 每日早间简报 |
 | `/lang [code]` | 设置 `/produce`、`/learn`、`/wechat` 的持久输出语言 |
 | `/restart` | 远程重启网关 |
 
-[全部 37 个命令 →](docs/commands.md)
+[全部 39 个命令 →](docs/commands.md)
 
 ---
 
@@ -167,7 +169,7 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 - **有界记忆** — MEMORY.md（2200 字符）+ USER.md（1375 字符）+ SQLite FTS5。无无限增长。
 - **闭环** — `auto_approve_skills: true`。进化 → 构建 → 审查 → 安装 → 同步到 git。无人工审批。
 - **关机排空** — 进行中的请求在重启前完成。不丢失工作。
-- **模块化命令** — 37 个 Telegram 命令拆分为 9 个 mixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）。适配器核心 630 行。
+- **模块化命令** — 39 个 Telegram 命令拆分为 9 个 mixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）。适配器核心 630 行。
 - **双层召回** — FTS5 关键词搜索 + TF-IDF 语义搜索。自动召回在每次 Claude 调用前注入相关上下文。
 - **直觉流水线** — 跨会话观察的行为模式被评分、去重，置信度足够高时自动提升到 MEMORY.md。
 

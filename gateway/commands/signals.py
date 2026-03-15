@@ -1,4 +1,4 @@
-"""Signal-related command handlers: produce, wechat, digest, reflect."""
+"""Signal-related command handlers: produce, wechat, whatsapp, discord, digest, reflect."""
 import asyncio
 import json
 import logging
@@ -246,7 +246,7 @@ class SignalsMixin:
         start_reporter()
         try:
             summary, cost = await loop.run_in_executor(
-                None, lambda: self._build_wechat_digest(hours, model, on_progress_sync, lang_instruction)
+                None, lambda: self._build_wechat_digest(hours, model, on_progress_sync, lang_instruction, user_id)
             )
         except Exception as e:
             stop_reporter()
@@ -297,8 +297,12 @@ class SignalsMixin:
             log.warning(f"Retro after /wechat failed (non-fatal): {e}")
 
     def _build_wechat_digest(self, hours: int, model: str,
-                             on_progress: Callable, lang_instruction: str = "") -> tuple[str, float]:
-        """Build WeChat group chat digest using Claude. Runs in executor thread."""
+                             on_progress: Callable, lang_instruction: str = "",
+                             user_id: str = "") -> tuple[str, float]:
+        """Build WeChat group chat digest using Claude. Runs in executor thread.
+
+        If user_id is provided, filters to only subscribed groups.
+        """
         from pathlib import Path as _Path
         import sys
 
@@ -326,6 +330,17 @@ class SignalsMixin:
             signals = wechat_mod.extract_group_messages(decrypted_dir, hours=hours)
         except Exception as e:
             return f"Failed to read WeChat messages: {e}", 0.0
+
+        # Filter by subscriptions if user has any
+        if user_id:
+            from ..session_db import get_subscriptions
+            subs = get_subscriptions(user_id, mode="subscribe", platform="wechat")
+            if subs:
+                sub_ids = {s["target_id"] for s in subs}
+                signals = [s for s in signals
+                           if s.get("metadata", {}).get("group_id") in sub_ids]
+                on_progress(f"Filtered to {len(signals)} subscribed groups "
+                            f"(out of {len(sub_ids)} subscriptions)")
 
         if not signals:
             return f"No WeChat group messages in the last {hours} hours.", 0.0
@@ -405,6 +420,205 @@ class SignalsMixin:
                     )
                 except Exception:
                     await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+
+    # ── /discord — Discord channel digest ─────────────────────────────
+
+    async def _handle_discord(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Summarize recent Discord messages from subscribed channels.
+
+        Usage: /discord [--hours N] [--model X]
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {
+            "--hours": {"type": "value", "cast": int, "default": 24},
+            "--model": {"type": "value"},
+        })
+        hours = max(1, min(flags["--hours"], 168))
+        model_override = flags["--model"]
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
+
+        chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+        lang_instruction = self._get_lang_instruction(user_id)
+
+        # Check subscriptions
+        from ..session_db import get_subscriptions
+        subs = get_subscriptions(user_id, mode="subscribe", platform="discord")
+        if not subs:
+            await update.message.reply_text(
+                "No Discord channels subscribed.\n"
+                "Use /subscribe → Discord to select channels first."
+            )
+            return
+
+        await update.message.reply_text(
+            f"Reading {len(subs)} Discord channels (last {hours}h)...\n~1-2 min."
+        )
+
+        loop = asyncio.get_running_loop()
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop)
+
+        start_reporter()
+        try:
+            summary, cost = await self._build_discord_digest(
+                subs, hours, model, on_progress_sync, lang_instruction
+            )
+        except Exception as e:
+            stop_reporter()
+            log.error(f"Discord digest error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"Discord digest failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        tools_used = get_tool_count()
+        footer = f"\n\n({tools_used} steps, ${cost:.2f})"
+        full_text = summary + footer
+        for i in range(0, len(full_text), 4000):
+            chunk = full_text[i:i + 4000]
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "discord-digest", cost)
+
+    async def _build_discord_digest(self, subs: list[dict], hours: int,
+                                     model: str, on_progress: Callable,
+                                     lang_instruction: str = "") -> tuple[str, float]:
+        """Fetch messages from subscribed Discord channels and summarize."""
+        adapter = None
+        if self._gateway:
+            for a in self._gateway.adapters:
+                if a.name == "discord":
+                    adapter = a
+                    break
+
+        if not adapter or not hasattr(adapter, "get_messages"):
+            return "Discord adapter not connected.", 0.0
+
+        # Compute Discord snowflake ID for N hours ago
+        # Discord epoch: 2015-01-01T00:00:00Z = 1420070400000 ms
+        import time
+        discord_epoch = 1420070400000
+        cutoff_ms = int((time.time() - hours * 3600) * 1000)
+        after_snowflake = str((cutoff_ms - discord_epoch) << 22)
+
+        # Fetch messages from each subscribed channel
+        all_channels = []
+        for sub in subs:
+            channel_id = sub["target_id"]
+            channel_name = sub.get("target_name", channel_id)
+            on_progress(f"Fetching #{channel_name}...")
+
+            try:
+                # Fetch up to 100 messages (2 pages of 50)
+                msgs = await adapter.get_messages(channel_id, after=after_snowflake, limit=50)
+                if len(msgs) == 50:
+                    last_id = msgs[-1]["id"]
+                    more = await adapter.get_messages(channel_id, after=last_id, limit=50)
+                    msgs.extend(more)
+            except Exception as e:
+                log.warning(f"Failed to fetch #{channel_name}: {e}")
+                continue
+
+            if msgs:
+                all_channels.append({
+                    "name": channel_name,
+                    "messages": msgs,
+                    "count": len(msgs),
+                })
+
+        if not all_channels:
+            return f"No Discord messages in the last {hours} hours from subscribed channels.", 0.0
+
+        # Build text for Claude
+        total_msgs = sum(c["count"] for c in all_channels)
+        chat_lines = []
+        for ch in all_channels:
+            chat_lines.append(f"## #{ch['name']} ({ch['count']} messages)")
+            for m in ch["messages"]:
+                ts = m.get("timestamp", "")[:16]
+                content = m.get("content", "")
+                if content:
+                    chat_lines.append(f"[{ts}] {m['author']}: {content}")
+            chat_lines.append("")
+
+        chat_text = "\n".join(chat_lines)
+        if len(chat_text) > 30000:
+            chat_text = chat_text[:30000] + "\n\n... (truncated)"
+
+        on_progress(f"Analyzing {total_msgs} messages across {len(all_channels)} channels...")
+
+        from ..agent import invoke_claude_streaming
+
+        prompt = (
+            f"You are Vincent's personal AI assistant analyzing his Discord messages.\n\n"
+            f"Here are the last {hours} hours of messages ({total_msgs} messages "
+            f"across {len(all_channels)} channels):\n\n"
+            f"{chat_text}\n\n"
+            f"Create a concise, actionable digest. Summarize EACH CHANNEL SEPARATELY.\n\n"
+            f"For EACH channel, use this structure:\n\n"
+            f"---\n"
+            f"## #[Channel Name] (N messages)\n\n"
+            f"**Key Takeaways** (3-5 bullet points)\n\n"
+            f"**Tools & Repos Mentioned** (list with brief descriptions, include URLs if shared)\n\n"
+            f"**Notable Discussions** (what people are talking about most)\n\n"
+            f"---\n\n"
+            f"After all channels, add:\n\n"
+            f"## Action Items\n"
+            f"(Combined actionable items across ALL channels, prioritized)\n\n"
+            f"Be concise. Skip noise. Focus on signal.\n"
+            f"Use Markdown formatting."
+            + (lang_instruction if lang_instruction else "")
+        )
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: invoke_claude_streaming(
+                prompt,
+                on_progress=on_progress,
+                model=model,
+                session_context=f"[Discord digest: {hours}h, {len(all_channels)} channels]"
+            )
+        )
+
+        text = result.get("text", "No analysis generated.")
+        cost = result.get("cost", 0.0)
+
+        header = f"*Discord Digest — last {hours}h*\n{total_msgs} messages across {len(all_channels)} channels\n\n"
+        return header + text, cost
+
+    # ── /whatsapp — WhatsApp digest ─────────────────────────────────
+
+    async def _handle_whatsapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """WhatsApp digest — not yet supported (no message history API).
+
+        Usage: /whatsapp
+        """
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        await update.message.reply_text(
+            "WhatsApp digest is not yet available.\n\n"
+            "The WhatsApp bridge (Baileys v7) doesn't support fetching message history — "
+            "it only handles live messages.\n\n"
+            "To get WhatsApp digests, we'd need to store incoming messages from served/subscribed "
+            "groups locally. This is planned for a future update.\n\n"
+            "For now, use `/serve` to have the agent respond live in WhatsApp groups."
+        )
 
     # ── /digest — morning briefing ──────────────────────────────────
 

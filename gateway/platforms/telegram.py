@@ -549,6 +549,8 @@ class TelegramAdapter(
             "screenshot": self._handle_screenshot,
             "restart": self._handle_restart,
             "wechat": self._handle_wechat,
+            "discord": self._handle_discord,
+            "whatsapp": self._handle_whatsapp,
             "digest": self._handle_digest,
             "produce": self._handle_produce,
             "lang": self._handle_lang,

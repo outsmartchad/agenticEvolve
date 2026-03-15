@@ -6,14 +6,14 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-37-blue?style=for-the-badge" alt="37 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-39-blue?style=for-the-badge" alt="39 Commands"></a>
 </p>
 
 **[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)** | **[日本語](README.ja.md)**
 
 ---
 
-Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. Multi-platform (Telegram + Discord + WhatsApp). 37 Telegram commands — your entire dev machine in your pocket.
+Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. Multi-platform (Telegram + Discord + WhatsApp). 39 Telegram commands — your entire dev machine in your pocket.
 
 ---
 
@@ -146,12 +146,14 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | `/subscribe` | Select Discord/WhatsApp/WeChat channels to monitor for digests |
 | `/serve` | Select channels/contacts where the agent actively responds |
 | `/wechat [--hours N]` | WeChat group chat digest (简体中文) |
+| `/discord [--hours N]` | Discord channel digest (subscribed channels) |
+| `/whatsapp` | WhatsApp digest (coming soon) |
 | `/produce [--ideas N]` | Brainstorm business ideas from all signals |
 | `/digest` | Morning briefing |
 | `/lang [code]` | Set persistent output language for `/produce`, `/learn`, `/wechat` |
 | `/restart` | Restart gateway remotely |
 
-[All 37 commands →](docs/commands.md)
+[All 39 commands →](docs/commands.md)
 
 ---
 
@@ -169,7 +171,7 @@ No custom agent loop. Claude Code **is** the runtime — 25+ built-in tools, MCP
 - **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) + SQLite FTS5. No unbounded growth.
 - **Closed-loop** — `auto_approve_skills: true`. Evolve → build → review → install → sync to git. No human gate.
 - **Drain-on-shutdown** — In-flight requests complete before restart. No lost work.
-- **Modular commands** — 37 Telegram commands split into 9 mixins (admin, pipelines, signals, cron, approval, search, media, misc, subscribe). Adapter core is 630 lines.
+- **Modular commands** — 39 Telegram commands split into 9 mixins (admin, pipelines, signals, cron, approval, search, media, misc, subscribe). Adapter core is 630 lines.
 - **Dual-layer recall** — FTS5 keyword search + TF-IDF semantic search. Auto-recall injects relevant context before every Claude invocation.
 - **Instinct pipeline** — Behavioural patterns observed across sessions are scored, deduplicated, and auto-promoted to MEMORY.md when confidence is high enough.
 

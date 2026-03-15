@@ -6,12 +6,12 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-37-blue?style=for-the-badge" alt="37 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-39-blue?style=for-the-badge" alt="39 Commands"></a>
 </p>
 
 ---
 
-`claude -p` 上に構築された永続エージェントランタイム。Python asyncio ゲートウェイ搭載。6層メモリ + クロスレイヤー自動リコール。クローズドループスキル合成。音声入出力。ブラウザ自動化。組み込みcron。2層セキュリティ。マルチプラットフォーム（Telegram + Discord + WhatsApp）。37のTelegramコマンド——開発環境をポケットに。
+`claude -p` 上に構築された永続エージェントランタイム。Python asyncio ゲートウェイ搭載。6層メモリ + クロスレイヤー自動リコール。クローズドループスキル合成。音声入出力。ブラウザ自動化。組み込みcron。2層セキュリティ。マルチプラットフォーム（Telegram + Discord + WhatsApp）。39のTelegramコマンド——開発環境をポケットに。
 
 ---
 
@@ -144,12 +144,14 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | `/subscribe` | Discord/WhatsApp/WeChatチャンネルをダイジェスト用にモニタリング |
 | `/serve` | エージェントが積極的に応答するチャンネル/連絡先を選択 |
 | `/wechat [--hours N]` | WeChatグループチャットダイジェスト（简体中文） |
+| `/discord [--hours N]` | Discordチャンネルダイジェスト（サブスクライブ済み） |
+| `/whatsapp` | WhatsAppダイジェスト（近日対応予定） |
 | `/produce [--ideas N]` | 全シグナルからビジネスアイデアをブレインストーミング |
 | `/digest` | 朝のブリーフィング |
 | `/lang [code]` | `/produce`、`/learn`、`/wechat` の持続的な出力言語を設定 |
 | `/restart` | ゲートウェイをリモート再起動 |
 
-[全37コマンド →](docs/commands.md)
+[全39コマンド →](docs/commands.md)
 
 ---
 
@@ -167,7 +169,7 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 - **有界メモリ** — MEMORY.md（2200文字）+ USER.md（1375文字）+ SQLite FTS5。無制限な増加なし。
 - **クローズドループ** — `auto_approve_skills: true`。進化 → 構築 → レビュー → インストール → gitに同期。人手による承認なし。
 - **シャットダウン時ドレイン** — 処理中のリクエストは再起動前に完了。作業の損失なし。
-- **モジュラーコマンド** — 37のTelegramコマンドを9つのmixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）に分割。アダプターコアは630行。
+- **モジュラーコマンド** — 39のTelegramコマンドを9つのmixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）に分割。アダプターコアは630行。
 - **二層リコール** — FTS5キーワード検索 + TF-IDFセマンティック検索。自動リコールが毎回のClaude呼び出し前に関連コンテキストを注入。
 - **直感パイプライン** — セッション間で観察された行動パターンがスコアリング・重複排除され、信頼度が十分に高い場合にMEMORY.mdに自動昇格。
 
