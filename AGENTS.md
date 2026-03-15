@@ -34,10 +34,25 @@ When invoked via `claude -p`, the system prompt determines which "role" the agen
 - Prompts must be self-contained — include all needed context
 - Output delivered to the originating platform
 
+## Platform Adapters
+
+| Platform | Adapter | Mode | Notes |
+|----------|---------|------|-------|
+| Telegram | `gateway/platforms/telegram.py` | Bot API | Primary control plane. All commands, inline keyboards |
+| Discord | `gateway/platforms/discord_client.py` | CDP + REST | Hooks desktop app via `--remote-debugging-port=9224`. Token extracted from network requests |
+| WhatsApp | `gateway/platforms/whatsapp.py` + `whatsapp-bridge/bridge.js` | Baileys v7 | Node.js bridge over stdin/stdout. QR delivery to Telegram. LID resolution |
+| WeChat | Read-only via `collectors/wechat.py` | Decrypted local DBs | No live bridge. Subscribe for digests only |
+
+### Subscribe vs Serve
+
+- **`/subscribe`** — Monitor channels/groups for digests (read-only). Used by `/wechat`, `/discord`, `/whatsapp` digest commands.
+- **`/serve`** — Agent actively responds to messages in selected channels/groups. WhatsApp served groups skip `allowed_users` and prefix requirements. Targets persisted in `subscriptions` table, loaded on startup.
+
 ## File Conventions
 
 - **Gateway code**: `gateway/` — Python 3.11+, asyncio
 - **Platform adapters**: `gateway/platforms/` — each implements `BasePlatformAdapter`
+- **Command mixins**: `gateway/commands/` — admin, pipelines, signals, cron, approval, search, media, misc, subscribe
 - **Memory**: `memory/MEMORY.md` (2200 char limit), `memory/USER.md` (1375 char limit)
 - **Skills queue**: `skills-queue/<name>/SKILL.md` — pending review (only when auto_approve_skills: false)
 - **Installed skills**: `~/.claude/skills/<name>/SKILL.md` — active

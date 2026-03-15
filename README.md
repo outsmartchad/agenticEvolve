@@ -6,14 +6,14 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-37-blue?style=for-the-badge" alt="37 Commands"></a>
 </p>
 
 **[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)** | **[日本語](README.ja.md)**
 
 ---
 
-Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. 35 Telegram commands — your entire dev machine in your pocket.
+Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. Multi-platform (Telegram + Discord + WhatsApp). 37 Telegram commands — your entire dev machine in your pocket.
 
 ---
 
@@ -21,6 +21,9 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 
 **Browse the web for you**
 > "Go to the Anthropic docs and find the latest Claude model pricing." The agent opens ABP browser, navigates, extracts the data, and sends you a clean summary. If Cloudflare blocks it, it auto-switches to Brave.
+
+**Serve your WhatsApp and Discord groups**
+> `/serve` → WhatsApp → Groups → toggle Crypto🚀 on. Now anyone in that group can talk to your AI agent. It responds to every message, maintains per-group conversation memory, and you control it all from Telegram inline keyboards. Works with Discord channels too — the agent hooks into your desktop app via Chrome DevTools Protocol.
 
 **Search your own WeChat history**
 > WeChat's built-in search is terrible. The agent reads your local WeChat databases and gives you a searchable export — contacts, messages, groups, favorites. All offline, all on your machine.
@@ -55,6 +58,7 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 
 | Capability | Description |
 |------------|-------------|
+| **Multi-Platform** | Telegram (bot API) + Discord (desktop CDP + REST) + WhatsApp (Baileys v7 bridge). `/subscribe` to monitor channels for digests, `/serve` to make the agent respond in any group or DM |
 | **Build** | Full Claude Code over Telegram — terminal, file I/O, web search, MCP, 26 skills |
 | **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans 11 sources: GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChat groups, synthesizes skills |
 | **Absorb** | `/absorb <url>` — clones repo, maps architecture, diffs patterns, implements improvements into your system |
@@ -139,31 +143,33 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | `/memory` | View agent memory state |
 | `/skills` | List installed skills (26) |
 | `/cost` | Usage and spend |
+| `/subscribe` | Select Discord/WhatsApp/WeChat channels to monitor for digests |
+| `/serve` | Select channels/contacts where the agent actively responds |
 | `/wechat [--hours N]` | WeChat group chat digest (简体中文) |
 | `/produce [--ideas N]` | Brainstorm business ideas from all signals |
 | `/digest` | Morning briefing |
 | `/lang [code]` | Set persistent output language for `/produce`, `/learn`, `/wechat` |
 | `/restart` | Restart gateway remotely |
 
-[All 35 commands →](docs/commands.md)
+[All 37 commands →](docs/commands.md)
 
 ---
 
 ## Architecture
 
 ```
-User (Telegram/Voice) → Gateway (asyncio) → Hook Dispatcher → Session + Cost Gate
+User (Telegram/Discord/WhatsApp/Voice) → Gateway (asyncio) → Hook Dispatcher → Session + Cost Gate
   → Auto-Recall (6 layers) → claude -p → SQLite → Git Sync
 ```
 
-No custom agent loop. Claude Code **is** the runtime — 25+ built-in tools, MCP servers, skills. The gateway adds memory, routing, recall, cron, voice, browser, and safety around it.
+No custom agent loop. Claude Code **is** the runtime — 25+ built-in tools, MCP servers, skills. The gateway adds memory, routing, recall, cron, voice, browser, multi-platform, and safety around it.
 
 ### Key Design Decisions
 - **No tool/toolset system** — Claude Code already has tools. We build skills and infrastructure, not abstractions.
 - **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) + SQLite FTS5. No unbounded growth.
 - **Closed-loop** — `auto_approve_skills: true`. Evolve → build → review → install → sync to git. No human gate.
 - **Drain-on-shutdown** — In-flight requests complete before restart. No lost work.
-- **Modular commands** — 35 Telegram commands split into 8 mixins (admin, pipelines, signals, cron, approval, search, media, misc). Adapter core is 630 lines.
+- **Modular commands** — 37 Telegram commands split into 9 mixins (admin, pipelines, signals, cron, approval, search, media, misc, subscribe). Adapter core is 630 lines.
 - **Dual-layer recall** — FTS5 keyword search + TF-IDF semantic search. Auto-recall injects relevant context before every Claude invocation.
 - **Instinct pipeline** — Behavioural patterns observed across sessions are scored, deduplicated, and auto-promoted to MEMORY.md when confidence is high enough.
 
@@ -271,6 +277,19 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 ---
 
 ## Recent Changes
+
+### v2.2 — Multi-Platform + Subscribe/Serve
+
+**Multi-Platform Support**
+- **Discord desktop adapter** (`gateway/platforms/discord_client.py`) — hooks into the running Discord desktop app via Chrome DevTools Protocol (CDP). Extracts auth token from network requests, then uses Discord REST API for messaging. Supports guild listing, channel listing (with category grouping), DM channels, and message polling.
+- **WhatsApp bridge** (`whatsapp-bridge/bridge.js`) — Baileys v7 Node.js bridge communicating via JSON over stdin/stdout. QR code delivery to Telegram for easy linking. LID-to-phone resolution for outbound messages. Group prefix filtering (`/ask`, `@agent`). Contact discovery from auth store lid-mapping files + live message tracking.
+- **WeChat** — read-only access via decrypted local SQLCipher databases. Groups and contacts from `contact.db`, messages from `message_0.db`.
+
+**Subscribe & Serve Commands**
+- `/subscribe` — Telegram inline keyboard UI to select Discord channels, WhatsApp groups/contacts, or WeChat groups to monitor for digests. Paginated lists (40 per page) with category headers for Discord. WhatsApp split into Groups/Contacts sub-views.
+- `/serve` — Same UI to select where the agent actively responds. WhatsApp served groups accept all messages (no prefix required, no allowed_users gate). Serve targets loaded from DB on gateway startup. Dynamic adapter updates when toggling.
+- **Subscriptions DB** — `subscriptions` table in session_db with user_id, platform, target_id, target_name, target_type, mode. CRUD functions: `add_subscription`, `remove_subscription`, `get_subscriptions`, `get_serve_targets`, `is_subscribed`.
+- **Short ID registry** — Telegram limits `callback_data` to 64 bytes. Long WhatsApp JIDs (`120363427198529523@g.us`) and WeChat chatroom IDs would exceed this. Solution: in-memory numeric ID map (`sub:t:3` instead of `sub:toggle:whatsapp:group:120363...`).
 
 ### v2.1 — Modular Architecture + Semantic Recall + Test Harness
 
