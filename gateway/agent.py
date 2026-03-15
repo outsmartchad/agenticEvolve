@@ -34,6 +34,7 @@ class _MemoryQueue:
 
     def __init__(self):
         self._timers: dict[str, threading.Timer] = {}
+        self._pending: dict[str, str] = {}  # key → latest content not yet flushed
         self._lock = threading.Lock()
 
     def enqueue(self, path: Path, content: str, delay: float = 30.0) -> None:
@@ -52,6 +53,7 @@ class _MemoryQueue:
             existing = self._timers.pop(key, None)
             if existing is not None:
                 existing.cancel()
+            self._pending[key] = content  # always reflect latest in-memory state
             timer = threading.Timer(delay, self._write, args=[path, content, key])
             timer.daemon = True
             self._timers[key] = timer
@@ -68,6 +70,17 @@ class _MemoryQueue:
                 # we just cancel and let the caller handle urgent writes directly.
                 # For a full flush, callers should use path.write_text() directly.
 
+    def read(self, path: Path) -> str | None:
+        """Return pending (in-flight) content for *path*, or None if none queued.
+
+        Callers should fall back to path.read_text() when this returns None.
+        This ensures build_system_prompt always sees the latest in-memory state
+        even when the debounce timer hasn't flushed yet.
+        """
+        key = str(path)
+        with self._lock:
+            return self._pending.get(key)
+
     def _write(self, path: Path, content: str, key: str) -> None:
         """Perform the atomic write. Called from timer thread."""
         try:
@@ -81,6 +94,7 @@ class _MemoryQueue:
         finally:
             with self._lock:
                 self._timers.pop(key, None)
+                self._pending.pop(key, None)
 
 
 memory_queue = _MemoryQueue()
@@ -209,9 +223,12 @@ def build_system_prompt(config: dict | None = None,
         parts.append(f"# Personality\n{soul}")
 
     # MEMORY.md — agent's notes
+    # Use queue's pending content if a write is in-flight; avoids stale reads
+    # when build_system_prompt() is called within the 30s debounce window.
     mem_path = EXODIR / "memory" / "MEMORY.md"
-    if mem_path.exists():
-        mem = mem_path.read_text().strip()
+    if mem_path.exists() or memory_queue.read(mem_path) is not None:
+        _pending = memory_queue.read(mem_path)
+        mem = (_pending if _pending is not None else mem_path.read_text()).strip()
         chars = len(mem)
         pct = int(chars / 2200 * 100)
         parts.append(
@@ -220,8 +237,9 @@ def build_system_prompt(config: dict | None = None,
 
     # USER.md — user profile
     user_path = EXODIR / "memory" / "USER.md"
-    if user_path.exists():
-        user = user_path.read_text().strip()
+    if user_path.exists() or memory_queue.read(user_path) is not None:
+        _upending = memory_queue.read(user_path)
+        user = (_upending if _upending is not None else user_path.read_text()).strip()
         chars = len(user)
         pct = int(chars / 1375 * 100)
         parts.append(
