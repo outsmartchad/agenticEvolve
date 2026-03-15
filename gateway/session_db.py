@@ -82,6 +82,14 @@ def init_db():
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_instincts_confidence ON instincts(confidence);
+
+        CREATE TABLE IF NOT EXISTS user_prefs (
+            user_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, key)
+        );
     """)
     # FTS5 — ignore errors if already exists
     for stmt in [
@@ -100,6 +108,38 @@ def init_db():
             conn.execute(stmt)
         except sqlite3.OperationalError:
             pass  # already exists
+    conn.commit()
+    conn.close()
+
+
+def get_user_pref(user_id: str, key: str, default: str = None) -> str | None:
+    """Get a user preference value."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT value FROM user_prefs WHERE user_id = ? AND key = ?",
+        (user_id, key)
+    ).fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+
+def set_user_pref(user_id: str, key: str, value: str):
+    """Set a user preference value (upsert)."""
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO user_prefs (user_id, key, value, updated_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        (user_id, key, value, datetime.now(timezone.utc).isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_user_pref(user_id: str, key: str):
+    """Delete a user preference."""
+    conn = _connect()
+    conn.execute("DELETE FROM user_prefs WHERE user_id = ? AND key = ?", (user_id, key))
     conn.commit()
     conn.close()
 

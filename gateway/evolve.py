@@ -115,6 +115,45 @@ class EvolveOrchestrator:
 
     # ── Stage 1: Collect ─────────────────────────────────────────
 
+    def _run_collector(self, cmd: list[str], name: str, timeout: int = 120,
+                       max_retries: int = 1) -> dict:
+        """Run a single collector with retry on failure. Returns result dict."""
+        import time
+        env = {**os.environ, "SIGNALS_DIR": str(SIGNALS_DIR)}
+
+        for attempt in range(max_retries + 1):
+            try:
+                self._report(f"  Running `{name}`..." + (f" (retry {attempt})" if attempt else ""))
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=timeout,
+                    cwd=str(EXODIR), env=env,
+                )
+                if proc.returncode == 0:
+                    self._report(f"  {name} done")
+                    return {
+                        "success": True,
+                        "output": (proc.stdout or proc.stderr or "")[:500],
+                        "error": "",
+                    }
+                else:
+                    error = (proc.stderr or "")[:200]
+                    if attempt < max_retries:
+                        self._report(f"  {name} failed (exit {proc.returncode}), retrying in 5s...")
+                        time.sleep(5)
+                        continue
+                    self._report(f"  {name} failed (exit {proc.returncode})")
+                    return {"success": False, "output": "", "error": error}
+            except subprocess.TimeoutExpired:
+                if attempt < max_retries:
+                    self._report(f"  {name} timed out, retrying...")
+                    time.sleep(5)
+                    continue
+                self._report(f"  {name} timed out")
+                return {"success": False, "error": "timeout"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return {"success": False, "error": "max retries exceeded"}
+
     def stage_collect(self) -> dict:
         """Run signal collectors and return collected file paths."""
         self._report("Collecting signals from GitHub, HN, X, WeChat groups...")
@@ -126,75 +165,25 @@ class EvolveOrchestrator:
         results = {}
 
         # Bash collectors
-        collectors = ["github.sh", "hackernews.sh", "x-search.sh"]
-        for collector in collectors:
+        for collector in ["github.sh", "hackernews.sh", "x-search.sh"]:
             path = COLLECTORS_DIR / collector
             if not path.exists():
                 self._report(f"  Skipped {collector} (not found)")
                 continue
             name = collector.replace(".sh", "")
-            try:
-                self._report(f"  Running `{collector}`...")
-                proc = subprocess.run(
-                    ["bash", str(path)],
-                    capture_output=True, text=True, timeout=120,
-                    cwd=str(EXODIR),
-                    env={**os.environ, "SIGNALS_DIR": str(SIGNALS_DIR)}
-                )
-                results[name] = {
-                    "success": proc.returncode == 0,
-                    "output": proc.stdout[:500] if proc.stdout else "",
-                    "error": proc.stderr[:200] if proc.stderr else "",
-                }
-                if proc.returncode == 0:
-                    self._report(f"  {collector} done")
-                else:
-                    self._report(f"  {collector} failed (exit {proc.returncode})")
-            except subprocess.TimeoutExpired:
-                results[name] = {"success": False, "error": "timeout"}
-                self._report(f"  {collector} timed out")
-            except Exception as e:
-                results[name] = {"success": False, "error": str(e)}
+            results[name] = self._run_collector(["bash", str(path)], name)
 
-        # Python collectors (WeChat group chats)
-        py_collectors = [
-            "wechat.py",
-            "reddit.py",
-            "lobsters.py",
-            "producthunt.py",
-            "github-trending.py",
-            "arxiv.py",
-            "huggingface.py",
-            "bestofjs.py",
-        ]
-        for collector in py_collectors:
+        # Python collectors
+        for collector in [
+            "wechat.py", "reddit.py", "lobsters.py", "producthunt.py",
+            "github-trending.py", "arxiv.py", "huggingface.py", "bestofjs.py",
+        ]:
             path = COLLECTORS_DIR / collector
             if not path.exists():
                 self._report(f"  Skipped {collector} (not found)")
                 continue
             name = collector.replace(".py", "")
-            try:
-                self._report(f"  Running `{collector}`...")
-                proc = subprocess.run(
-                    ["python3", str(path), "--no-refresh"],
-                    capture_output=True, text=True, timeout=120,
-                    cwd=str(EXODIR),
-                    env={**os.environ, "SIGNALS_DIR": str(SIGNALS_DIR)}
-                )
-                results[name] = {
-                    "success": proc.returncode == 0,
-                    "output": proc.stderr[:500] if proc.stderr else "",
-                    "error": proc.stderr[:200] if proc.returncode != 0 else "",
-                }
-                if proc.returncode == 0:
-                    self._report(f"  {collector} done")
-                else:
-                    self._report(f"  {collector} failed (exit {proc.returncode})")
-            except subprocess.TimeoutExpired:
-                results[name] = {"success": False, "error": "timeout"}
-                self._report(f"  {collector} timed out")
-            except Exception as e:
-                results[name] = {"success": False, "error": str(e)}
+            results[name] = self._run_collector(["python3", str(path), "--no-refresh"], name)
 
         # Count signal files
         signal_files = list(signals_today.glob("*.json")) if signals_today.exists() else []
@@ -223,6 +212,27 @@ class EvolveOrchestrator:
                     signals.append(batch)
             except (json.JSONDecodeError, OSError):
                 pass
+
+        # Deduplicate across sources by URL, then by normalized title
+        seen_urls: set[str] = set()
+        seen_titles: set[str] = set()
+        unique: list[dict] = []
+        for s in signals:
+            url = s.get("url", "").rstrip("/").lower()
+            if url and url in seen_urls:
+                continue
+            title_key = s.get("title", "").lower().strip()
+            if title_key and len(title_key) > 15 and title_key in seen_titles:
+                continue
+            if url:
+                seen_urls.add(url)
+            if title_key and len(title_key) > 15:
+                seen_titles.add(title_key)
+            unique.append(s)
+
+        if len(unique) < len(signals):
+            log.info(f"[evolve] Deduped {len(signals)} → {len(unique)} signals")
+        signals = unique
 
         def _rank(s: dict) -> int:
             meta = s.get("metadata", {})

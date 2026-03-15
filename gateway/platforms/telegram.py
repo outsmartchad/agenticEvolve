@@ -36,7 +36,8 @@ class TelegramAdapter(BasePlatformAdapter):
         self.allowed_users = set(str(u) for u in config.get("allowed_users", []))
         self.app = None
         self._gateway = None  # set by GatewayRunner after creation
-        self._user_lang: dict[str, str] = {}  # user_id -> language code (e.g. "zh", "en", "ja")
+        self._user_lang: dict[str, str] = {}  # user_id -> language code, loaded from DB on first access
+        self._user_lang_loaded = False
 
     def _get_reply_context(self, update) -> tuple[str, list[str]]:
         """Extract text and URLs from the message being replied to.
@@ -192,16 +193,29 @@ class TelegramAdapter(BasePlatformAdapter):
         "ru": "Russian (Русский)",
     }
 
+    def _load_user_lang(self, user_id: str) -> str | None:
+        """Load language preference from DB into cache. Returns the lang code or None."""
+        if user_id in self._user_lang:
+            return self._user_lang[user_id]
+        try:
+            from ..session_db import get_user_pref
+            lang = get_user_pref(str(user_id), "lang")
+            if lang:
+                self._user_lang[user_id] = lang
+            return lang
+        except Exception:
+            return None
+
     def _get_lang_instruction(self, user_id: str) -> str:
         """Return a prompt suffix for the user's preferred language, or '' if unset/English."""
-        lang = self._user_lang.get(str(user_id))
+        lang = self._load_user_lang(str(user_id))
         if not lang or lang == "en":
             return ""
         name = self.LANG_NAMES.get(lang, lang)
         return f"\n\nIMPORTANT: Write your ENTIRE response in {name}."
 
     async def _handle_lang(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Set or view your preferred output language.
+        """Set or view your preferred output language. Persisted to DB.
 
         Usage: /lang [code]  — e.g. /lang zh, /lang en, /lang ja
         """
@@ -214,7 +228,7 @@ class TelegramAdapter(BasePlatformAdapter):
         args = context.args if context.args else []
 
         if not args:
-            current = self._user_lang.get(user_id, "en")
+            current = self._load_user_lang(user_id) or "en"
             name = self.LANG_NAMES.get(current, current)
             codes = ", ".join(f"`{k}`" for k in sorted(self.LANG_NAMES))
             await update.message.reply_text(
@@ -229,10 +243,20 @@ class TelegramAdapter(BasePlatformAdapter):
         code = args[0].lower().strip()
         if code == "reset" or code == "off":
             self._user_lang.pop(user_id, None)
+            try:
+                from ..session_db import delete_user_pref
+                delete_user_pref(user_id, "lang")
+            except Exception:
+                pass
             await update.message.reply_text("Language reset to English.")
             return
 
         self._user_lang[user_id] = code
+        try:
+            from ..session_db import set_user_pref
+            set_user_pref(user_id, "lang", code)
+        except Exception:
+            pass
         name = self.LANG_NAMES.get(code, code)
         await update.message.reply_text(f"Output language set to: {name} (`{code}`)", parse_mode="Markdown")
 
