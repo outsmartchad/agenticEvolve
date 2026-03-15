@@ -244,7 +244,7 @@ class DiscordClientAdapter(BasePlatformAdapter):
                                 "discord", channel_id, author_id, text
                             )
                             if response:
-                                await self.send(channel_id, response)
+                                await self.send(channel_id, response, reply_to=msg["id"])
                         except Exception as e:
                             log.error(f"Discord handler error: {e}")
 
@@ -255,14 +255,18 @@ class DiscordClientAdapter(BasePlatformAdapter):
                 log.error(f"Discord poll error: {e}")
                 await asyncio.sleep(5)
 
-    async def send(self, chat_id: str, text: str):
+    async def send(self, chat_id: str, text: str, reply_to: str = None):
         """Send a message to a Discord channel via REST API."""
         # Discord 2000 char limit
-        for i in range(0, len(text), 1900):
+        for idx, i in enumerate(range(0, len(text), 1900)):
             chunk = text[i:i + 1900]
+            payload = {"content": chunk}
+            # Only reply to the original message on the first chunk
+            if idx == 0 and reply_to:
+                payload["message_reference"] = {"message_id": reply_to}
             await self._api_post(
                 f"/channels/{chat_id}/messages",
-                {"content": chunk}
+                payload
             )
 
     async def list_guilds(self) -> list[dict]:
