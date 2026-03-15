@@ -25,10 +25,14 @@ const qrcode = require("qrcode-terminal");
 const path = require("path");
 const readline = require("readline");
 
+const fs = require("fs");
 const AUTH_DIR = path.join(__dirname, "auth");
 const logger = pino({ level: "silent" }); // quiet baileys internal logs
 
 let sock = null;
+
+// Track all seen chat JIDs (contacts + groups) from incoming messages
+const seenChats = new Map(); // jid -> { name, lastSeen }
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -103,6 +107,20 @@ async function startBridge() {
       // For groups, participant is the sender. For DMs, it's the chat itself.
       const userId = msg.key.participant || chatId;
 
+      // Track seen JIDs for contact/group listing
+      if (chatId && !chatId.endsWith("@broadcast")) {
+        seenChats.set(chatId, {
+          name: msg.pushName || chatId.split("@")[0],
+          lastSeen: Date.now(),
+        });
+      }
+      if (userId && userId !== chatId && userId.endsWith("@s.whatsapp.net")) {
+        seenChats.set(userId, {
+          name: msg.pushName || userId.split("@")[0],
+          lastSeen: Date.now(),
+        });
+      }
+
       // Extract text from various message types
       const text =
         msg.message?.conversation ||
@@ -130,7 +148,59 @@ async function startBridge() {
   rl.on("line", async (line) => {
     try {
       const cmd = JSON.parse(line.trim());
-      if (cmd.type === "send" && cmd.chat_id && cmd.text) {
+      if (cmd.type === "list_groups") {
+        try {
+          const groups = await sock.groupFetchAllParticipating();
+          const result = Object.values(groups).map((g) => ({
+            id: g.id,
+            subject: g.subject,
+            size: g.size || g.participants?.length || 0,
+          }));
+          emit({ type: "groups", groups: result });
+        } catch (e) {
+          emit({ type: "error", error: `list_groups failed: ${e.message}` });
+        }
+      } else if (cmd.type === "list_contacts") {
+        // Combine: 1) lid-mapping files from auth store, 2) seen chat JIDs, 3) chatFetchAll if available
+        const contactMap = new Map(); // jid -> name
+
+        // Source 1: Read lid-mapping-<phone>.json files from auth dir
+        try {
+          const files = fs.readdirSync(AUTH_DIR);
+          for (const f of files) {
+            const m = f.match(/^lid-mapping-(\d+)\.json$/);
+            if (m) {
+              const phone = m[1];
+              const jid = `${phone}@s.whatsapp.net`;
+              contactMap.set(jid, phone);
+            }
+          }
+        } catch (e) { /* ignore */ }
+
+        // Source 2: Seen chats (from incoming messages this session)
+        for (const [jid, info] of seenChats) {
+          if (jid.endsWith("@s.whatsapp.net")) {
+            contactMap.set(jid, info.name || jid.split("@")[0]);
+          }
+        }
+
+        // Source 3: Try chatFetchAll (works in some Baileys versions)
+        try {
+          const chats = await sock.chatFetchAll?.() || [];
+          for (const c of chats) {
+            if (c.id?.endsWith("@s.whatsapp.net")) {
+              contactMap.set(c.id, c.name || c.id.split("@")[0]);
+            }
+          }
+        } catch (e) { /* v7 may not support this */ }
+
+        // Exclude own JID
+        const ownJid = sock.user?.id?.replace(/:.*@/, "@");
+        if (ownJid) contactMap.delete(ownJid);
+
+        const contacts = Array.from(contactMap).map(([id, name]) => ({ id, name }));
+        emit({ type: "contacts", contacts });
+      } else if (cmd.type === "send" && cmd.chat_id && cmd.text) {
         // LID JIDs can't receive messages — resolve to phone JID if available
         let targetJid = cmd.chat_id;
         if (targetJid.endsWith("@lid")) {

@@ -13,3 +13,16 @@ Agent cannot send images directly via Telegram SendMessage; images extracted fro
 User preferences: proactive notifications over pull-based. Concise high-signal summaries. Always map external patterns back to current projects explicitly. Verify URLs before sharing. Prefer App Store over direct downloads.
 §
 User actively researches AI agent architectures — evaluates repos by pattern applicability to agenticEvolve, not hype metrics.
+
+§
+After refusing an inappropriate request, always pivot with a direct offer to help with legitimate tasks to keep conversation constructive.
+§
+When correcting misconceptions (e.g. celebrity voice actor myths), explain the root cause of the confusion, not just the correction.
+§
+Maintain strict agent identity even when the request seems harmless — impersonation requests are always out of scope regardless of framing.
+§
+When a user shares a live location link (e.g. Google Maps URL), always attempt to fetch it and summarize what location it resolves to before asking for clarification.
+§
+For Cantonese-speaking users asking local transport questions, always respond in Cantonese unless they switch language.
+§
+When asked about the nearest minibus, always include the recommended boarding location (nearest stop name or landmark) not just the route number.

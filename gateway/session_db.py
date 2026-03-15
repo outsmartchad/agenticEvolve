@@ -90,6 +90,20 @@ def init_db():
             updated_at TEXT NOT NULL,
             PRIMARY KEY (user_id, key)
         );
+
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            target_name TEXT,
+            target_type TEXT NOT NULL DEFAULT 'channel',
+            mode TEXT NOT NULL DEFAULT 'subscribe',
+            created_at TEXT NOT NULL,
+            UNIQUE(user_id, platform, target_id, mode)
+        );
+        CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id, mode);
+        CREATE INDEX IF NOT EXISTS idx_subscriptions_platform ON subscriptions(platform, mode);
     """)
     # FTS5 — ignore errors if already exists
     for stmt in [
@@ -1070,6 +1084,94 @@ def format_recall_context(results: list[dict], max_chars: int = 2000) -> str:
             break
 
     return "\n".join(lines)
+
+
+# ── Subscriptions ────────────────────────────────────────────
+
+
+def add_subscription(user_id: str, platform: str, target_id: str,
+                     target_name: str, target_type: str = "channel",
+                     mode: str = "subscribe") -> bool:
+    """Add a subscription (subscribe=digest, serve=active agent).
+    Returns True if new, False if already exists."""
+    conn = _connect()
+    try:
+        conn.execute(
+            """INSERT OR IGNORE INTO subscriptions
+               (user_id, platform, target_id, target_name, target_type, mode, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, platform, target_id, target_name, target_type, mode,
+             datetime.now(timezone.utc).isoformat())
+        )
+        conn.commit()
+        return conn.total_changes > 0
+    finally:
+        conn.close()
+
+
+def remove_subscription(user_id: str, platform: str, target_id: str,
+                        mode: str = "subscribe") -> bool:
+    conn = _connect()
+    try:
+        conn.execute(
+            "DELETE FROM subscriptions WHERE user_id=? AND platform=? AND target_id=? AND mode=?",
+            (user_id, platform, target_id, mode)
+        )
+        conn.commit()
+        return conn.total_changes > 0
+    finally:
+        conn.close()
+
+
+def get_subscriptions(user_id: str, mode: str = "subscribe",
+                      platform: str | None = None) -> list[dict]:
+    conn = _connect()
+    try:
+        if platform:
+            rows = conn.execute(
+                """SELECT * FROM subscriptions
+                   WHERE user_id=? AND mode=? AND platform=?
+                   ORDER BY platform, target_type, target_name""",
+                (user_id, mode, platform)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM subscriptions
+                   WHERE user_id=? AND mode=?
+                   ORDER BY platform, target_type, target_name""",
+                (user_id, mode)
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_serve_targets(platform: str) -> list[dict]:
+    """Get all targets in serve mode for a platform (used by adapters)."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM subscriptions
+               WHERE platform=? AND mode='serve'""",
+            (platform,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def is_subscribed(user_id: str, platform: str, target_id: str,
+                  mode: str = "subscribe") -> bool:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """SELECT 1 FROM subscriptions
+               WHERE user_id=? AND platform=? AND target_id=? AND mode=?""",
+            (user_id, platform, target_id, mode)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
 
 
 # Initialize on import

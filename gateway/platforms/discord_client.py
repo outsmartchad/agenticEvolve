@@ -249,6 +249,67 @@ class DiscordClientAdapter(BasePlatformAdapter):
                 {"content": chunk}
             )
 
+    async def list_guilds(self) -> list[dict]:
+        """List all guilds (servers) the user is in."""
+        guilds = await self._api_get("/users/@me/guilds")
+        return [{"id": g["id"], "name": g["name"]} for g in (guilds or [])]
+
+    async def list_channels(self, guild_id: str) -> list[dict]:
+        """List text channels in a guild, grouped by category."""
+        channels = await self._api_get(f"/guilds/{guild_id}/channels")
+        if not channels:
+            return []
+        # Build category name map
+        cat_names = {c["id"]: c["name"] for c in channels if c.get("type") == 4}
+        # Text (0), announcement (5), forum (15), voice-text (13)
+        text_channels = [
+            {
+                "id": c["id"], "name": c["name"], "type": c["type"],
+                "category": cat_names.get(c.get("parent_id", ""), ""),
+                "position": c.get("position", 999),
+            }
+            for c in channels
+            if c.get("type") in (0, 5)
+        ]
+        text_channels.sort(key=lambda c: (c["category"], c["position"]))
+        return text_channels
+
+    async def list_dm_channels(self) -> list[dict]:
+        """List DM channels."""
+        channels = await self._api_get("/users/@me/channels")
+        if not channels:
+            return []
+        result = []
+        for c in channels:
+            recipients = ", ".join(
+                r.get("username", "?") for r in c.get("recipients", [])
+            )
+            result.append({
+                "id": c["id"],
+                "name": recipients or "Unknown",
+                "type": "dm" if c.get("type") == 1 else "group_dm",
+            })
+        return result
+
+    async def get_messages(self, channel_id: str, after: str = "0",
+                           limit: int = 50) -> list[dict]:
+        """Fetch messages from a channel (for digest)."""
+        msgs = await self._api_get(
+            f"/channels/{channel_id}/messages?after={after}&limit={limit}"
+        )
+        if not msgs:
+            return []
+        return [
+            {
+                "id": m["id"],
+                "author": m.get("author", {}).get("username", "?"),
+                "author_id": m.get("author", {}).get("id", ""),
+                "content": m.get("content", ""),
+                "timestamp": m.get("timestamp", ""),
+            }
+            for m in reversed(msgs)  # oldest first
+        ]
+
     async def stop(self):
         if self._poll_task:
             self._poll_task.cancel()

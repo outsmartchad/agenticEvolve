@@ -20,6 +20,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
     def __init__(self, config: dict, on_message):
         super().__init__(config, on_message)
         self.allowed_users = set(str(u) for u in config.get("allowed_users", []))
+        self._serve_groups: set[str] = set()  # group JIDs being actively served
         self.process = None
         self._reader_task = None
 
@@ -57,6 +58,16 @@ class WhatsAppAdapter(BasePlatformAdapter):
         self._reader_task = asyncio.create_task(self._read_loop())
         log.info(f"WhatsApp bridge started (PID {self.process.pid})")
 
+        # Load serve targets from DB
+        try:
+            from ..session_db import get_serve_targets
+            targets = get_serve_targets("whatsapp")
+            self._serve_groups = {t["target_id"] for t in targets if t["target_type"] == "group"}
+            if self._serve_groups:
+                log.info(f"WhatsApp serving {len(self._serve_groups)} groups from DB")
+        except Exception as e:
+            log.warning(f"Could not load serve targets: {e}")
+
     async def _read_loop(self):
         """Read JSON messages from the bridge stdout."""
         if not self.process or not self.process.stdout:
@@ -80,21 +91,38 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     user_id = msg.get("user_id", chat_id)
                     text = msg.get("text", "")
 
-                    if not text or not self._is_allowed(user_id):
+                    if not text:
                         continue
 
-                    # Group chats: only respond to prefixed messages
                     is_group = chat_id.endswith("@g.us")
+                    is_served_group = is_group and chat_id in self._serve_groups
+
+                    # For served groups: skip allowed_users + prefix check, respond to ALL messages
+                    # For non-served groups: require allowed_users + prefix
+                    # For DMs: require allowed_users only
                     if is_group:
-                        prefix_match = False
-                        for prefix in self.GROUP_PREFIXES:
-                            if text.lower().startswith(prefix):
-                                text = text[len(prefix):].lstrip()
-                                prefix_match = True
-                                break
-                        if not prefix_match:
-                            continue
-                        if not text:
+                        if is_served_group:
+                            # Strip prefix if present, but don't require it
+                            for prefix in self.GROUP_PREFIXES:
+                                if text.lower().startswith(prefix):
+                                    text = text[len(prefix):].lstrip()
+                                    break
+                        else:
+                            prefix_match = False
+                            for prefix in self.GROUP_PREFIXES:
+                                if text.lower().startswith(prefix):
+                                    text = text[len(prefix):].lstrip()
+                                    prefix_match = True
+                                    break
+                            if not prefix_match:
+                                continue
+                            if not text:
+                                continue
+                            if not self._is_allowed(user_id):
+                                continue
+                    else:
+                        # DMs: require allowed_users
+                        if not self._is_allowed(user_id):
                             continue
 
                     try:
@@ -125,6 +153,14 @@ class WhatsAppAdapter(BasePlatformAdapter):
 
                 elif msg.get("type") == "ready":
                     log.info("WhatsApp connected")
+
+                elif msg.get("type") in ("groups", "contacts"):
+                    # Route response to pending _send_command future
+                    resp_type = msg["type"]
+                    if hasattr(self, "_pending_responses") and resp_type in self._pending_responses:
+                        fut = self._pending_responses.pop(resp_type)
+                        if not fut.done():
+                            fut.set_result(msg)
 
             except asyncio.CancelledError:
                 break
@@ -174,3 +210,36 @@ class WhatsAppAdapter(BasePlatformAdapter):
             msg = json.dumps({"type": "send", "chat_id": chat_id, "text": text}) + "\n"
             self.process.stdin.write(msg.encode())
             await self.process.stdin.drain()
+
+    async def _send_command(self, cmd: dict) -> dict | None:
+        """Send a command to bridge.js and wait for a response of the expected type."""
+        if not self.process or not self.process.stdin:
+            return None
+        self.process.stdin.write((json.dumps(cmd) + "\n").encode())
+        await self.process.stdin.drain()
+        # Wait for response (bridge emits it on stdout, read_loop stores it)
+        # We use a simple future pattern
+        if not hasattr(self, "_pending_responses"):
+            self._pending_responses: dict[str, asyncio.Future] = {}
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        resp_type = cmd["type"].replace("list_", "")  # list_groups -> groups
+        self._pending_responses[resp_type] = fut
+        try:
+            return await asyncio.wait_for(fut, timeout=10)
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(resp_type, None)
+            return None
+
+    async def list_groups(self) -> list[dict]:
+        """Get all WhatsApp groups via bridge.js."""
+        resp = await self._send_command({"type": "list_groups"})
+        groups = resp.get("groups", []) if resp else []
+        log.info(f"list_groups returned {len(groups)} groups")
+        return groups
+
+    async def list_contacts(self) -> list[dict]:
+        """Get recent WhatsApp contacts via bridge.js."""
+        resp = await self._send_command({"type": "list_contacts"})
+        contacts = resp.get("contacts", []) if resp else []
+        log.info(f"list_contacts returned {len(contacts)} contacts")
+        return contacts

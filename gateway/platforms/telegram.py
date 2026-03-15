@@ -25,6 +25,7 @@ from ..commands import (
     AdminMixin, PipelineMixin, SignalsMixin, CronMixin,
     ApprovalMixin, SearchMixin, MediaMixin, MiscMixin,
 )
+from ..commands.subscribe import SubscribeMixin
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ except ImportError:
 class TelegramAdapter(
     AdminMixin, PipelineMixin, SignalsMixin, CronMixin,
     ApprovalMixin, SearchMixin, MediaMixin, MiscMixin,
+    SubscribeMixin,
     BasePlatformAdapter,
 ):
     name = "telegram"
@@ -551,6 +553,8 @@ class TelegramAdapter(
             "produce": self._handle_produce,
             "lang": self._handle_lang,
             "reflect": self._handle_reflect,
+            "subscribe": self._handle_subscribe,
+            "serve": self._handle_serve,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))

@@ -58,6 +58,13 @@ class MiscMixin:
         chat_id = str(query.message.chat_id)
         data = query.data
 
+        if data.startswith("sub:") or data.startswith("serve:"):
+            await self._handle_subscribe_callback(query, str(user_id), data)
+            return
+
+        if data == "noop":
+            return
+
         if data.startswith("absorb:"):
             target = data[7:]
             await query.edit_message_text(f"Absorbing: {target[:100]}...")
