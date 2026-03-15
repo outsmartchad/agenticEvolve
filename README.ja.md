@@ -6,12 +6,12 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-37-blue?style=for-the-badge" alt="37 Commands"></a>
 </p>
 
 ---
 
-`claude -p` 上に構築された永続エージェントランタイム。Python asyncio ゲートウェイ搭載。6層メモリ + クロスレイヤー自動リコール。クローズドループスキル合成。音声入出力。ブラウザ自動化。組み込みcron。2層セキュリティ。Telegram経由でアクセス——開発環境をポケットに。
+`claude -p` 上に構築された永続エージェントランタイム。Python asyncio ゲートウェイ搭載。6層メモリ + クロスレイヤー自動リコール。クローズドループスキル合成。音声入出力。ブラウザ自動化。組み込みcron。2層セキュリティ。マルチプラットフォーム（Telegram + Discord + WhatsApp）。37のTelegramコマンド——開発環境をポケットに。
 
 ---
 
@@ -19,6 +19,9 @@
 
 **代わりにウェブを閲覧**
 > 「Anthropicのドキュメントに行って最新のClaudeモデルの料金を調べて。」エージェントがABPブラウザを開き、ナビゲートし、データを抽出し、簡潔なサマリーを送ってくれる。Cloudflareにブロックされたら自動でBraveに切り替え。
+
+**WhatsAppとDiscordのグループでサービス提供**
+> `/serve` → WhatsApp → グループ → Crypto🚀をオン。これでグループ内の誰でもあなたのAIエージェントと会話できる。すべてのメッセージに応答し、グループごとの会話メモリを維持し、すべてをTelegramのインラインキーボードで制御できる。Discordチャンネルも同様に動作——エージェントがChrome DevTools Protocolを通じてデスクトップアプリに接続する。
 
 **自分のWeChatチャット履歴を検索**
 > WeChatの内蔵検索はひどい。エージェントがローカルのWeChatデータベースを読み取り、検索可能なエクスポートを提供する——連絡先、メッセージ、グループ、お気に入り。すべてオフライン、すべて自分のマシン上。
@@ -53,6 +56,7 @@
 
 | 機能 | 説明 |
 |------|------|
+| **マルチプラットフォーム** | Telegram（Bot API）+ Discord（デスクトップCDP + REST）+ WhatsApp（Baileys v7ブリッジ）。`/subscribe` でチャンネルをモニタリングしてダイジェストを取得、`/serve` でエージェントが任意のグループやDMで積極的に応答 |
 | **ビルド** | Telegram経由でフルClaude Code——ターミナル、ファイルI/O、Web検索、MCP、26スキル |
 | **進化** | 5段階パイプライン：収集 → 分析 → 構築 → レビュー → 自動インストール。11ソースをスキャン：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChatグループ、スキルを合成 |
 | **吸収** | `/absorb <url>` — リポジトリをクローン、アーキテクチャをマッピング、パターンを比較、改善をシステムに統合 |
@@ -149,31 +153,33 @@ ae doctor    # すべての前提条件と設定をチェック
 | `/memory` | エージェントメモリ状態を表示 |
 | `/skills` | インストール済みスキル一覧（26個） |
 | `/cost` | 使用量とコスト |
+| `/subscribe` | Discord/WhatsApp/WeChatチャンネルをダイジェスト用にモニタリング |
+| `/serve` | エージェントが積極的に応答するチャンネル/連絡先を選択 |
 | `/wechat [--hours N]` | WeChatグループチャットダイジェスト（简体中文） |
 | `/produce [--ideas N]` | 全シグナルからビジネスアイデアをブレインストーミング |
 | `/digest` | 朝のブリーフィング |
 | `/lang [code]` | `/produce`、`/learn`、`/wechat` の持続的な出力言語を設定 |
 | `/restart` | ゲートウェイをリモート再起動 |
 
-[全35コマンド →](docs/commands.md)
+[全37コマンド →](docs/commands.md)
 
 ---
 
 ## アーキテクチャ
 
 ```
-ユーザー (Telegram/音声) → ゲートウェイ (asyncio) → フックディスパッチャー → セッション + コスト制御
+ユーザー (Telegram/Discord/WhatsApp/音声) → ゲートウェイ (asyncio) → フックディスパッチャー → セッション + コスト制御
   → 自動リコール (6層) → claude -p → SQLite → Git同期
 ```
 
-カスタムエージェントループなし。Claude Codeが**そのまま**ランタイム——25+組み込みツール、MCPサーバー、スキル。ゲートウェイがその周囲にメモリ、ルーティング、リコール、cron、音声、ブラウザ、セキュリティを追加。
+カスタムエージェントループなし。Claude Codeが**そのまま**ランタイム——25+組み込みツール、MCPサーバー、スキル。ゲートウェイがその周囲にメモリ、ルーティング、リコール、cron、音声、ブラウザ、マルチプラットフォーム、セキュリティを追加。
 
 ### 設計上の重要な決定
 - **ツールシステムを作らない** — Claude Code自体がツールを持つ。スキルとインフラを構築し、抽象化層は作らない。
 - **有界メモリ** — MEMORY.md（2200文字）+ USER.md（1375文字）+ SQLite FTS5。無制限な増加なし。
 - **クローズドループ** — `auto_approve_skills: true`。進化 → 構築 → レビュー → インストール → gitに同期。人手による承認なし。
 - **シャットダウン時ドレイン** — 処理中のリクエストは再起動前に完了。作業の損失なし。
-- **モジュラーコマンド** — 35のTelegramコマンドを8つのmixin（admin、pipelines、signals、cron、approval、search、media、misc）に分割。アダプターコアは630行。
+- **モジュラーコマンド** — 37のTelegramコマンドを9つのmixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）に分割。アダプターコアは630行。
 - **二層リコール** — FTS5キーワード検索 + TF-IDFセマンティック検索。自動リコールが毎回のClaude呼び出し前に関連コンテキストを注入。
 - **直感パイプライン** — セッション間で観察された行動パターンがスコアリング・重複排除され、信頼度が十分に高い場合にMEMORY.mdに自動昇格。
 
@@ -281,6 +287,19 @@ ae doctor    # すべての前提条件と設定をチェック
 ---
 
 ## 最近の変更
+
+### v2.2 — マルチプラットフォーム + サブスクライブ/サーブ
+
+**マルチプラットフォーム対応**
+- **Discordデスクトップアダプター**（`gateway/platforms/discord_client.py`）— Chrome DevTools Protocol（CDP）を通じて実行中のDiscordデスクトップアプリに接続。ネットワークリクエストから認証トークンを抽出し、Discord REST APIでメッセージング。ギルドリスト、チャンネルリスト（カテゴリ別グループ化）、DMチャンネル、メッセージポーリングをサポート。
+- **WhatsAppブリッジ**（`whatsapp-bridge/bridge.js`）— Baileys v7 Node.jsブリッジ、stdin/stdout経由のJSON通信。QRコードをTelegramに配信してスキャンを容易に。送信メッセージのLIDから電話番号への解決。グループプレフィックスフィルタリング（`/ask`、`@agent`）。認証ストアのlid-mappingファイル + ライブメッセージトラッキングから連絡先を検出。
+- **WeChat** — 復号化されたローカルSQLCipherデータベースへの読み取り専用アクセス。グループと連絡先は `contact.db` から、メッセージは `message_0.db` から。
+
+**サブスクライブとサーブコマンド**
+- `/subscribe` — Telegramインラインキーボードでのチャンネル選択UI。Discordチャンネル、WhatsAppグループ/連絡先、WeChatグループをダイジェスト用に選択。ページネーション（1ページ40件）、Discordはカテゴリヘッダー付き。WhatsAppはグループ/連絡先のサブビューに分割。
+- `/serve` — 同じUI、エージェントが積極的に応答する場所を選択。WhatsAppのサーブグループはすべてのメッセージを受け入れ（プレフィックス不要、allowed_usersゲートなし）。サーブターゲットはゲートウェイ起動時にDBからロード。切り替え時にアダプターを動的に更新。
+- **サブスクリプションDB** — session_dbの `subscriptions` テーブル。user_id、platform、target_id、target_name、target_type、modeを含む。CRUD関数：`add_subscription`、`remove_subscription`、`get_subscriptions`、`get_serve_targets`、`is_subscribed`。
+- **ショートIDレジストリ** — Telegramの `callback_data` は64バイト制限。長いWhatsApp JID（`120363427198529523@g.us`）やWeChatチャットルームIDは制限を超過。解決策：メモリ内数値IDマップ（`sub:toggle:whatsapp:group:120363...` の代わりに `sub:t:3`）。
 
 ### v2.1 — モジュラーアーキテクチャ + セマンティックリコール + テストハーネス
 

@@ -6,12 +6,12 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-37-blue?style=for-the-badge" alt="37 Commands"></a>
 </p>
 
 ---
 
-基于 `claude -p` 构建的持久化智能体运行时，配合 Python asyncio 网关。6 层记忆体系 + 跨层自动召回。闭环技能合成。语音输入输出。浏览器自动化。内置定时任务。双层安全机制。通过 Telegram 操控——你的整个开发环境装进口袋。
+基于 `claude -p` 构建的持久化智能体运行时，配合 Python asyncio 网关。6 层记忆体系 + 跨层自动召回。闭环技能合成。语音输入输出。浏览器自动化。内置定时任务。双层安全机制。多平台（Telegram + Discord + WhatsApp）。37 个 Telegram 命令——你的整个开发环境装进口袋。
 
 ---
 
@@ -19,6 +19,9 @@
 
 **替你浏览网页**
 > "去 Anthropic 文档找最新的 Claude 模型定价。" 代理打开 ABP 浏览器，导航，提取数据，发送简洁摘要。如果 Cloudflare 拦截，自动切换到 Brave。
+
+**在你的 WhatsApp 和 Discord 群组中服务**
+> `/serve` → WhatsApp → 群组 → 开启 Crypto🚀。现在群组里任何人都能和你的 AI 代理对话。它回复每条消息，维护每个群组的对话记忆，你通过 Telegram 内联键盘控制一切。Discord 频道同样支持——代理通过 Chrome DevTools Protocol 接入你的桌面应用。
 
 **搜索你自己的微信聊天记录**
 > 微信自带的搜索太烂了。代理读取你本地的微信数据库，给你一个可搜索的导出——联系人、消息、群聊、收藏。全部离线，全在你自己的机器上。
@@ -53,6 +56,7 @@
 
 | 能力 | 描述 |
 |------|------|
+| **多平台** | Telegram（Bot API）+ Discord（桌面 CDP + REST）+ WhatsApp（Baileys v7 桥接）。`/subscribe` 监控频道获取摘要，`/serve` 让代理在任意群组或私聊中主动回复 |
 | **构建** | 通过 Telegram 使用完整的 Claude Code——终端、文件读写、网络搜索、MCP、26 个技能 |
 | **进化** | 5 阶段流水线：收集 → 分析 → 构建 → 审查 → 自动安装。扫描 11 个来源：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + 微信群聊，合成技能 |
 | **吸收** | `/absorb <url>` — 克隆仓库，映射架构，对比模式，将改进融入你的系统 |
@@ -149,31 +153,33 @@ ae doctor    # 检查所有前置条件和配置
 | `/memory` | 查看代理记忆状态 |
 | `/skills` | 列出已安装技能（26 个） |
 | `/cost` | 使用量和开销 |
+| `/subscribe` | 选择 Discord/WhatsApp/微信频道进行摘要监控 |
+| `/serve` | 选择代理主动回复的频道/联系人 |
 | `/wechat [--hours N]` | 微信群聊摘要（简体中文） |
 | `/produce [--ideas N]` | 从所有信号中头脑风暴商业点子 |
 | `/digest` | 每日早间简报 |
 | `/lang [code]` | 设置 `/produce`、`/learn`、`/wechat` 的持久输出语言 |
 | `/restart` | 远程重启网关 |
 
-[全部 35 个命令 →](docs/commands.md)
+[全部 37 个命令 →](docs/commands.md)
 
 ---
 
 ## 架构
 
 ```
-用户 (Telegram/语音) → 网关 (asyncio) → 钩子分发器 → 会话 + 费用控制
+用户 (Telegram/Discord/WhatsApp/语音) → 网关 (asyncio) → 钩子分发器 → 会话 + 费用控制
   → 自动召回 (6 层) → claude -p → SQLite → Git 同步
 ```
 
-没有自定义代理循环。Claude Code **就是**运行时——25+ 内置工具、MCP 服务器、技能。网关在其周围添加了记忆、路由、召回、定时任务、语音、浏览器和安全层。
+没有自定义代理循环。Claude Code **就是**运行时——25+ 内置工具、MCP 服务器、技能。网关在其周围添加了记忆、路由、召回、定时任务、语音、浏览器、多平台、和安全层。
 
 ### 关键设计决策
 - **不造工具系统** — Claude Code 自带工具。我们构建技能和基础设施，而非抽象层。
 - **有界记忆** — MEMORY.md（2200 字符）+ USER.md（1375 字符）+ SQLite FTS5。无无限增长。
 - **闭环** — `auto_approve_skills: true`。进化 → 构建 → 审查 → 安装 → 同步到 git。无人工审批。
 - **关机排空** — 进行中的请求在重启前完成。不丢失工作。
-- **模块化命令** — 35 个 Telegram 命令拆分为 8 个 mixin（admin、pipelines、signals、cron、approval、search、media、misc）。适配器核心 630 行。
+- **模块化命令** — 37 个 Telegram 命令拆分为 9 个 mixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）。适配器核心 630 行。
 - **双层召回** — FTS5 关键词搜索 + TF-IDF 语义搜索。自动召回在每次 Claude 调用前注入相关上下文。
 - **直觉流水线** — 跨会话观察的行为模式被评分、去重，置信度足够高时自动提升到 MEMORY.md。
 
@@ -281,6 +287,19 @@ ae doctor    # 检查所有前置条件和配置
 ---
 
 ## 最近更新
+
+### v2.2 — 多平台 + 订阅/服务
+
+**多平台支持**
+- **Discord 桌面适配器**（`gateway/platforms/discord_client.py`）— 通过 Chrome DevTools Protocol（CDP）接入运行中的 Discord 桌面应用。从网络请求中提取认证令牌，然后使用 Discord REST API 进行消息收发。支持服务器列表、频道列表（带分类分组）、私聊频道和消息轮询。
+- **WhatsApp 桥接**（`whatsapp-bridge/bridge.js`）— Baileys v7 Node.js 桥接，通过 stdin/stdout JSON 通信。QR 码推送到 Telegram 方便扫码。出站消息的 LID 转手机号解析。群组前缀过滤（`/ask`、`@agent`）。从认证存储 lid-mapping 文件 + 实时消息追踪中发现联系人。
+- **微信** — 通过解密本地 SQLCipher 数据库只读访问。群组和联系人来自 `contact.db`，消息来自 `message_0.db`。
+
+**订阅与服务命令**
+- `/subscribe` — Telegram 内联键盘 UI，选择 Discord 频道、WhatsApp 群组/联系人或微信群组进行摘要监控。分页列表（每页 40 项），Discord 带分类标题。WhatsApp 分为群组/联系人子视图。
+- `/serve` — 相同 UI，选择代理主动回复的位置。WhatsApp 服务群组接受所有消息（无需前缀，无 allowed_users 限制）。服务目标在网关启动时从数据库加载。切换时动态更新适配器。
+- **订阅数据库** — session_db 中的 `subscriptions` 表，包含 user_id、platform、target_id、target_name、target_type、mode。CRUD 函数：`add_subscription`、`remove_subscription`、`get_subscriptions`、`get_serve_targets`、`is_subscribed`。
+- **短 ID 注册表** — Telegram 限制 `callback_data` 为 64 字节。长 WhatsApp JID（`120363427198529523@g.us`）和微信聊天室 ID 会超出限制。解决方案：内存数字 ID 映射（`sub:t:3` 代替 `sub:toggle:whatsapp:group:120363...`）。
 
 ### v2.1 — 模块化架构 + 语义召回 + 测试体系
 
