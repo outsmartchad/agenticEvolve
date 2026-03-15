@@ -14,6 +14,9 @@ Output: gap report text (sent to Telegram by the caller).
 Cost tracked and returned.
 """
 import logging
+import re
+import yaml
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -21,6 +24,65 @@ log = logging.getLogger("agenticEvolve.retro")
 
 EXODIR = Path.home() / ".agenticEvolve"
 RETRO_LOG = EXODIR / "logs" / "retro.log"
+INSTINCTS_DIR = Path.home() / ".ae" / "instincts"
+
+
+def _write_instincts(gap_report: str, context_type: str) -> int:
+    """Parse gap report and write each gap as a YAML instinct file.
+
+    Returns number of instincts written.
+    """
+    # Match "**Gap N — Label**" or "Gap N — Label" patterns
+    gap_pattern = re.compile(
+        r"\*{0,2}Gap\s+\d+\s*[—–-]+\s*(.+?)\*{0,2}\n(.*?)(?=\*{0,2}Gap\s+\d+|\Z)",
+        re.DOTALL | re.IGNORECASE,
+    )
+    matches = gap_pattern.findall(gap_report)
+    if not matches:
+        return 0
+
+    INSTINCTS_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc)
+    written = 0
+
+    for label_raw, body in matches:
+        label = label_raw.strip().rstrip("*").strip()
+        slug = re.sub(r"[^\w]+", "-", label.lower()).strip("-")[:60]
+        fname = f"{ts.strftime('%Y%m%d')}_{slug}.yaml"
+        fpath = INSTINCTS_DIR / fname
+
+        # Don't overwrite — same gap may surface across cycles; bump confidence instead
+        if fpath.exists():
+            try:
+                existing = yaml.safe_load(fpath.read_text()) or {}
+                current_conf = existing.get("confidence", 0.3)
+                existing["confidence"] = min(round(current_conf + 0.1, 1), 0.9)
+                existing["last_seen"] = ts.isoformat()
+                existing["seen_count"] = existing.get("seen_count", 1) + 1
+                fpath.write_text(yaml.dump(existing, allow_unicode=True))
+                log.info(f"Instinct bumped: {fname} → conf={existing['confidence']}")
+            except Exception as e:
+                log.warning(f"Failed to update instinct {fname}: {e}")
+            continue
+
+        instinct = {
+            "label": label,
+            "source": f"retro/{context_type}",
+            "confidence": 0.3,
+            "status": "open",
+            "created_at": ts.isoformat(),
+            "last_seen": ts.isoformat(),
+            "seen_count": 1,
+            "body": body.strip(),
+        }
+        try:
+            fpath.write_text(yaml.dump(instinct, allow_unicode=True))
+            log.info(f"Instinct written: {fname}")
+            written += 1
+        except Exception as e:
+            log.warning(f"Failed to write instinct {fname}: {e}")
+
+    return written
 
 
 def _load_memory_snapshot() -> str:
@@ -110,12 +172,16 @@ def run_retro(
     # Append to retro log
     try:
         RETRO_LOG.parent.mkdir(parents=True, exist_ok=True)
-        from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).isoformat()
         with open(RETRO_LOG, "a") as f:
             f.write(f"\n---\n[{ts}] context_type={context_type}\n{text}\n")
     except Exception as e:
         log.warning(f"Failed to write retro log: {e}")
+
+    # Persist gaps as instinct YAML files
+    n_instincts = _write_instincts(text, context_type)
+    if n_instincts:
+        log.info(f"Instincts written: {n_instincts} new gap(s) → {INSTINCTS_DIR}")
 
     log.info(f"Retro complete (type={context_type}, cost=${cost:.4f})")
     return text, cost
