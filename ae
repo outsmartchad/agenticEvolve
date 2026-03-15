@@ -333,8 +333,15 @@ print(f'DB size: {s[\"db_size_mb\"]} MB')
 
         echo ""
 
-        # Check if user ID already set
-        EXISTING_USERS=$(grep -E "allowed_users:.*\[.*[0-9]" "$EXODIR/config.yaml" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+        # Check if telegram allowed_users has a numeric ID set
+        EXISTING_USERS=$(python3 -c "
+import yaml
+try:
+    cfg = yaml.safe_load(open('$EXODIR/config.yaml'))
+    users = cfg.get('platforms',{}).get('telegram',{}).get('allowed_users',[])
+    if users: print(users[0])
+except: pass
+" 2>/dev/null || true)
 
         if [ -n "$EXISTING_USERS" ]; then
             echo "  Allowed user ID: $EXISTING_USERS"
@@ -345,9 +352,14 @@ print(f'DB size: {s[\"db_size_mb\"]} MB')
             echo ""
             USER_ID=$(_prompt "  Enter your Telegram user ID (or press Enter to skip): ")
             if [ -n "$USER_ID" ]; then
-                # Update config.yaml
+                # Update config.yaml (telegram section only)
                 if [ -f "$EXODIR/config.yaml" ]; then
-                    sed -i '' "s|allowed_users: \[.*\]|allowed_users: [$USER_ID]|" "$EXODIR/config.yaml"
+                    python3 -c "
+import yaml
+with open('$EXODIR/config.yaml') as f: cfg = yaml.safe_load(f)
+cfg.setdefault('platforms',{}).setdefault('telegram',{})['allowed_users'] = [$USER_ID]
+with open('$EXODIR/config.yaml','w') as f: yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+" 2>/dev/null
                     echo "  [OK] User ID saved to config.yaml"
                 fi
 
