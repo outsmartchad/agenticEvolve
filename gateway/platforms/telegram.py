@@ -2831,6 +2831,34 @@ class TelegramAdapter(BasePlatformAdapter):
             except Exception:
                 await self.app.bot.send_message(chat_id=int(chat_id), text=text)
 
+        # Retro: mandatory reflection after morning digest
+        try:
+            import asyncio as _asyncio
+            from ..retro import run_retro
+            loop = _asyncio.get_running_loop()
+            retro_text, retro_cost = await loop.run_in_executor(
+                None,
+                lambda: run_retro("digest", text,
+                                  on_progress=lambda m: None,
+                                  model="claude-haiku-4-5-20251001")
+            )
+            retro_msg = f"*Retro*\n{retro_text}\n\n(${retro_cost:.3f})"
+            if self.app and self.app.bot:
+                for i in range(0, len(retro_msg), 4000):
+                    try:
+                        await self.app.bot.send_message(
+                            chat_id=int(chat_id), text=retro_msg[i:i + 4000],
+                            parse_mode="Markdown"
+                        )
+                    except Exception:
+                        await self.app.bot.send_message(
+                            chat_id=int(chat_id), text=retro_msg[i:i + 4000]
+                        )
+            if retro_cost > 0 and self._gateway:
+                self._gateway._log_cost("telegram", "digest-retro", retro_cost)
+        except Exception as e:
+            log.warning(f"Retro after /digest failed (non-fatal): {e}")
+
     # ── /produce — brainstorm business ideas from latest signals ──────
 
     async def _handle_produce(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3079,6 +3107,31 @@ class TelegramAdapter(BasePlatformAdapter):
 
         if cost > 0 and self._gateway:
             self._gateway._log_cost("telegram", "wechat-digest", cost)
+
+        # Retro: mandatory reflection after WeChat digest
+        try:
+            from ..retro import run_retro
+            retro_text, retro_cost = await loop.run_in_executor(
+                None,
+                lambda: run_retro("wechat", summary,
+                                  on_progress=lambda m: None,
+                                  model="claude-haiku-4-5-20251001")
+            )
+            retro_msg = f"*Retro*\n{retro_text}\n\n(${retro_cost:.3f})"
+            for i in range(0, len(retro_msg), 4000):
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=int(chat_id), text=retro_msg[i:i + 4000],
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    await self.app.bot.send_message(
+                        chat_id=int(chat_id), text=retro_msg[i:i + 4000]
+                    )
+            if retro_cost > 0 and self._gateway:
+                self._gateway._log_cost("telegram", "wechat-retro", retro_cost)
+        except Exception as e:
+            log.warning(f"Retro after /wechat failed (non-fatal): {e}")
 
     def _build_wechat_digest(self, hours: int, model: str,
                              on_progress: Callable, lang_instruction: str = "") -> tuple[str, float]:

@@ -3,6 +3,7 @@
 Stages:
   1. COLLECT  — run signal collectors (bash scripts)
   2. ANALYZE  — score signals, pick top candidates
+  2.5 RETRO   — mandatory reflection: what failed, what's missing, what regressed
   3. BUILD    — create skills in queue (NOT installed yet)
   4. REVIEW   — separate agent validates quality, security, correctness
   5. REPORT   — summary with pending approvals
@@ -639,6 +640,23 @@ class EvolveOrchestrator:
             summary = self._dry_run_report(collect_result, analyze_result)
             self._report("*Dry run complete. Run `/evolve` to execute.*")
             return summary, self._cost_total
+
+        # Stage 2.5: Retro — reflect before building
+        try:
+            from .retro import run_retro
+            analyze_summary = "\n".join(
+                f"- {c.get('name')} (score {c.get('score')}): {c.get('summary', '')}"
+                for c in analyze_result.get("candidates", [])
+            ) or "No candidates found."
+            retro_text, retro_cost = run_retro(
+                "evolve", analyze_summary,
+                on_progress=self.on_progress,
+                model=STAGE_MODELS.get("ANALYZE", self.model),
+            )
+            self._cost_total += retro_cost
+            self._report(f"*Retro*\n{retro_text}")
+        except Exception as e:
+            log.warning(f"Retro stage failed (non-fatal): {e}")
 
         # Stage 3
         build_result = self.stage_build(analyze_result)

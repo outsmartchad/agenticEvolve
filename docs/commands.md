@@ -34,7 +34,7 @@
 
 | Command | Description |
 |---------|-------------|
-| `/evolve [--dry-run]` | Run signal → skill pipeline |
+| `/evolve [--dry-run]` | Run signal → skill pipeline (includes RETRO before BUILD) |
 | `/absorb <target> [--dry-run]` | Deep scan → self-improve |
 | `/learn <target>` | Deep-dive a repo or tech |
 | `/learnings [query] [--limit N]` | Search past findings |
