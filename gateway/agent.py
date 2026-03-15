@@ -422,7 +422,8 @@ def invoke_claude(message: str, model: str = "sonnet",
                    session_context: str = "",
                    allowed_tools: list[str] | None = None,
                    config: dict | None = None,
-                   use_workspace: bool = False) -> dict:
+                   use_workspace: bool = False,
+                   max_seconds: int = 600) -> dict:
     """
     Invoke Claude Code with a message and return the response.
 
@@ -525,7 +526,7 @@ def invoke_claude(message: str, model: str = "sonnet",
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=None,  # no timeout — let Claude run as long as needed
+                    timeout=max_seconds,
                     cwd=work_dir,
                     env=env
                 )
@@ -604,6 +605,9 @@ def invoke_claude(message: str, model: str = "sonnet",
                 final_text = text_parts[-1]
                 return {"text": final_text, "cost": cost, "success": True, "images": images}
 
+            except subprocess.TimeoutExpired:
+                log.warning(f"invoke_claude timed out after {max_seconds}s — killing subprocess")
+                return {"text": f"Request timed out after {max_seconds // 60} minutes. Try a simpler request or break it into steps.", "cost": 0, "success": False}
             except FileNotFoundError:
                 return {"text": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code", "cost": 0, "success": False}
             except Exception as e:
