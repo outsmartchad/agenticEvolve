@@ -21,6 +21,8 @@ except ImportError:
 
 class MiscMixin:
 
+    _URL_RE = re.compile(r'https?://[^\s<>\])\'"]+')
+
     def _extract_urls(self, text: str) -> list[str]:
         """Extract meaningful URLs from text (not just any link)."""
         return self._URL_RE.findall(text)

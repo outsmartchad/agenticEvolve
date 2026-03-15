@@ -66,32 +66,66 @@
 | **语义召回** | TF-IDF 余弦相似度搜索层增强 FTS5 关键词搜索。5000 特征向量化器，支持二元组。语料库从会话、学习记录、直觉、记忆文件重建。缓存在 `~/.agenticEvolve/cache/` |
 | **直觉引擎** | 行为模式观察被评分并路由到直觉表。高置信度直觉（0.8+ 跨 2+ 项目或 5+ 次观察）自动提升到 MEMORY.md |
 | **韧性** | 关机排空（等待进行中的请求最多 30 秒）。类型化故障分类（认证/计费/限流）。3 遍上下文压缩。热配置重载。循环检测（3 次相同轮次警告，5 次终止）。记忆队列读透（去抖动原子写入，无陈旧读取）。并行构建阶段（ThreadPoolExecutor，3 个隔离工作区） |
-| **测试** | 139 个自动化测试（138 通过，1 个 xfail）。覆盖：会话数据库、FTS5 搜索、安全扫描、信号去重、语义搜索、直觉提升、定时解析、费用上限、循环检测、上下文压缩、参数解析 |
+| **测试** | 219 个自动化测试（219 通过，1 个 xfail）。覆盖：81 个命令处理器集成测试（全部 35+ 处理器）、会话数据库、FTS5 搜索、安全扫描、信号去重、语义搜索、直觉提升、定时解析、费用上限、循环检测、上下文压缩、参数解析 |
 
 ---
 
 ## 安装
 
+**前置条件：** Python 3.11+、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）、Node.js 18+
+
+### 快速安装
+
 ```bash
 git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-pip install -r ~/.agenticEvolve/requirements.txt
-brew install whisper-cpp ffmpeg  # 语音支持
+cd ~/.agenticEvolve && ae setup
 ```
+
+安装向导会处理一切——配置文件、Telegram 机器人令牌、用户 ID、Python 依赖，以及可选的 launchd 服务安装。
+
+### 手动安装
+
+如果你更喜欢手动配置：
 
 ```bash
-# ~/.agenticEvolve/.env
-TELEGRAM_BOT_TOKEN=<token>
+git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
+cd ~/.agenticEvolve
+pip install -r requirements.txt
+cp config.yaml.example config.yaml
+cp .env.example .env
 ```
 
+编辑 `.env` — 添加你的 Telegram 机器人令牌（从 [@BotFather](https://t.me/BotFather) 获取）：
+```bash
+TELEGRAM_BOT_TOKEN=your-token-here
+TELEGRAM_CHAT_ID=your-user-id       # 用于定时任务推送
+```
+
+编辑 `config.yaml` — 添加你的 Telegram 用户 ID（从 [@userinfobot](https://t.me/userinfobot) 获取）：
 ```yaml
-# ~/.agenticEvolve/config.yaml
 platforms:
   telegram:
-    allowed_users: [<user-id>]
+    allowed_users: [your-user-id]
 ```
 
+启动网关：
 ```bash
-cd ~/.agenticEvolve && python3 -m gateway.run
+ae gateway start
+# 或者: cd ~/.agenticEvolve && python3 -m gateway.run
+```
+
+### 语音支持（可选）
+
+```bash
+brew install whisper-cpp ffmpeg
+curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+### 诊断
+
+```bash
+ae doctor    # 检查所有前置条件和配置
 ```
 
 ---
@@ -261,10 +295,11 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 - 直觉自动提升：高置信度行为模式（置信度 >= 0.8，跨 2+ 项目或 5+ 次观察）在会话清理时自动提升到 MEMORY.md。
 - 语义语料库从会话、学习记录、直觉和记忆文件重建。缓存为 pickle 文件以快速重载。
 
-**测试体系 — 139 个测试（138 通过，1 个 xfail）**
+**测试体系 — 219 个测试（219 通过，1 个 xfail）**
 
 | 测试文件 | 数量 | 覆盖范围 |
 |----------|------|----------|
+| `test_commands.py` | 81 | 全部 35+ 命令处理器：admin、pipelines、signals、cron、approval、search、media、misc + 30 个授权拒绝测试 |
 | `test_session_db.py` | 25 | 会话、消息、FTS5 搜索、学习记录、用户偏好、直觉、统计 |
 | `test_security.py` | 28 | 严重模式（反向 shell、fork 炸弹、挖矿）、警告、提示注入、安全内容、目录扫描 |
 | `test_evolve.py` | 18 | 信号加载、排名、URL/标题去重、边缘情况 |
@@ -277,6 +312,8 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 **Bug 修复**
 - 修复 `gateway/security.py` 中的 fork 炸弹正则 — 未转义的 `(){}` 元字符导致模式永远无法匹配。
 - 修复 `gateway/session_db.py` 中的 `upsert_instinct` — SELECT 查询缺少 `context` 列，导致空上下文重复 upsert 时出现 IndexError。
+- 修复 `gateway/commands/admin.py` 中的 `_handle_newsession` — `set_session_title`（不存在的函数）→ `set_title`，且缺少 `generate_session_id()` 导致 UNIQUE 约束冲突。
+- 修复 `gateway/commands/misc.py` 中的 `_extract_urls` — `_URL_RE` 类属性从未定义，导致每条纯文本消息触发 `AttributeError`。
 
 ---
 

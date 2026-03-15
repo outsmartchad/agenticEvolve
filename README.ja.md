@@ -66,32 +66,66 @@
 | **セマンティックリコール** | TF-IDF コサイン類似度検索レイヤーがFTS5キーワード検索を補強。5000特徴ベクトライザー、バイグラム対応。セッション、学習記録、直感、メモリファイルからコーパスを再構築。`~/.agenticEvolve/cache/` にキャッシュ |
 | **直感エンジン** | 行動パターン観察がスコアリングされ直感テーブルにルーティング。高信頼度の直感（0.8以上、2プロジェクト以上または5回以上の観察）がMEMORY.mdに自動昇格 |
 | **耐障害性** | シャットダウン時ドレイン（処理中リクエストを最大30秒待機）。型付き障害分類（認証/課金/レート制限）。3パスコンテキスト圧縮。ホットコンフィグリロード。ループ検出（3回同一ターン警告、5回終了）。メモリキュー読み透し（デバウンス原子書き込み、古いデータ読み取りなし）。並行BUILDステージ（ThreadPoolExecutor、3つの隔離ワークスペース） |
-| **テスト** | 139の自動テスト（138パス、1 xfail）。カバレッジ：セッションDB、FTS5検索、セキュリティスキャナー、シグナル重複排除、セマンティック検索、直感昇格、cronパーサー、コスト上限、ループ検出、コンテキスト圧縮、フラグ解析 |
+| **テスト** | 219の自動テスト（219パス、1 xfail）。カバレッジ：81のコマンドハンドラー統合テスト（全35+ハンドラー）、セッションDB、FTS5検索、セキュリティスキャナー、シグナル重複排除、セマンティック検索、直感昇格、cronパーサー、コスト上限、ループ検出、コンテキスト圧縮、フラグ解析 |
 
 ---
 
 ## セットアップ
 
+**前提条件：** Python 3.11+、[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）、Node.js 18+
+
+### クイックインストール
+
 ```bash
 git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-pip install -r ~/.agenticEvolve/requirements.txt
-brew install whisper-cpp ffmpeg  # 音声サポート
+cd ~/.agenticEvolve && ae setup
 ```
+
+セットアップウィザードがすべてを処理します——設定ファイル、Telegramボットトークン、ユーザーID、Python依存関係、およびオプションのlaunchdサービスインストール。
+
+### 手動インストール
+
+手動で設定する場合：
 
 ```bash
-# ~/.agenticEvolve/.env
-TELEGRAM_BOT_TOKEN=<token>
+git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
+cd ~/.agenticEvolve
+pip install -r requirements.txt
+cp config.yaml.example config.yaml
+cp .env.example .env
 ```
 
+`.env` を編集 — Telegramボットトークンを追加（[@BotFather](https://t.me/BotFather) から取得）：
+```bash
+TELEGRAM_BOT_TOKEN=your-token-here
+TELEGRAM_CHAT_ID=your-user-id       # cronジョブの配信用
+```
+
+`config.yaml` を編集 — TelegramユーザーIDを追加（[@userinfobot](https://t.me/userinfobot) から取得）：
 ```yaml
-# ~/.agenticEvolve/config.yaml
 platforms:
   telegram:
-    allowed_users: [<user-id>]
+    allowed_users: [your-user-id]
 ```
 
+ゲートウェイを起動：
 ```bash
-cd ~/.agenticEvolve && python3 -m gateway.run
+ae gateway start
+# または: cd ~/.agenticEvolve && python3 -m gateway.run
+```
+
+### 音声サポート（オプション）
+
+```bash
+brew install whisper-cpp ffmpeg
+curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+### 診断
+
+```bash
+ae doctor    # すべての前提条件と設定をチェック
 ```
 
 ---
@@ -261,10 +295,11 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 - 直感自動昇格：高信頼度の行動パターン（信頼度 >= 0.8、2プロジェクト以上または5回以上の観察）がセッションクリーンアップ時にMEMORY.mdに自動昇格。
 - セマンティックコーパスをセッション、学習記録、直感、メモリファイルから再構築。高速リロードのためpickleとしてキャッシュ。
 
-**テストハーネス — 139テスト（138パス、1 xfail）**
+**テストハーネス — 219テスト（219パス、1 xfail）**
 
 | テストファイル | テスト数 | カバレッジ |
 |----------------|----------|-----------|
+| `test_commands.py` | 81 | 全35+コマンドハンドラー：admin、pipelines、signals、cron、approval、search、media、misc + 30の認可拒否テスト |
 | `test_session_db.py` | 25 | セッション、メッセージ、FTS5検索、学習記録、ユーザー設定、直感、統計 |
 | `test_security.py` | 28 | 重大パターン（リバースシェル、fork爆弾、マイナー）、警告、プロンプトインジェクション、安全なコンテンツ、ディレクトリスキャン |
 | `test_evolve.py` | 18 | シグナル読み込み、ランキング、URL/タイトル重複排除、エッジケース |
@@ -277,6 +312,8 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 **バグ修正**
 - `gateway/security.py` のfork爆弾正規表現を修正 — エスケープされていない `(){}` メタ文字がパターンを常にマッチ不能にしていた。
 - `gateway/session_db.py` の `upsert_instinct` を修正 — SELECTクエリに `context` カラムが欠落しており、空コンテキストでの繰り返しupsert時にIndexErrorが発生していた。
+- `gateway/commands/admin.py` の `_handle_newsession` を修正 — `set_session_title`（存在しない関数）→ `set_title`、および `generate_session_id()` の欠落がUNIQUE制約違反を引き起こしていた。
+- `gateway/commands/misc.py` の `_extract_urls` を修正 — `_URL_RE` クラス属性が未定義で、すべてのプレーンテキストメッセージで `AttributeError` が発生していた。
 
 ---
 

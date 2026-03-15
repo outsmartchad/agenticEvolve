@@ -68,32 +68,66 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | **Semantic Recall** | TF-IDF cosine similarity search layer augments FTS5 keyword search. 5000-feature vectorizer with bigrams. Corpus rebuilt from sessions, learnings, instincts, memory files. Cached at `~/.agenticEvolve/cache/` |
 | **Instinct Engine** | Behavioural pattern observations scored and routed to instincts table. High-confidence instincts (0.8+ across 2+ projects or 5+ sightings) auto-promote to MEMORY.md |
 | **Resilience** | Drain-on-shutdown (30s wait for in-flight requests). Typed failure classification (auth/billing/rate-limit). 3-pass context compaction. Hot config reload. Loop detection (warn@3 identical turns, terminate@5). Memory queue read-through (debounced atomic writes, no stale reads). Parallel BUILD stage (ThreadPoolExecutor, 3 isolated workspaces) |
-| **Testing** | 139 automated tests (138 pass, 1 xfail). Covers: session DB, FTS5 search, security scanner, signal dedup, semantic search, instinct promotion, cron parser, cost cap, loop detector, context compaction, flag parsing |
+| **Testing** | 219 automated tests (219 pass, 1 xfail). Covers: 81 command handler integration tests (all 35+ handlers), session DB, FTS5 search, security scanner, signal dedup, semantic search, instinct promotion, cron parser, cost cap, loop detector, context compaction, flag parsing |
 
 ---
 
 ## Setup
 
+**Prerequisites:** Python 3.11+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`), Node.js 18+
+
+### Quick Install
+
 ```bash
 git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-pip install -r ~/.agenticEvolve/requirements.txt
-brew install whisper-cpp ffmpeg  # voice support
+cd ~/.agenticEvolve && ae setup
 ```
+
+The setup wizard handles everything — config files, Telegram bot token, user ID, Python deps, and optional launchd service install.
+
+### Manual Install
+
+If you prefer to configure manually:
 
 ```bash
-# ~/.agenticEvolve/.env
-TELEGRAM_BOT_TOKEN=<token>
+git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
+cd ~/.agenticEvolve
+pip install -r requirements.txt
+cp config.yaml.example config.yaml
+cp .env.example .env
 ```
 
+Edit `.env` — add your Telegram bot token (get one from [@BotFather](https://t.me/BotFather)):
+```bash
+TELEGRAM_BOT_TOKEN=your-token-here
+TELEGRAM_CHAT_ID=your-user-id       # for cron job delivery
+```
+
+Edit `config.yaml` — add your Telegram user ID (get it from [@userinfobot](https://t.me/userinfobot)):
 ```yaml
-# ~/.agenticEvolve/config.yaml
 platforms:
   telegram:
-    allowed_users: [<user-id>]
+    allowed_users: [your-user-id]
 ```
 
+Start the gateway:
 ```bash
-cd ~/.agenticEvolve && python3 -m gateway.run
+ae gateway start
+# or: cd ~/.agenticEvolve && python3 -m gateway.run
+```
+
+### Voice Support (optional)
+
+```bash
+brew install whisper-cpp ffmpeg
+curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+### Diagnostics
+
+```bash
+ae doctor    # check all prerequisites and config
 ```
 
 ---
@@ -261,10 +295,11 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 - Instinct auto-promotion: high-confidence behavioural patterns (confidence >= 0.8, seen across 2+ projects or 5+ times) auto-promote to MEMORY.md on session cleanup.
 - Semantic corpus rebuilt from sessions, learnings, instincts, and memory files. Cached as pickle for fast reload.
 
-**Test Harness — 139 tests (138 pass, 1 xfail)**
+**Test Harness — 219 tests (219 pass, 1 xfail)**
 
 | Test File | Tests | Coverage |
 |-----------|-------|----------|
+| `test_commands.py` | 81 | All 35+ command handlers: admin, pipelines, signals, cron, approval, search, media, misc + 30 authorization denial tests |
 | `test_session_db.py` | 25 | Sessions, messages, FTS5 search, learnings, user prefs, instincts, stats |
 | `test_security.py` | 28 | Critical patterns (reverse shell, fork bomb, miners), warnings, prompt injection, safe content, directory scan |
 | `test_evolve.py` | 18 | Signal loading, ranking, URL/title dedup, edge cases |
@@ -277,6 +312,8 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 **Bug Fixes**
 - Fixed fork bomb regex in `gateway/security.py` — unescaped `(){}` metacharacters caused the pattern to never match.
 - Fixed `upsert_instinct` in `gateway/session_db.py` — SELECT query was missing the `context` column, causing IndexError on repeat upserts with empty context.
+- Fixed `_handle_newsession` in `gateway/commands/admin.py` — `set_session_title` (nonexistent function) → `set_title`, and missing `generate_session_id()` caused UNIQUE constraint violations.
+- Fixed `_extract_urls` in `gateway/commands/misc.py` — `_URL_RE` class attribute was never defined, causing `AttributeError` on every plain text message.
 
 ---
 

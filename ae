@@ -201,49 +201,227 @@ print(f'DB size: {s[\"db_size_mb\"]} MB')
     # ── v2: Setup ───────────────────────────────────────────────
 
     setup)
-        echo "=== agenticEvolve v2 setup ==="
+        echo ""
+        echo "  ╔══════════════════════════════════════╗"
+        echo "  ║     agenticEvolve — setup wizard     ║"
+        echo "  ╚══════════════════════════════════════╝"
         echo ""
 
-        # Ensure directories
-        mkdir -p "$EXODIR/memory" "$EXODIR/logs" "$EXODIR/gateway/platforms"
+        ERRORS=0
+
+        # ── 1. Prerequisites ───────────────────────────────────
+        echo "Checking prerequisites..."
+        echo ""
+
+        # Python 3.11+
+        if command -v python3 &>/dev/null; then
+            PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+            PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
+            PY_MINOR=$(echo "$PY_VER" | cut -d. -f2)
+            if [ "$PY_MAJOR" -ge 3 ] && [ "$PY_MINOR" -ge 11 ]; then
+                echo "  [OK] Python $PY_VER"
+            else
+                echo "  [!!] Python $PY_VER (need 3.11+)"
+                ERRORS=$((ERRORS+1))
+            fi
+        else
+            echo "  [!!] Python 3 not found. Install: https://python.org"
+            ERRORS=$((ERRORS+1))
+        fi
+
+        # Claude Code
+        if command -v claude &>/dev/null; then
+            echo "  [OK] Claude Code $(claude --version 2>/dev/null || echo 'installed')"
+        else
+            echo "  [!!] Claude Code not found"
+            echo "       Install: npm install -g @anthropic-ai/claude-code"
+            echo "       Then run: claude  (to authenticate)"
+            ERRORS=$((ERRORS+1))
+        fi
+
+        # Node.js (needed for Claude Code, ABP browser)
+        if command -v node &>/dev/null; then
+            echo "  [OK] Node.js $(node --version)"
+        else
+            echo "  [--] Node.js not found (needed for Claude Code + ABP browser)"
+        fi
+
+        if [ "$ERRORS" -gt 0 ]; then
+            echo ""
+            echo "  Fix the issues above before continuing."
+            echo "  Re-run: ae setup"
+            exit 1
+        fi
+
+        # ── 2. Directories ─────────────────────────────────────
+        echo ""
+        echo "Creating directories..."
+        mkdir -p "$EXODIR/memory" "$EXODIR/logs" "$EXODIR/cron" "$EXODIR/signals" \
+                 "$EXODIR/skills-queue" "$EXODIR/cache" "$EXODIR/models"
+        echo "  [OK] ~/.agenticEvolve/"
+
+        # ── 3. Config files ────────────────────────────────────
+        echo ""
+        echo "Setting up config files..."
 
         # config.yaml
-        if [ ! -f "$EXODIR/config.yaml" ]; then
-            echo "Creating default config.yaml..."
-            # Handled by the file we already wrote
+        if [ -f "$EXODIR/config.yaml" ]; then
+            echo "  [OK] config.yaml (exists)"
+        elif [ -f "$EXODIR/config.yaml.example" ]; then
+            cp "$EXODIR/config.yaml.example" "$EXODIR/config.yaml"
+            echo "  [OK] config.yaml (created from example)"
         else
-            echo "config.yaml exists."
+            echo "  [!!] config.yaml.example not found"
         fi
 
         # .env
-        if [ ! -f "$EXODIR/.env" ]; then
-            if [ -f "$EXODIR/.env.example" ]; then
-                cp "$EXODIR/.env.example" "$EXODIR/.env"
-                echo "Created .env from template. Edit it: $EXODIR/.env"
+        if [ -f "$EXODIR/.env" ]; then
+            echo "  [OK] .env (exists)"
+        elif [ -f "$EXODIR/.env.example" ]; then
+            cp "$EXODIR/.env.example" "$EXODIR/.env"
+            echo "  [OK] .env (created from example)"
+        else
+            echo "  [!!] .env.example not found"
+        fi
+
+        # ── 4. Python deps ─────────────────────────────────────
+        echo ""
+        echo "Installing Python dependencies..."
+        if [ -f "$EXODIR/requirements.txt" ]; then
+            pip install -r "$EXODIR/requirements.txt" -q 2>/dev/null && echo "  [OK] pip install" || echo "  [!!] pip install failed"
+        fi
+
+        # ── 5. Telegram setup (interactive) ────────────────────
+        echo ""
+        echo "─── Telegram Setup ───"
+        echo ""
+
+        # Check if token already set
+        EXISTING_TOKEN=""
+        if [ -f "$EXODIR/.env" ]; then
+            EXISTING_TOKEN=$(grep -E "^TELEGRAM_BOT_TOKEN=.+" "$EXODIR/.env" 2>/dev/null | cut -d= -f2-)
+        fi
+
+        if [ -n "$EXISTING_TOKEN" ] && [ "$EXISTING_TOKEN" != "" ]; then
+            echo "  Telegram bot token: already set"
+        else
+            echo "  1. Open Telegram and message @BotFather"
+            echo "  2. Send /newbot and follow the prompts"
+            echo "  3. Copy the bot token"
+            echo ""
+            read -p "  Paste your Telegram bot token (or press Enter to skip): " BOT_TOKEN </dev/tty
+            if [ -n "$BOT_TOKEN" ]; then
+                # Update .env
+                if grep -q "^TELEGRAM_BOT_TOKEN=" "$EXODIR/.env" 2>/dev/null; then
+                    sed -i '' "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=$BOT_TOKEN|" "$EXODIR/.env"
+                else
+                    echo "TELEGRAM_BOT_TOKEN=$BOT_TOKEN" >> "$EXODIR/.env"
+                fi
+                echo "  [OK] Token saved to .env"
+            else
+                echo "  [--] Skipped (set TELEGRAM_BOT_TOKEN in .env later)"
             fi
-        else
-            echo ".env exists."
         fi
 
-        # Check Claude Code
-        if command -v claude &>/dev/null; then
-            echo "Claude Code: $(claude --version 2>/dev/null || echo 'installed')"
+        echo ""
+
+        # Check if user ID already set
+        EXISTING_USERS=$(grep -E "allowed_users:.*\[.*[0-9]" "$EXODIR/config.yaml" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+
+        if [ -n "$EXISTING_USERS" ]; then
+            echo "  Allowed user ID: $EXISTING_USERS"
         else
-            echo "WARNING: Claude Code not found. Install: npm install -g @anthropic-ai/claude-code"
+            echo "  To find your Telegram user ID:"
+            echo "    → Message @userinfobot on Telegram"
+            echo "    → It replies with your numeric ID"
+            echo ""
+            read -p "  Enter your Telegram user ID (or press Enter to skip): " USER_ID </dev/tty
+            if [ -n "$USER_ID" ]; then
+                # Update config.yaml
+                if [ -f "$EXODIR/config.yaml" ]; then
+                    sed -i '' "s|allowed_users: \[.*\]|allowed_users: [$USER_ID]|" "$EXODIR/config.yaml"
+                    echo "  [OK] User ID saved to config.yaml"
+                fi
+
+                # Also set TELEGRAM_CHAT_ID in .env
+                if grep -q "^TELEGRAM_CHAT_ID=" "$EXODIR/.env" 2>/dev/null; then
+                    sed -i '' "s|^TELEGRAM_CHAT_ID=.*|TELEGRAM_CHAT_ID=$USER_ID|" "$EXODIR/.env"
+                else
+                    echo "TELEGRAM_CHAT_ID=$USER_ID" >> "$EXODIR/.env"
+                fi
+                echo "  [OK] Chat ID saved to .env (for cron delivery)"
+            else
+                echo "  [--] Skipped (set allowed_users in config.yaml later)"
+            fi
         fi
 
-        # Check Python deps
+        # ── 6. Optional: Voice ─────────────────────────────────
         echo ""
-        echo "Checking Python dependencies..."
-        python3 -c "import yaml; print('  pyyaml: OK')" 2>/dev/null || echo "  pyyaml: MISSING (pip install pyyaml)"
-        python3 -c "import telegram; print('  python-telegram-bot: OK')" 2>/dev/null || echo "  python-telegram-bot: MISSING (optional)"
-        python3 -c "import discord; print('  discord.py: OK')" 2>/dev/null || echo "  discord.py: MISSING (optional)"
+        echo "─── Voice Support (optional) ───"
+        echo ""
+        if command -v whisper-cli &>/dev/null; then
+            echo "  [OK] whisper-cli installed"
+        else
+            echo "  [--] whisper-cli not found"
+            echo "       Install: brew install whisper-cpp ffmpeg"
+            echo "       Then download the model:"
+            echo "         curl -L -o ~/.agenticEvolve/models/ggml-small.bin \\"
+            echo "           https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+        fi
 
+        # ── 7. Optional: Daemon ────────────────────────────────
         echo ""
-        echo "Setup complete. Next steps:"
-        echo "  1. Edit $EXODIR/.env with your bot tokens"
-        echo "  2. Edit $EXODIR/config.yaml to enable platforms"
-        echo "  3. Run: ae gateway start"
+        read -p "Install as background service (launchd)? [y/N] " INSTALL_DAEMON </dev/tty
+        if [ "$INSTALL_DAEMON" = "y" ] || [ "$INSTALL_DAEMON" = "Y" ]; then
+            mkdir -p "$EXODIR/logs"
+            PLIST="$HOME/Library/LaunchAgents/com.agenticevolve.gateway.plist"
+            cat > "$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agenticevolve.gateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$(which python3)</string>
+        <string>-m</string>
+        <string>gateway.run</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$EXODIR</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$EXODIR/logs/gateway-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>$EXODIR/logs/gateway-stderr.log</string>
+</dict>
+</plist>
+PLIST_EOF
+            launchctl load "$PLIST"
+            echo "  [OK] Installed as launchd service (auto-starts on login)"
+            echo "       Logs: ~/.agenticEvolve/logs/"
+        else
+            echo "  [--] Skipped (run manually with: ae gateway start)"
+        fi
+
+        # ── Summary ────────────────────────────────────────────
+        echo ""
+        echo "  ╔══════════════════════════════════════╗"
+        echo "  ║         Setup complete!              ║"
+        echo "  ╚══════════════════════════════════════╝"
+        echo ""
+        echo "  Start the gateway:"
+        echo "    ae gateway start"
+        echo ""
+        echo "  Or run diagnostics:"
+        echo "    ae doctor"
+        echo ""
+        echo "  Then message your bot on Telegram!"
+        echo ""
         ;;
 
     # ── v2: Doctor ──────────────────────────────────────────────
