@@ -188,6 +188,22 @@ class GatewayRunner:
                 f"user_id={user_id}, session={session_id}]"
             )
 
+            # Discord served channels: add fun personality
+            if platform == "discord":
+                discord_adapter = next(
+                    (a for a in self.adapters if a.name == "discord"), None
+                )
+                if discord_adapter and hasattr(discord_adapter, "_serve_channels"):
+                    if str(chat_id) in discord_adapter._serve_channels:
+                        session_context += (
+                            "\n[DISCORD GROUP CHAT MODE] You're chatting in a Discord server. "
+                            "Be casual, witty, and fun. Use internet humor, light roasts, "
+                            "and banter. Keep replies short and punchy (1-3 sentences max). "
+                            "Match the energy of the chat. You can be sarcastic and playful. "
+                            "Don't be formal or corporate. Talk like a sharp, funny friend "
+                            "in a group chat — not an AI assistant."
+                        )
+
             model = self.config.get("model", "sonnet")
 
             # Allow before_invoke hooks to mutate the prompt
