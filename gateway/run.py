@@ -269,6 +269,12 @@ class GatewayRunner:
                         # Fire silent consolidation in background thread
                         loop = asyncio.get_running_loop()
                         loop.run_in_executor(None, consolidate_session, sid)
+                        # Rebuild semantic corpus after session consolidation
+                        try:
+                            from .semantic import build_corpus
+                            loop.run_in_executor(None, build_corpus)
+                        except Exception:
+                            pass
             except asyncio.CancelledError:
                 break
             except Exception as e:

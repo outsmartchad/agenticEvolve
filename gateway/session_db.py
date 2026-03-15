@@ -921,6 +921,19 @@ def unified_search(query: str, session_id: str = "",
         except Exception:
             pass
 
+    # 7. Semantic search — TF-IDF cosine similarity (catches non-keyword matches)
+    try:
+        from .semantic import semantic_search
+        semantic_results = semantic_search(query, top_k=limit_per_layer)
+        # Only add semantic results that aren't already in FTS results (by content prefix)
+        existing_prefixes = {r.get("content", "")[:80] for r in results}
+        for sr in semantic_results:
+            if sr["content"][:80] not in existing_prefixes:
+                sr["source"] = f"semantic:{sr['source']}"  # tag as semantic match
+                results.append(sr)
+    except Exception:
+        pass
+
     return results
 
 
@@ -955,6 +968,11 @@ def format_recall_context(results: list[dict], max_chars: int = 2000) -> str:
         "memory": "Agent Notes",
         "user_profile": "User Profile",
         "active_session": "Current Session",
+        "semantic:session": "Related Conversations",
+        "semantic:learning": "Related Knowledge",
+        "semantic:instinct": "Related Patterns",
+        "semantic:memory": "Related Notes",
+        "semantic:user_profile": "Related Profile",
     }
 
     total = len(lines[0])
