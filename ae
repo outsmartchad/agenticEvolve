@@ -307,7 +307,7 @@ print(f'DB size: {s[\"db_size_mb\"]} MB')
         # Check if token already set
         EXISTING_TOKEN=""
         if [ -f "$EXODIR/.env" ]; then
-            EXISTING_TOKEN=$(grep -E "^TELEGRAM_BOT_TOKEN=.+" "$EXODIR/.env" 2>/dev/null | cut -d= -f2-)
+            EXISTING_TOKEN=$(grep -E "^TELEGRAM_BOT_TOKEN=.+" "$EXODIR/.env" 2>/dev/null | cut -d= -f2- || true)
         fi
 
         if [ -n "$EXISTING_TOKEN" ] && [ "$EXISTING_TOKEN" != "" ]; then
@@ -334,7 +334,7 @@ print(f'DB size: {s[\"db_size_mb\"]} MB')
         echo ""
 
         # Check if user ID already set
-        EXISTING_USERS=$(grep -E "allowed_users:.*\[.*[0-9]" "$EXODIR/config.yaml" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+        EXISTING_USERS=$(grep -E "allowed_users:.*\[.*[0-9]" "$EXODIR/config.yaml" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
 
         if [ -n "$EXISTING_USERS" ]; then
             echo "  Allowed user ID: $EXISTING_USERS"
