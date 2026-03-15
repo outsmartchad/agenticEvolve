@@ -26,3 +26,11 @@ When a user shares a live location link (e.g. Google Maps URL), always attempt t
 For Cantonese-speaking users asking local transport questions, always respond in Cantonese unless they switch language.
 §
 When asked about the nearest minibus, always include the recommended boarding location (nearest stop name or landmark) not just the route number.
+§
+agenticEvolve lives at ~/.agenticEvolve/ — always reference this path when discussing the system architecture or suggesting modifications
+§
+Signal collectors number 11; always enumerate them when asked about the signal pipeline to give concrete grounding
+§
+NDJSON is the canonical signal file format in agenticEvolve — always use this term, not 'JSON array' or 'log file'
+§
+After refusing an inappropriate request, always pivot with a direct offer to help with legitimate tasks to keep conversation constructive
