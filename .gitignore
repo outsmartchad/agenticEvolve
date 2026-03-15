@@ -36,6 +36,7 @@ sessions/
 
 # Secrets (never commit)
 .env
+.discord-token
 *.key
 config.yaml
 __pycache__/

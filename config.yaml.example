@@ -74,8 +74,13 @@ platforms:
 
   discord:
     enabled: false
-    # token: set DISCORD_BOT_TOKEN in .env
-    allowed_users: []
+    # mode: "bot" (default, requires DISCORD_BOT_TOKEN in .env)
+    #        "client" (hooks into Discord desktop app via CDP, no bot token needed)
+    mode: bot
+    # For bot mode: set DISCORD_BOT_TOKEN in .env
+    # For client mode: launch Discord with --remote-debugging-port=9224
+    allowed_users: []      # Discord user IDs
+    watch_channels: []     # Channel IDs to poll (client mode only)
     home_channel: ""       # set DISCORD_HOME_CHANNEL in .env
 
   whatsapp:

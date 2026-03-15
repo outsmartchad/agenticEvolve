@@ -109,6 +109,9 @@ async function startBridge() {
         msg.message?.extendedTextMessage?.text ||
         null;
 
+
+
+
       if (!text) continue;
 
       emit({
@@ -128,7 +131,17 @@ async function startBridge() {
     try {
       const cmd = JSON.parse(line.trim());
       if (cmd.type === "send" && cmd.chat_id && cmd.text) {
-        await sock.sendMessage(cmd.chat_id, { text: cmd.text });
+        // LID JIDs can't receive messages — resolve to phone JID if available
+        let targetJid = cmd.chat_id;
+        if (targetJid.endsWith("@lid")) {
+          const phoneJid = sock.user?.id?.replace(/:.*@/, "@") || targetJid;
+          if (phoneJid.endsWith("@s.whatsapp.net")) targetJid = phoneJid;
+        }
+        try {
+          await sock.sendMessage(targetJid, { text: cmd.text });
+        } catch (sendErr) {
+          emit({ type: "error", error: `send failed: ${sendErr.message}` });
+        }
       }
     } catch (err) {
       emit({ type: "error", error: `stdin parse error: ${err.message}` });

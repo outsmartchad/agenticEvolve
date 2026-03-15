@@ -26,6 +26,7 @@ from .session_db import (
 )
 from .platforms.telegram import TelegramAdapter
 from .platforms.discord import DiscordAdapter
+from .platforms.discord_client import DiscordClientAdapter
 from .platforms.whatsapp import WhatsAppAdapter
 
 log = logging.getLogger("agenticEvolve.gateway")
@@ -522,9 +523,14 @@ class GatewayRunner:
     def _create_adapters(self):
         platforms_cfg = self.config.get("platforms", {})
 
+        # Discord: use client adapter (CDP + REST) when mode=client,
+        # otherwise use discord.py bot adapter (requires bot token)
+        discord_mode = platforms_cfg.get("discord", {}).get("mode", "bot")
+        discord_cls = DiscordClientAdapter if discord_mode == "client" else DiscordAdapter
+
         adapter_classes = {
             "telegram": TelegramAdapter,
-            "discord": DiscordAdapter,
+            "discord": discord_cls,
             "whatsapp": WhatsAppAdapter,
         }
 
