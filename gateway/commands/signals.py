@@ -678,23 +678,138 @@ class SignalsMixin:
     # ── /whatsapp — WhatsApp digest ─────────────────────────────────
 
     async def _handle_whatsapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """WhatsApp digest — not yet supported (no message history API).
+        """Summarize recent WhatsApp messages from served/subscribed groups.
 
-        Usage: /whatsapp
+        Usage: /whatsapp [--hours N] [--model X]
         """
         if not update.message:
             return
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {
+            "--hours": {"type": "value", "cast": int, "default": 24},
+            "--model": {"type": "value"},
+        })
+        hours = max(1, min(flags["--hours"], 168))
+        model_override = flags["--model"]
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
+
+        chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+        lang_instruction = self._get_lang_instruction(user_id)
+
+        # Get all subscribed + served WhatsApp groups
+        from ..session_db import get_subscriptions, get_serve_targets, get_platform_messages
+        subs = get_subscriptions(user_id, mode="subscribe", platform="whatsapp")
+        serves = get_serve_targets("whatsapp")
+        all_ids = {s["target_id"] for s in subs} | {t["target_id"] for t in serves}
+        all_names = {}
+        for s in subs:
+            all_names[s["target_id"]] = s.get("target_name", s["target_id"])
+        for t in serves:
+            all_names[t["target_id"]] = t.get("target_name", t["target_id"])
+
+        if not all_ids:
+            await update.message.reply_text(
+                "No WhatsApp groups subscribed or served.\n"
+                "Use /subscribe or /serve → WhatsApp to select groups first."
+            )
+            return
+
+        # Fetch stored messages
+        messages = get_platform_messages("whatsapp", list(all_ids), hours=hours)
+        if not messages:
+            await update.message.reply_text(
+                f"No WhatsApp messages stored in the last {hours} hours.\n\n"
+                "Messages are stored from served/subscribed groups while the gateway is running. "
+                "If you just set up subscriptions, wait for messages to accumulate."
+            )
+            return
+
         await update.message.reply_text(
-            "WhatsApp digest is not yet available.\n\n"
-            "The WhatsApp bridge (Baileys v7) doesn't support fetching message history — "
-            "it only handles live messages.\n\n"
-            "To get WhatsApp digests, we'd need to store incoming messages from served/subscribed "
-            "groups locally. This is planned for a future update.\n\n"
-            "For now, use `/serve` to have the agent respond live in WhatsApp groups."
+            f"Analyzing {len(messages)} WhatsApp messages (last {hours}h)...\n~1-2 min."
         )
+
+        # Group messages by chat
+        from collections import defaultdict
+        by_chat = defaultdict(list)
+        for m in messages:
+            by_chat[m["chat_id"]].append(m)
+
+        # Build text for Claude
+        chat_lines = []
+        for cid, msgs in by_chat.items():
+            name = all_names.get(cid, cid)
+            chat_lines.append(f"## {name} ({len(msgs)} messages)")
+            for m in msgs:
+                ts = m["timestamp"][:16]
+                sender = m.get("sender_name") or m["user_id"].split("@")[0]
+                chat_lines.append(f"[{ts}] {sender}: {m['content']}")
+            chat_lines.append("")
+
+        chat_text = "\n".join(chat_lines)
+        if len(chat_text) > 30000:
+            chat_text = chat_text[:30000] + "\n\n... (truncated)"
+
+        loop = asyncio.get_running_loop()
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop)
+
+        start_reporter()
+        try:
+            from ..agent import invoke_claude_streaming
+            prompt = (
+                f"You are analyzing WhatsApp group chat messages.\n\n"
+                f"Here are the last {hours} hours of messages ({len(messages)} total "
+                f"across {len(by_chat)} groups):\n\n"
+                f"{chat_text}\n\n"
+                f"Create a concise, actionable digest. Summarize EACH GROUP SEPARATELY.\n\n"
+                f"For EACH group:\n"
+                f"## [Group Name] (N messages)\n"
+                f"**Key Topics** (3-5 bullet points)\n"
+                f"**Notable Links/Resources** (if any were shared)\n"
+                f"**Action Items** (if any)\n\n"
+                f"Be concise. Skip noise. Focus on signal.\n"
+                f"Use Markdown formatting."
+                + (lang_instruction if lang_instruction else "")
+            )
+
+            result = await loop.run_in_executor(
+                None,
+                lambda: invoke_claude_streaming(
+                    prompt,
+                    on_progress=on_progress_sync,
+                    model=model,
+                    session_context=f"[WhatsApp digest: {hours}h, {len(by_chat)} groups]"
+                )
+            )
+        except Exception as e:
+            stop_reporter()
+            log.error(f"WhatsApp digest error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"WhatsApp digest failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        text = result.get("text", "No analysis generated.")
+        cost = result.get("cost", 0.0)
+        tools_used = get_tool_count()
+        header = f"*WhatsApp Digest — last {hours}h*\n{len(messages)} messages across {len(by_chat)} groups\n\n"
+        full_text = header + text + f"\n\n({tools_used} steps, ${cost:.2f})"
+
+        for i in range(0, len(full_text), 4000):
+            chunk = full_text[i:i + 4000]
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "whatsapp-digest", cost)
 
     # ── /digest — morning briefing ──────────────────────────────────
 

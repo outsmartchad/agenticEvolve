@@ -21,6 +21,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
         super().__init__(config, on_message)
         self.allowed_users = set(str(u) for u in config.get("allowed_users", []))
         self._serve_groups: set[str] = set()  # group JIDs being actively served
+        self._subscribe_groups: set[str] = set()  # group JIDs subscribed for digests
         self.process = None
         self._reader_task = None
 
@@ -58,15 +59,21 @@ class WhatsAppAdapter(BasePlatformAdapter):
         self._reader_task = asyncio.create_task(self._read_loop())
         log.info(f"WhatsApp bridge started (PID {self.process.pid})")
 
-        # Load serve targets from DB
+        # Load serve + subscribe targets from DB
         try:
-            from ..session_db import get_serve_targets
+            from ..session_db import get_serve_targets, get_subscriptions
             targets = get_serve_targets("whatsapp")
             self._serve_groups = {t["target_id"] for t in targets if t["target_type"] == "group"}
             if self._serve_groups:
                 log.info(f"WhatsApp serving {len(self._serve_groups)} groups from DB")
+            # Load subscribed groups (for message storage / digests)
+            # Use a dummy user_id — we want ALL subscriptions across users
+            subs = get_subscriptions("934847281", mode="subscribe", platform="whatsapp")
+            self._subscribe_groups = {s["target_id"] for s in subs}
+            if self._subscribe_groups:
+                log.info(f"WhatsApp storing messages for {len(self._subscribe_groups)} subscribed groups")
         except Exception as e:
-            log.warning(f"Could not load serve targets: {e}")
+            log.warning(f"Could not load serve/subscribe targets: {e}")
 
     async def _read_loop(self):
         """Read JSON messages from the bridge stdout."""
@@ -90,12 +97,21 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     chat_id = msg.get("chat_id", "")
                     user_id = msg.get("user_id", chat_id)
                     text = msg.get("text", "")
+                    sender_name = msg.get("sender_name", user_id.split("@")[0])
 
                     if not text:
                         continue
 
                     is_group = chat_id.endswith("@g.us")
                     is_served_group = is_group and chat_id in self._serve_groups
+
+                    # Store messages from served + subscribed groups for digests
+                    if is_group and (chat_id in self._serve_groups or chat_id in self._subscribe_groups):
+                        try:
+                            from ..session_db import store_platform_message
+                            store_platform_message("whatsapp", chat_id, user_id, sender_name, text)
+                        except Exception as e:
+                            log.debug(f"Failed to store WhatsApp message: {e}")
 
                     # For served groups: skip allowed_users + prefix check, respond to ALL messages
                     # For non-served groups: require allowed_users + prefix

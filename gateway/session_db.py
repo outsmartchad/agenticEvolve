@@ -104,6 +104,18 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id, mode);
         CREATE INDEX IF NOT EXISTS idx_subscriptions_platform ON subscriptions(platform, mode);
+
+        CREATE TABLE IF NOT EXISTS platform_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            sender_name TEXT,
+            content TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pm_platform_chat ON platform_messages(platform, chat_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_pm_timestamp ON platform_messages(timestamp);
     """)
     # FTS5 — ignore errors if already exists
     for stmt in [
@@ -1170,6 +1182,56 @@ def is_subscribed(user_id: str, platform: str, target_id: str,
             (user_id, platform, target_id, mode)
         ).fetchone()
         return row is not None
+    finally:
+        conn.close()
+
+
+# ── Platform message storage (for digests) ──────────────────
+
+def store_platform_message(platform: str, chat_id: str, user_id: str,
+                           sender_name: str, content: str):
+    """Store an incoming message from a platform for digest purposes."""
+    conn = _connect()
+    try:
+        conn.execute(
+            """INSERT INTO platform_messages (platform, chat_id, user_id, sender_name, content, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (platform, chat_id, user_id, sender_name, content,
+             datetime.now(timezone.utc).isoformat())
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_platform_messages(platform: str, chat_ids: list[str],
+                          hours: int = 24) -> list[dict]:
+    """Get messages from specific chats within the last N hours."""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    conn = _connect()
+    try:
+        placeholders = ",".join("?" * len(chat_ids))
+        rows = conn.execute(
+            f"""SELECT chat_id, user_id, sender_name, content, timestamp
+                FROM platform_messages
+                WHERE platform=? AND chat_id IN ({placeholders}) AND timestamp>=?
+                ORDER BY timestamp ASC""",
+            [platform] + chat_ids + [cutoff]
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def cleanup_platform_messages(days: int = 7):
+    """Delete platform messages older than N days."""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM platform_messages WHERE timestamp < ?", (cutoff,))
+        conn.commit()
     finally:
         conn.close()
 

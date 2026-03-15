@@ -234,6 +234,15 @@ class DiscordClientAdapter(BasePlatformAdapter):
                         if not text:
                             continue
 
+                        # Store messages from served channels for digests
+                        if channel_id in self._serve_channels:
+                            try:
+                                from ..session_db import store_platform_message
+                                author_name = msg.get("author", {}).get("username", "?")
+                                store_platform_message("discord", channel_id, author_id, author_name, text)
+                            except Exception as e:
+                                log.debug(f"Failed to store Discord message: {e}")
+
                         log.info(
                             f"Discord message from {msg['author'].get('username')} "
                             f"in {channel_id}: {text[:50]}"

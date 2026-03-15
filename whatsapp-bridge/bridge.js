@@ -136,6 +136,7 @@ async function startBridge() {
         type: "message",
         chat_id: chatId,
         user_id: userId,
+        sender_name: msg.pushName || userId.split("@")[0],
         text,
       });
     }
