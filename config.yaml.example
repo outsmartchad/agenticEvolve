@@ -61,7 +61,7 @@ platforms:
   telegram:
     enabled: false
     # token: set TELEGRAM_BOT_TOKEN in .env
-    allowed_users: [934847281]
+    allowed_users: []
     home_channel: ""       # set TELEGRAM_CHAT_ID in .env for cron delivery
 
   discord:
