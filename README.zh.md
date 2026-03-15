@@ -63,7 +63,10 @@
 | **定时任务** | `/loop every 6h /evolve` — 按计划自主成长 |
 | **安全** | L1：预安装正则扫描（反向 shell、凭证窃取、挖矿程序）。L2：AgentShield 安装后扫描（1282 项测试，102 条规则）。发现严重问题自动回滚 |
 | **钩子** | 类型化异步事件系统 — `message_received`、`before_invoke`、`llm_output`、`tool_call`、`session_start`、`session_end` |
+| **语义召回** | TF-IDF 余弦相似度搜索层增强 FTS5 关键词搜索。5000 特征向量化器，支持二元组。语料库从会话、学习记录、直觉、记忆文件重建。缓存在 `~/.agenticEvolve/cache/` |
+| **直觉引擎** | 行为模式观察被评分并路由到直觉表。高置信度直觉（0.8+ 跨 2+ 项目或 5+ 次观察）自动提升到 MEMORY.md |
 | **韧性** | 关机排空（等待进行中的请求最多 30 秒）。类型化故障分类（认证/计费/限流）。3 遍上下文压缩。热配置重载。循环检测（3 次相同轮次警告，5 次终止）。记忆队列读透（去抖动原子写入，无陈旧读取）。并行构建阶段（ThreadPoolExecutor，3 个隔离工作区） |
+| **测试** | 139 个自动化测试（138 通过，1 个 xfail）。覆盖：会话数据库、FTS5 搜索、安全扫描、信号去重、语义搜索、直觉提升、定时解析、费用上限、循环检测、上下文压缩、参数解析 |
 
 ---
 
@@ -115,6 +118,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/wechat [--hours N]` | 微信群聊摘要（简体中文） |
 | `/produce [--ideas N]` | 从所有信号中头脑风暴商业点子 |
 | `/digest` | 每日早间简报 |
+| `/lang [code]` | 设置 `/produce`、`/learn`、`/wechat` 的持久输出语言 |
 | `/restart` | 远程重启网关 |
 
 [全部 35 个命令 →](docs/commands.md)
@@ -135,6 +139,9 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 - **有界记忆** — MEMORY.md（2200 字符）+ USER.md（1375 字符）+ SQLite FTS5。无无限增长。
 - **闭环** — `auto_approve_skills: true`。进化 → 构建 → 审查 → 安装 → 同步到 git。无人工审批。
 - **关机排空** — 进行中的请求在重启前完成。不丢失工作。
+- **模块化命令** — 35 个 Telegram 命令拆分为 8 个 mixin（admin、pipelines、signals、cron、approval、search、media、misc）。适配器核心 630 行。
+- **双层召回** — FTS5 关键词搜索 + TF-IDF 语义搜索。自动召回在每次 Claude 调用前注入相关上下文。
+- **直觉流水线** — 跨会话观察的行为模式被评分、去重，置信度足够高时自动提升到 MEMORY.md。
 
 ---
 
@@ -236,6 +243,40 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | mcp-elicitation | 拦截任务中 MCP 对话框，实现无人值守流水线 |
 | skill-gap-scan | 对比本地技能与社区目录，发现采用缺口 |
 | context-optimizer | 基于 `/context` 提示自动归档陈旧记忆文件 |
+
+---
+
+## 最近更新
+
+### v2.1 — 模块化架构 + 语义召回 + 测试体系
+
+**架构**
+- 将 `telegram.py` 从 3870 行拆分为 8 个命令 mixin（`gateway/commands/`）：admin、pipelines、signals、cron、approval、search、media、misc。适配器核心缩减至 630 行。
+- 每用户语言偏好（`/lang`）持久化到 SQLite `user_prefs` 表。
+- 进化流水线中的跨来源信号去重（URL + 标题匹配）。
+- 采集器重试，5 秒指数退避。
+
+**语义搜索 + 直觉引擎**
+- TF-IDF 余弦相似度搜索层增强 FTS5 关键词搜索。`unified_search()` 现在查询两个层。
+- 直觉自动提升：高置信度行为模式（置信度 >= 0.8，跨 2+ 项目或 5+ 次观察）在会话清理时自动提升到 MEMORY.md。
+- 语义语料库从会话、学习记录、直觉和记忆文件重建。缓存为 pickle 文件以快速重载。
+
+**测试体系 — 139 个测试（138 通过，1 个 xfail）**
+
+| 测试文件 | 数量 | 覆盖范围 |
+|----------|------|----------|
+| `test_session_db.py` | 25 | 会话、消息、FTS5 搜索、学习记录、用户偏好、直觉、统计 |
+| `test_security.py` | 28 | 严重模式（反向 shell、fork 炸弹、挖矿）、警告、提示注入、安全内容、目录扫描 |
+| `test_evolve.py` | 18 | 信号加载、排名、URL/标题去重、边缘情况 |
+| `test_agent.py` | 27 | 错误分类、历史压缩（3 遍级联）、标题生成、循环检测 |
+| `test_semantic.py` | 11 | 语料库构建（会话、学习、直觉）、搜索相关性、缓存、分数过滤 |
+| `test_instincts.py` | 8 | 上下文 bug 回归、自动提升（提升、去重、字符限制） |
+| `test_gateway.py` | 10 | Cron 解析器（每分钟/特定/步进/跨天）、会话键、费用上限 |
+| `test_telegram.py` | 13 | 参数解析（布尔/值/别名/类型转换）、用户白名单 |
+
+**Bug 修复**
+- 修复 `gateway/security.py` 中的 fork 炸弹正则 — 未转义的 `(){}` 元字符导致模式永远无法匹配。
+- 修复 `gateway/session_db.py` 中的 `upsert_instinct` — SELECT 查询缺少 `context` 列，导致空上下文重复 upsert 时出现 IndexError。
 
 ---
 

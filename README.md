@@ -65,7 +65,10 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | **Cron** | `/loop every 6h /evolve` — autonomous growth on a schedule |
 | **Security** | L1: regex scanner pre-install (reverse shells, credential theft, crypto miners). L2: AgentShield post-install (1282 tests, 102 rules). Auto-rollback on critical findings |
 | **Hooks** | Typed async event system — `message_received`, `before_invoke`, `llm_output`, `tool_call`, `session_start`, `session_end` |
+| **Semantic Recall** | TF-IDF cosine similarity search layer augments FTS5 keyword search. 5000-feature vectorizer with bigrams. Corpus rebuilt from sessions, learnings, instincts, memory files. Cached at `~/.agenticEvolve/cache/` |
+| **Instinct Engine** | Behavioural pattern observations scored and routed to instincts table. High-confidence instincts (0.8+ across 2+ projects or 5+ sightings) auto-promote to MEMORY.md |
 | **Resilience** | Drain-on-shutdown (30s wait for in-flight requests). Typed failure classification (auth/billing/rate-limit). 3-pass context compaction. Hot config reload. Loop detection (warn@3 identical turns, terminate@5). Memory queue read-through (debounced atomic writes, no stale reads). Parallel BUILD stage (ThreadPoolExecutor, 3 isolated workspaces) |
+| **Testing** | 139 automated tests (138 pass, 1 xfail). Covers: session DB, FTS5 search, security scanner, signal dedup, semantic search, instinct promotion, cron parser, cost cap, loop detector, context compaction, flag parsing |
 
 ---
 
@@ -115,6 +118,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/wechat [--hours N]` | WeChat group chat digest (简体中文) |
 | `/produce [--ideas N]` | Brainstorm business ideas from all signals |
 | `/digest` | Morning briefing |
+| `/lang [code]` | Set persistent output language for `/produce`, `/learn`, `/wechat` |
 | `/restart` | Restart gateway remotely |
 
 [All 35 commands →](docs/commands.md)
@@ -135,6 +139,9 @@ No custom agent loop. Claude Code **is** the runtime — 25+ built-in tools, MCP
 - **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) + SQLite FTS5. No unbounded growth.
 - **Closed-loop** — `auto_approve_skills: true`. Evolve → build → review → install → sync to git. No human gate.
 - **Drain-on-shutdown** — In-flight requests complete before restart. No lost work.
+- **Modular commands** — 35 Telegram commands split into 8 mixins (admin, pipelines, signals, cron, approval, search, media, misc). Adapter core is 630 lines.
+- **Dual-layer recall** — FTS5 keyword search + TF-IDF semantic search. Auto-recall injects relevant context before every Claude invocation.
+- **Instinct pipeline** — Behavioural patterns observed across sessions are scored, deduplicated, and auto-promoted to MEMORY.md when confidence is high enough.
 
 ---
 
@@ -236,6 +243,40 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 | mcp-elicitation | Intercept mid-task MCP dialogs for unattended pipelines |
 | skill-gap-scan | Diff local skills against community catalog, surface adoption gaps |
 | context-optimizer | Auto-compact stale memory files based on `/context` hints |
+
+---
+
+## Recent Changes
+
+### v2.1 — Modular Architecture + Semantic Recall + Test Harness
+
+**Architecture**
+- Split `telegram.py` from 3870 lines into 8 command mixins (`gateway/commands/`): admin, pipelines, signals, cron, approval, search, media, misc. Adapter core reduced to 630 lines.
+- Per-user language preferences (`/lang`) persisted to SQLite `user_prefs` table.
+- Cross-source signal deduplication in evolve pipeline (URL + title matching).
+- Collector retry with 5-second exponential backoff.
+
+**Semantic Search + Instinct Engine**
+- TF-IDF cosine similarity search layer augments FTS5 keyword search. `unified_search()` now queries both layers.
+- Instinct auto-promotion: high-confidence behavioural patterns (confidence >= 0.8, seen across 2+ projects or 5+ times) auto-promote to MEMORY.md on session cleanup.
+- Semantic corpus rebuilt from sessions, learnings, instincts, and memory files. Cached as pickle for fast reload.
+
+**Test Harness — 139 tests (138 pass, 1 xfail)**
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `test_session_db.py` | 25 | Sessions, messages, FTS5 search, learnings, user prefs, instincts, stats |
+| `test_security.py` | 28 | Critical patterns (reverse shell, fork bomb, miners), warnings, prompt injection, safe content, directory scan |
+| `test_evolve.py` | 18 | Signal loading, ranking, URL/title dedup, edge cases |
+| `test_agent.py` | 27 | Stderr classification, history compaction (3-pass cascade), title generation, loop detector |
+| `test_semantic.py` | 11 | Corpus build (sessions, learnings, instincts), search relevance, caching, score filtering |
+| `test_instincts.py` | 8 | Context bug regression, auto-promotion (promote, dedup, char limit) |
+| `test_gateway.py` | 10 | Cron parser (every/specific/step/wrap), session key, cost cap |
+| `test_telegram.py` | 13 | Flag parsing (bool/value/alias/cast), user allowlist |
+
+**Bug Fixes**
+- Fixed fork bomb regex in `gateway/security.py` — unescaped `(){}` metacharacters caused the pattern to never match.
+- Fixed `upsert_instinct` in `gateway/session_db.py` — SELECT query was missing the `context` column, causing IndexError on repeat upserts with empty context.
 
 ---
 
