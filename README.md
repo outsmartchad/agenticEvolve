@@ -80,10 +80,13 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 
 ```bash
 git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-cd ~/.agenticEvolve && ae setup
+ln -sf ~/.agenticEvolve/ae /usr/local/bin/ae   # add ae to PATH (may need sudo)
+ae setup
 ```
 
 The setup wizard handles everything — config files, Telegram bot token, user ID, Python deps, and optional launchd service install.
+
+> **No sudo?** Use `export PATH="$HOME/.agenticEvolve:$PATH"` instead, or add it to your `~/.zshrc`.
 
 ### Manual Install
 
@@ -91,10 +94,10 @@ If you prefer to configure manually:
 
 ```bash
 git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-cd ~/.agenticEvolve
-pip install -r requirements.txt
-cp config.yaml.example config.yaml
-cp .env.example .env
+ln -sf ~/.agenticEvolve/ae /usr/local/bin/ae   # may need sudo
+pip install -r ~/.agenticEvolve/requirements.txt
+cp ~/.agenticEvolve/config.yaml.example ~/.agenticEvolve/config.yaml
+cp ~/.agenticEvolve/.env.example ~/.agenticEvolve/.env
 ```
 
 Edit `.env` — add your Telegram bot token (get one from [@BotFather](https://t.me/BotFather)):
