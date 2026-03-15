@@ -74,50 +74,43 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 
 ## Setup
 
-**Prerequisites:** Python 3.11+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`), Node.js 18+
-
-### Quick Install
+### 1. Install
 
 ```bash
-git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-ln -sf ~/.agenticEvolve/ae /usr/local/bin/ae   # add ae to PATH (may need sudo)
-ae setup
+curl -fsSL https://raw.githubusercontent.com/outsmartchad/agenticEvolve/main/scripts/install.sh | bash
 ```
 
-The setup wizard handles everything — config files, Telegram bot token, user ID, Python deps, and optional launchd service install.
+The installer handles everything — cloning, dependencies, PATH, and runs the interactive setup wizard. No prerequisites except Python 3 and git.
 
-> **No sudo?** Use `export PATH="$HOME/.agenticEvolve:$PATH"` instead, or add it to your `~/.zshrc`.
-
-### Manual Install
-
-If you prefer to configure manually:
+After installation:
 
 ```bash
-git clone https://github.com/outsmartchad/agenticEvolve.git ~/.agenticEvolve
-ln -sf ~/.agenticEvolve/ae /usr/local/bin/ae   # may need sudo
-pip install -r ~/.agenticEvolve/requirements.txt
-cp ~/.agenticEvolve/config.yaml.example ~/.agenticEvolve/config.yaml
-cp ~/.agenticEvolve/.env.example ~/.agenticEvolve/.env
+source ~/.zshrc    # reload shell (or: source ~/.bashrc)
 ```
 
-Edit `.env` — add your Telegram bot token (get one from [@BotFather](https://t.me/BotFather)):
-```bash
-TELEGRAM_BOT_TOKEN=your-token-here
-TELEGRAM_CHAT_ID=your-user-id       # for cron job delivery
-```
+> **Requires:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) — the installer checks for it and shows the install command if missing.
 
-Edit `config.yaml` — add your Telegram user ID (get it from [@userinfobot](https://t.me/userinfobot)):
-```yaml
-platforms:
-  telegram:
-    allowed_users: [your-user-id]
-```
+### 2. Start the Gateway
 
-Start the gateway:
 ```bash
 ae gateway start
-# or: cd ~/.agenticEvolve && python3 -m gateway.run
 ```
+
+### 3. Chat
+
+Message your bot on Telegram. That's it.
+
+### Useful Commands
+
+| Command | What it does |
+|---------|-------------|
+| `ae setup` | Re-run the setup wizard |
+| `ae doctor` | Diagnose issues |
+| `ae gateway start` | Start the gateway |
+| `ae gateway stop` | Stop the gateway |
+| `ae gateway install` | Install as launchd service (auto-start on login) |
+| `ae status` | System overview |
+| `ae cost` | Usage and spend |
 
 ### Voice Support (optional)
 
@@ -125,12 +118,6 @@ ae gateway start
 brew install whisper-cpp ffmpeg
 curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
-```
-
-### Diagnostics
-
-```bash
-ae doctor    # check all prerequisites and config
 ```
 
 ---
