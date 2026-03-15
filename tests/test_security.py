@@ -63,7 +63,6 @@ class TestCriticalPatterns:
         descs = [fd.pattern_desc.lower() for fd in result.findings]
         assert any("miner" in d for d in descs)
 
-    @pytest.mark.xfail(reason="Upstream regex bug: unescaped (){}  in fork bomb pattern")
     def test_fork_bomb(self, tmp_path):
         f = _write(tmp_path / "bomb.sh", ":(){ :|:& };:\n")
         result = scan_file(f)

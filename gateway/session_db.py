@@ -524,7 +524,7 @@ def upsert_instinct(pattern: str, context: str = "", project_id: str = "",
     ts = datetime.now(timezone.utc).isoformat()
 
     existing = conn.execute(
-        "SELECT id, confidence, seen_count, project_ids FROM instincts WHERE pattern = ?",
+        "SELECT id, confidence, seen_count, project_ids, context FROM instincts WHERE pattern = ?",
         (pattern,)
     ).fetchone()
 

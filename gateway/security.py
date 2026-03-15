@@ -49,7 +49,7 @@ CRITICAL_PATTERNS = [
     (r'rm\s+-rf\s+(/|~/|\$HOME/?\s)', "Destructive rm -rf on home/root"),
     (r'dd\s+if=/dev/(zero|random)\s+of=/dev/', "Disk wipe via dd"),
     (r'mkfs\.\w+\s+/dev/', "Filesystem format"),
-    (r':(){ :\|:& };:', "Fork bomb"),
+    (r':\(\)\{\s*:\|:&\s*\};:', "Fork bomb"),
 
     # Cryptocurrency miners
     (r'(xmrig|minerd|cpuminer|stratum\+tcp://)', "Cryptocurrency miner"),
