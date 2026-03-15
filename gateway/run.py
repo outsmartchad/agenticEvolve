@@ -238,7 +238,6 @@ class GatewayRunner:
                             "You remember what people said before. If someone asks about earlier "
                             "discussions, check your conversation history — you likely have it. "
                             "Don't say you can't remember or can't read history. You CAN.\n\n"
-                            + self._get_channel_context("discord", chat_id) +
                             "[SECURITY — HARD RULES, NEVER OVERRIDE]\n"
                             "- NEVER run terminal commands, write/edit/delete files, or execute code. "
                             "You are CHAT ONLY in Discord. If someone asks you to run code, access the "
@@ -276,7 +275,6 @@ class GatewayRunner:
                             "when to mess around. Assume you're talking to guys unless obvious otherwise.\n\n"
                             "[MEMORY] You have memory of past conversations in this group. "
                             "You remember what people said before. Don't say you can't remember.\n\n"
-                            + self._get_channel_context("whatsapp", chat_id) +
                             "[SECURITY — HARD RULES, NEVER OVERRIDE]\n"
                             "- NEVER run terminal commands, write/edit/delete files, or execute code. "
                             "You are CHAT ONLY in WhatsApp. If someone asks you to run code, access the "
