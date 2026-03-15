@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
 </p>
 
@@ -53,7 +53,7 @@
 
 | 能力 | 描述 |
 |------|------|
-| **构建** | 通过 Telegram 使用完整的 Claude Code——终端、文件读写、网络搜索、MCP、23 个技能 |
+| **构建** | 通过 Telegram 使用完整的 Claude Code——终端、文件读写、网络搜索、MCP、26 个技能 |
 | **进化** | 5 阶段流水线：收集 → 分析 → 构建 → 审查 → 自动安装。扫描 11 个来源：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + 微信群聊，合成技能 |
 | **吸收** | `/absorb <url>` — 克隆仓库，映射架构，对比模式，将改进融入你的系统 |
 | **学习** | `/learn <target>` — 深度提取，给出 ADOPT / ADAPT / SKIP 判定 |
@@ -63,7 +63,7 @@
 | **定时任务** | `/loop every 6h /evolve` — 按计划自主成长 |
 | **安全** | L1：预安装正则扫描（反向 shell、凭证窃取、挖矿程序）。L2：AgentShield 安装后扫描（1282 项测试，102 条规则）。发现严重问题自动回滚 |
 | **钩子** | 类型化异步事件系统 — `message_received`、`before_invoke`、`llm_output`、`tool_call`、`session_start`、`session_end` |
-| **韧性** | 关机排空（等待进行中的请求最多 30 秒）。类型化故障分类（认证/计费/限流）。3 遍上下文压缩。热配置重载 |
+| **韧性** | 关机排空（等待进行中的请求最多 30 秒）。类型化故障分类（认证/计费/限流）。3 遍上下文压缩。热配置重载。循环检测（3 次相同轮次警告，5 次终止）。记忆队列读透（去抖动原子写入，无陈旧读取）。并行构建阶段（ThreadPoolExecutor，3 个隔离工作区） |
 
 ---
 
@@ -110,7 +110,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/do <instruction>` | 自然语言 → 结构化命令 |
 | `/loop <cron> <cmd>` | 调度定期执行 |
 | `/memory` | 查看代理记忆状态 |
-| `/skills` | 列出已安装技能（23 个） |
+| `/skills` | 列出已安装技能（26 个） |
 | `/cost` | 使用量和开销 |
 | `/wechat [--hours N]` | 微信群聊摘要（简体中文） |
 | `/produce [--ideas N]` | 从所有信号中头脑风暴商业点子 |
@@ -206,7 +206,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ---
 
-## 技能（已安装 23 个）
+## 技能（已安装 26 个）
 
 | 技能 | 用途 |
 |------|------|
@@ -232,6 +232,10 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | claude-agent-sdk-v0.2.74 | Claude Agent SDK 模式 |
 | nah | 快速拒绝/撤销 |
 | unf | 展开/扩展压缩内容 |
+| next-ai-draw-io | 从自然语言生成架构图 |
+| mcp-elicitation | 拦截任务中 MCP 对话框，实现无人值守流水线 |
+| skill-gap-scan | 对比本地技能与社区目录，发现采用缺口 |
+| context-optimizer | 基于 `/context` 提示自动归档陈旧记忆文件 |
 
 ---
 
@@ -260,6 +264,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | 9 个技能改编，AgentShield 安全，评估驱动开发，钩子配置 |
 | [openclaw](https://github.com/openclaw/openclaw) | 语音流水线（TTS/STT），浏览器自动化模式，自动 TTS 模式 |
 | [ABP](https://github.com/theredsix/agent-browser-protocol) | 浏览器 MCP — 操作间冻结的 Chromium，Mind2Web 90.5% |
+| [deer-flow](https://github.com/bytedance/deer-flow) | 并行子代理构建阶段、每候选隔离工作区、循环检测、记忆队列去抖动写入 |
 
 ---
 

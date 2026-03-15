@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
 </p>
 
@@ -53,7 +53,7 @@
 
 | 機能 | 説明 |
 |------|------|
-| **ビルド** | Telegram経由でフルClaude Code——ターミナル、ファイルI/O、Web検索、MCP、23スキル |
+| **ビルド** | Telegram経由でフルClaude Code——ターミナル、ファイルI/O、Web検索、MCP、26スキル |
 | **進化** | 5段階パイプライン：収集 → 分析 → 構築 → レビュー → 自動インストール。11ソースをスキャン：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChatグループ、スキルを合成 |
 | **吸収** | `/absorb <url>` — リポジトリをクローン、アーキテクチャをマッピング、パターンを比較、改善をシステムに統合 |
 | **学習** | `/learn <target>` — 深掘り抽出、ADOPT / ADAPT / SKIP の判定を出力 |
@@ -63,7 +63,7 @@
 | **cron** | `/loop every 6h /evolve` — スケジュールに従い自律的に成長 |
 | **セキュリティ** | L1：インストール前の正規表現スキャン（リバースシェル、認証情報窃取、マイナー）。L2：AgentShieldインストール後スキャン（1282テスト、102ルール）。重大な問題は自動ロールバック |
 | **フック** | 型付き非同期イベントシステム — `message_received`、`before_invoke`、`llm_output`、`tool_call`、`session_start`、`session_end` |
-| **耐障害性** | シャットダウン時ドレイン（処理中リクエストを最大30秒待機）。型付き障害分類（認証/課金/レート制限）。3パスコンテキスト圧縮。ホットコンフィグリロード |
+| **耐障害性** | シャットダウン時ドレイン（処理中リクエストを最大30秒待機）。型付き障害分類（認証/課金/レート制限）。3パスコンテキスト圧縮。ホットコンフィグリロード。ループ検出（3回同一ターン警告、5回終了）。メモリキュー読み透し（デバウンス原子書き込み、古いデータ読み取りなし）。並行BUILDステージ（ThreadPoolExecutor、3つの隔離ワークスペース） |
 
 ---
 
@@ -110,7 +110,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/do <instruction>` | 自然言語 → 構造化コマンド |
 | `/loop <cron> <cmd>` | 定期実行をスケジュール |
 | `/memory` | エージェントメモリ状態を表示 |
-| `/skills` | インストール済みスキル一覧（23個） |
+| `/skills` | インストール済みスキル一覧（26個） |
 | `/cost` | 使用量とコスト |
 | `/wechat [--hours N]` | WeChatグループチャットダイジェスト（简体中文） |
 | `/produce [--ideas N]` | 全シグナルからビジネスアイデアをブレインストーミング |
@@ -206,7 +206,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 
 ---
 
-## スキル（23個インストール済み）
+## スキル（26個インストール済み）
 
 | スキル | 用途 |
 |--------|------|
@@ -232,6 +232,10 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | claude-agent-sdk-v0.2.74 | Claude Agent SDKパターン |
 | nah | クイック拒否/取消 |
 | unf | 圧縮コンテンツの展開/拡張 |
+| next-ai-draw-io | 自然言語からアーキテクチャ図を生成 |
+| mcp-elicitation | タスク中のMCPダイアログを傍受し無人パイプラインを実現 |
+| skill-gap-scan | ローカルスキルとコミュニティカタログを比較し採用ギャップを発見 |
+| context-optimizer | `/context` ヒントに基づいて古いメモリファイルを自動アーカイブ |
 
 ---
 
@@ -260,6 +264,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | 9スキル改編、AgentShieldセキュリティ、評価駆動開発、フックプロファイル |
 | [openclaw](https://github.com/openclaw/openclaw) | 音声パイプライン（TTS/STT）、ブラウザ自動化パターン、自動TTSモード |
 | [ABP](https://github.com/theredsix/agent-browser-protocol) | ブラウザMCP — アクション間フリーズChromium、Mind2Web 90.5% |
+| [deer-flow](https://github.com/bytedance/deer-flow) | 並行サブエージェントBUILDステージ、候補ごとの隔離ワークスペース、ループ検出、メモリキューデバウンス書き込み |
 
 ---
 
