@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-23-orange?style=for-the-badge" alt="23 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-35-blue?style=for-the-badge" alt="35 Commands"></a>
 </p>
 
@@ -55,7 +55,7 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 
 | Capability | Description |
 |------------|-------------|
-| **Build** | Full Claude Code over Telegram — terminal, file I/O, web search, MCP, 23 skills |
+| **Build** | Full Claude Code over Telegram — terminal, file I/O, web search, MCP, 26 skills |
 | **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans 11 sources: GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChat groups, synthesizes skills |
 | **Absorb** | `/absorb <url>` — clones repo, maps architecture, diffs patterns, implements improvements into your system |
 | **Learn** | `/learn <target>` — deep-dive extraction with ADOPT / ADAPT / SKIP verdicts |
@@ -65,7 +65,7 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | **Cron** | `/loop every 6h /evolve` — autonomous growth on a schedule |
 | **Security** | L1: regex scanner pre-install (reverse shells, credential theft, crypto miners). L2: AgentShield post-install (1282 tests, 102 rules). Auto-rollback on critical findings |
 | **Hooks** | Typed async event system — `message_received`, `before_invoke`, `llm_output`, `tool_call`, `session_start`, `session_end` |
-| **Resilience** | Drain-on-shutdown (30s wait for in-flight requests). Typed failure classification (auth/billing/rate-limit). 3-pass context compaction. Hot config reload |
+| **Resilience** | Drain-on-shutdown (30s wait for in-flight requests). Typed failure classification (auth/billing/rate-limit). 3-pass context compaction. Hot config reload. Loop detection (warn@3 identical turns, terminate@5). Memory queue read-through (debounced atomic writes, no stale reads). Parallel BUILD stage (ThreadPoolExecutor, 3 isolated workspaces) |
 
 ---
 
@@ -110,7 +110,7 @@ cd ~/.agenticEvolve && python3 -m gateway.run
 | `/do <instruction>` | Natural language → structured command |
 | `/loop <cron> <cmd>` | Schedule recurring execution |
 | `/memory` | View agent memory state |
-| `/skills` | List installed skills (23) |
+| `/skills` | List installed skills (26) |
 | `/cost` | Usage and spend |
 | `/wechat [--hours N]` | WeChat group chat digest (简体中文) |
 | `/produce [--ideas N]` | Brainstorm business ideas from all signals |
@@ -206,7 +206,7 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 
 ---
 
-## Skills (23 installed)
+## Skills (26 installed)
 
 | Skill | Purpose |
 |-------|---------|
@@ -232,6 +232,10 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 | claude-agent-sdk-v0.2.74 | Claude Agent SDK patterns |
 | nah | Quick rejection/undo |
 | unf | Unfold/expand compressed content |
+| next-ai-draw-io | Architecture diagrams from natural language |
+| mcp-elicitation | Intercept mid-task MCP dialogs for unattended pipelines |
+| skill-gap-scan | Diff local skills against community catalog, surface adoption gaps |
+| context-optimizer | Auto-compact stale memory files based on `/context` hints |
 
 ---
 
@@ -260,6 +264,7 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 | [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | 9 skills adapted, AgentShield security, eval-driven development, hook profiles |
 | [openclaw](https://github.com/openclaw/openclaw) | Voice pipeline (TTS/STT), browser automation patterns, auto-TTS modes |
 | [ABP](https://github.com/theredsix/agent-browser-protocol) | Browser MCP — freeze-between-actions Chromium, 90.5% Mind2Web |
+| [deer-flow](https://github.com/bytedance/deer-flow) | Parallel subagent BUILD stage, isolated workspaces per candidate, loop detection, memory queue debounced writes |
 
 ---
 
