@@ -296,6 +296,77 @@ class SignalsMixin:
         except Exception as e:
             log.warning(f"Retro after /wechat failed (non-fatal): {e}")
 
+    def _auto_refresh_wechat_dbs(self, tools_dir, decrypted_dir, on_progress: Callable):
+        """Auto-refresh decrypted WeChat DBs if stale (> 2 hours).
+
+        Runs sudo find_keys (passwordless via sudoers) + decrypt_db.py.
+        """
+        import subprocess
+        import time
+
+        msg_db = decrypted_dir / "message" / "message_0.db"
+        keys_file = tools_dir / "wechat_keys.json"
+        max_age = 2 * 3600  # 2 hours
+
+        # Check if DBs are fresh enough
+        if msg_db.exists():
+            age = time.time() - msg_db.stat().st_mtime
+            if age < max_age:
+                return  # DBs are fresh
+
+        on_progress("WeChat DBs are stale, refreshing...")
+
+        # Step 1: Run find_keys (passwordless sudo)
+        find_keys = tools_dir / "find_keys"
+        if find_keys.exists():
+            try:
+                result = subprocess.run(
+                    ["sudo", str(find_keys)],
+                    capture_output=True, text=True, timeout=30,
+                    cwd=str(tools_dir),
+                )
+                if result.returncode == 0:
+                    on_progress("Keys extracted successfully")
+                else:
+                    log.warning(f"find_keys failed (rc={result.returncode}): {result.stderr[:200]}")
+                    if not keys_file.exists():
+                        on_progress("Key extraction failed and no cached keys — cannot decrypt")
+                        return
+                    on_progress("find_keys failed, using cached keys")
+            except subprocess.TimeoutExpired:
+                log.warning("find_keys timed out")
+                if not keys_file.exists():
+                    return
+            except Exception as e:
+                log.warning(f"find_keys error: {e}")
+                if not keys_file.exists():
+                    return
+
+        if not keys_file.exists():
+            on_progress("No wechat_keys.json — cannot decrypt. Run sudo find_keys manually.")
+            return
+
+        # Step 2: Run decrypt_db.py (no sudo needed)
+        import sys
+        decrypt_script = tools_dir / "decrypt_db.py"
+        if decrypt_script.exists():
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(decrypt_script),
+                     "--keys", str(keys_file),
+                     "--output", str(decrypted_dir)],
+                    capture_output=True, text=True, timeout=120,
+                    cwd=str(tools_dir),
+                )
+                if result.returncode == 0:
+                    on_progress("WeChat DBs refreshed successfully")
+                else:
+                    log.warning(f"decrypt_db.py failed: {result.stderr[:200]}")
+                    on_progress("Decrypt failed, using stale data")
+            except Exception as e:
+                log.warning(f"decrypt_db.py error: {e}")
+                on_progress("Decrypt error, using stale data")
+
     def _build_wechat_digest(self, hours: int, model: str,
                              on_progress: Callable, lang_instruction: str = "",
                              user_id: str = "") -> tuple[str, float]:
@@ -306,7 +377,12 @@ class SignalsMixin:
         from pathlib import Path as _Path
         import sys
 
-        decrypted_dir = _Path.home() / ".agenticEvolve" / "tools" / "wechat-decrypt" / "decrypted"
+        tools_dir = _Path.home() / ".agenticEvolve" / "tools" / "wechat-decrypt"
+        decrypted_dir = tools_dir / "decrypted"
+
+        # Auto-refresh if DBs are stale (> 2 hours old) or missing
+        self._auto_refresh_wechat_dbs(tools_dir, decrypted_dir, on_progress)
+
         if not decrypted_dir.exists():
             return ("No decrypted WeChat data found.\n"
                     "Run the decrypt pipeline first:\n"
