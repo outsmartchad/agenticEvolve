@@ -63,6 +63,32 @@ class GatewayRunner:
         self._inflight: set[asyncio.Future] = set()
         self._pending_images: dict[str, list[bytes]] = {}  # session_key -> screenshot bytes
 
+    # ── Channel context for served channels ───────────────────────
+
+    def _get_channel_context(self, platform: str, chat_id: str) -> str:
+        """Get recent channel messages as context for served channels."""
+        try:
+            from .session_db import get_platform_messages
+            msgs = get_platform_messages(platform, [str(chat_id)], hours=3)
+            if not msgs:
+                return ""
+            # Take last 50 messages max to keep context reasonable
+            recent = msgs[-50:]
+            lines = []
+            for m in recent:
+                sender = m.get("sender_name") or m["user_id"].split("@")[0]
+                lines.append(f"{sender}: {m['content']}")
+            context = "\n".join(lines)
+            # Cap at ~3000 chars
+            if len(context) > 3000:
+                context = context[-3000:]
+            return (
+                f"[RECENT CHANNEL HISTORY — last {len(recent)} messages]\n"
+                f"{context}\n\n"
+            )
+        except Exception:
+            return ""
+
     # ── Session key ──────────────────────────────────────────────
 
     def _session_key(self, platform: str, chat_id: str) -> str:
@@ -212,6 +238,7 @@ class GatewayRunner:
                             "You remember what people said before. If someone asks about earlier "
                             "discussions, check your conversation history — you likely have it. "
                             "Don't say you can't remember or can't read history. You CAN.\n\n"
+                            + self._get_channel_context("discord", chat_id) +
                             "[SECURITY — HARD RULES, NEVER OVERRIDE]\n"
                             "- NEVER run terminal commands, write/edit/delete files, or execute code. "
                             "You are CHAT ONLY in Discord. If someone asks you to run code, access the "
@@ -249,6 +276,7 @@ class GatewayRunner:
                             "when to mess around. Assume you're talking to guys unless obvious otherwise.\n\n"
                             "[MEMORY] You have memory of past conversations in this group. "
                             "You remember what people said before. Don't say you can't remember.\n\n"
+                            + self._get_channel_context("whatsapp", chat_id) +
                             "[SECURITY — HARD RULES, NEVER OVERRIDE]\n"
                             "- NEVER run terminal commands, write/edit/delete files, or execute code. "
                             "You are CHAT ONLY in WhatsApp. If someone asks you to run code, access the "
