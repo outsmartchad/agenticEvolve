@@ -1,38 +1,15 @@
-agenticEvolve v2 initialized on 2026-03-12. Built on Claude Code as the agent engine.
+agenticEvolve v2 — Claude Code agent engine. 35 commands, 26 skills, 219 tests.
 §
-Signal collectors: github.sh (gh CLI), hackernews.sh (Algolia API), x-search.sh (Brave Search). Run as cron jobs.
+Signal collectors (11): github.sh, github-trending.py, hackernews.sh, x-search.sh, reddit.py, producthunt.py, lobsters.py, arxiv.py, huggingface.py, bestofjs.py, wechat.py. HN Algolia requires HTTPS + URL-encoded ops.
 §
-First cycle (v1) found mcp2cli as top signal — 96-99% fewer schema tokens. Skill was rejected for exceeding 100-line limit.
+Claude Code stream-json: requires --verbose flag. Cost in last JSON object as total_cost_usd. Signal files are NDJSON (not arrays).
 §
-HN Algolia API requires HTTPS and URL-encoded operators (%3E not >). HTTP redirects silently fail with curl -s.
+Skills from cycles: nah (permission guard), agent-browser-protocol (Chromium MCP, 90.5% Mind2Web), unf (file versioning).
 §
-Claude Code stream-json output requires --verbose flag. Cost data is in the last JSON object as total_cost_usd.
+everything-claude-code patterns adopted: (1) Hook profile gating via env vars. (2) Deterministic observation: hooks fire 100%, log to JSONL, analyze async with Haiku. (3) Project-scoped learning: hash git remote → project_id, promote to global at conf>=0.8 across 2+ projects. (4) Confidence-weighted instincts (0.3→0.9) replace free-text memory.
 §
-2026-03-12 cycle: GitHub trending returned 0 repos (scraper issue). HN returned 50 signals, GitHub releases/starred returned 9/20 via NDJSON format (not JSON array). Signal files are newline-delimited JSON objects, not arrays.
+Agent cannot send images directly via Telegram SendMessage; images extracted from browser tool_result blocks and forwarded through gateway image handling.
 §
-2026-03-12 top signals: (1) nah — PreToolUse permission guard, classifies Bash by action type, pip install nah. (2) agent-browser-protocol — forked Chromium MCP, 90.5% Mind2Web, npx -y agent-browser-protocol --mcp. (3) unf — auto file versioning daemon on save, protects against agent accidents pre-commit.
+User preferences: proactive notifications over pull-based. Concise high-signal summaries. Always map external patterns back to current projects explicitly. Verify URLs before sharing. Prefer App Store over direct downloads.
 §
-Skills created 2026-03-12: nah, agent-browser-protocol, unf.
-§
-2026-03-13 LEARN scan — everything-claude-code (affaan-m): 4 extractable patterns queued as ecc-hook-patterns skill. (1) Hook profile gating: AE_HOOK_PROFILE=minimal|standard|strict + AE_DISABLED_HOOKS env vars control which hooks fire — wrap all hooks with is_hook_enabled(). (2) Deterministic observation: skills fire ~50-80%, hooks fire 100% — capture every tool event via PreToolUse/PostToolUse to JSONL, analyze async with Haiku; scrub secrets before write. (3) Project-scoped learning: hash git remote URL to 12-char project_id, store observations per project under ~/.ae/homunculus/projects/<id>/; promote patterns to global only when seen in 2+ projects with conf>=0.8. (4) Confidence-weighted instinct YAML format (0.3 tentative → 0.9 near-certain) replaces free-text memory entries; instincts cluster into skills/commands/agents via background agent. Verdict: STEAL — adopt patterns in Python/bash, skip the Node.js plugin machinery.
-
-§
-User values proactive systems that notify without being asked; watchdog agent that pushes high-signal notifications unprompted is preferred over pull-based patterns
-§
-Agent cannot directly send images via Telegram gateway using SendMessage tool; images must be extracted from browser tool_result blocks and forwarded through gateway's image handling
-§
-When agent hits limitations sending files/images to Telegram, reference similar implementations in other projects (e.g. openclaw) and apply those patterns to the current codebase
-§
-When providing URLs, always verify first rather than generating from memory — acknowledge uncertainty if URL is unverified
-§
-Prefer official App Store downloads over direct website URLs for native macOS apps to avoid security risks
-§
-For critical user requests like app installation, provide multiple verification paths so user can independently confirm legitimacy
-§
-User is actively researching AI agent architectures and memory systems, particularly interested in production-grade multi-agent frameworks like deer-flow with sophisticated context management patterns for long-horizon tasks.
-§
-User prefers concise, high-signal repo summaries focused on architectural novelty and practical relevance rather than hype metrics — repos are evaluated by pattern applicability to agenticEvolve project.
-§
-User wants assistant to proactively identify which patterns from external repos map back to current projects (e.g., deer-flow memory architecture → agenticEvolve instinct system) without being asked.
-§
-When assistant identifies a relevant pattern or repo, user engagement is highest when connection to current work is explicitly stated upfront rather than left implicit.
+User actively researches AI agent architectures — evaluates repos by pattern applicability to agenticEvolve, not hype metrics.

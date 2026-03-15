@@ -28,21 +28,55 @@ case "$CMD" in
         shift 2>/dev/null || true
         case "$SUB" in
             start)
-                echo "Starting agenticEvolve gateway..."
-                python3 -m gateway.run
-                ;;
-            stop)
-                if [ -f "$EXODIR/gateway.pid" ]; then
-                    PID=$(cat "$EXODIR/gateway.pid")
-                    if kill -0 "$PID" 2>/dev/null; then
-                        kill "$PID"
-                        echo "Gateway stopped (PID $PID)"
+                # Kill existing if running
+                EXISTING=$(pgrep -f 'python3 -m gateway.run' || true)
+                if [ -n "$EXISTING" ]; then
+                    echo "Stopping existing gateway (PID $EXISTING)..."
+                    kill "$EXISTING" 2>/dev/null
+                    sleep 2
+                    kill -9 "$EXISTING" 2>/dev/null
+                    sleep 1
+                fi
+
+                if [ "${1:-}" = "--background" ] || [ "${1:-}" = "-d" ]; then
+                    mkdir -p "$EXODIR/logs"
+                    cd "$EXODIR" && nohup python3 -m gateway.run >> "$EXODIR/logs/gateway-stdout.log" 2>> "$EXODIR/logs/gateway-stderr.log" &
+                    GW_PID=$!
+                    echo "$GW_PID" > "$EXODIR/gateway.pid"
+                    sleep 3
+                    if kill -0 "$GW_PID" 2>/dev/null; then
+                        echo "Gateway started in background (PID $GW_PID)"
+                        echo "Logs: ~/.agenticEvolve/logs/"
                     else
-                        echo "Gateway not running (stale PID $PID)"
-                        rm -f "$EXODIR/gateway.pid"
+                        echo "Gateway failed to start. Check logs: ~/.agenticEvolve/logs/gateway-stderr.log"
                     fi
                 else
-                    echo "No PID file — gateway not running"
+                    echo "Starting agenticEvolve gateway... (Ctrl+C to stop)"
+                    echo "Tip: use 'ae gateway start -d' to run in background"
+                    cd "$EXODIR" && python3 -m gateway.run
+                fi
+                ;;
+            stop)
+                PID=""
+                if [ -f "$EXODIR/gateway.pid" ]; then
+                    PID=$(cat "$EXODIR/gateway.pid")
+                    if ! kill -0 "$PID" 2>/dev/null; then
+                        PID=""
+                        rm -f "$EXODIR/gateway.pid"
+                    fi
+                fi
+                # Fallback to pgrep if no valid PID file
+                if [ -z "$PID" ]; then
+                    PID=$(pgrep -f 'python3 -m gateway.run' || true)
+                fi
+                if [ -n "$PID" ]; then
+                    kill "$PID" 2>/dev/null
+                    sleep 2
+                    kill -9 "$PID" 2>/dev/null
+                    rm -f "$EXODIR/gateway.pid"
+                    echo "Gateway stopped (PID $PID)"
+                else
+                    echo "Gateway not running"
                 fi
                 ;;
             status)
@@ -352,13 +386,17 @@ except: pass
             echo ""
             USER_ID=$(_prompt "  Enter your Telegram user ID (or press Enter to skip): ")
             if [ -n "$USER_ID" ]; then
-                # Update config.yaml (telegram section only)
+                # Update config.yaml (telegram section only, preserves comments)
                 if [ -f "$EXODIR/config.yaml" ]; then
                     python3 -c "
-import yaml
-with open('$EXODIR/config.yaml') as f: cfg = yaml.safe_load(f)
-cfg.setdefault('platforms',{}).setdefault('telegram',{})['allowed_users'] = [$USER_ID]
-with open('$EXODIR/config.yaml','w') as f: yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+import re
+with open('$EXODIR/config.yaml') as f: text = f.read()
+# Find telegram section and replace its allowed_users
+text = re.sub(
+    r'(telegram:.*?allowed_users:\s*)\[.*?\]',
+    r'\g<1>[$USER_ID]',
+    text, count=1, flags=re.DOTALL)
+with open('$EXODIR/config.yaml','w') as f: f.write(text)
 " 2>/dev/null
                     echo "  [OK] User ID saved to config.yaml"
                 fi
@@ -493,6 +531,49 @@ PLIST_EOF
         echo "[OK] $SKILL_COUNT Claude Code skills installed"
         ;;
 
+    # ── v2: Update ──────────────────────────────────────────────
+
+    update)
+        echo "=== agenticEvolve update ==="
+        echo ""
+
+        # Pull latest code
+        echo "Pulling latest changes..."
+        if git -C "$EXODIR" pull --ff-only 2>&1; then
+            echo "[OK] Code updated"
+        else
+            echo "[!!] git pull failed — resolve conflicts manually"
+            exit 1
+        fi
+
+        # Update deps
+        echo "Updating dependencies..."
+        pip install -r "$EXODIR/requirements.txt" -q 2>/dev/null && echo "[OK] Dependencies updated" || true
+
+        # Restart gateway if running
+        GW_PID=$(pgrep -f 'python3 -m gateway.run' || true)
+        if [ -n "$GW_PID" ]; then
+            echo "Restarting gateway..."
+            kill "$GW_PID" 2>/dev/null
+            sleep 2
+            kill -9 "$GW_PID" 2>/dev/null
+            sleep 1
+            cd "$EXODIR" && nohup python3 -m gateway.run > /dev/null 2>&1 &
+            sleep 3
+            NEW_PID=$(pgrep -f 'python3 -m gateway.run' || true)
+            if [ -n "$NEW_PID" ]; then
+                echo "[OK] Gateway restarted (PID $NEW_PID)"
+            else
+                echo "[!!] Gateway failed to restart"
+            fi
+        else
+            echo "[--] Gateway not running (start with: ae gateway start)"
+        fi
+
+        echo ""
+        echo "Update complete."
+        ;;
+
     # ── v1 Legacy Commands ──────────────────────────────────────
 
     init)
@@ -599,10 +680,11 @@ except Exception:
 ae — agenticEvolve CLI (v2)
 
 GATEWAY
-  ae gateway [start]     Start the messaging gateway
+  ae gateway [start]     Start the messaging gateway (foreground)
+  ae gateway start -d    Start in background (detached)
   ae gateway stop        Stop the gateway
   ae gateway status      Check if gateway is running
-  ae gateway install     Install as launchd service
+  ae gateway install     Install as launchd service (auto-restart)
 
 MEMORY
   ae memory              Show bounded memory state
@@ -617,6 +699,7 @@ CONFIG
   ae config              Show config.yaml
   ae config edit         Open config.yaml in editor
   ae setup               First-time setup wizard
+  ae update              Update to latest version + restart gateway
   ae doctor              Diagnose issues
 
 STATUS & COST

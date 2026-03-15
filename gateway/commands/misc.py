@@ -204,18 +204,20 @@ class MiscMixin:
 
         await update.message.reply_text("Restarting gateway in 2s...")
 
-        # Write a restart script to /tmp, then execute it detached.
-        # This avoids pkill matching the script's own command line.
+        # Write a restart script that kills THIS process by PID, then starts a new one.
+        # Uses os.getpid() so it only kills the current gateway, not the newly spawned one.
         import subprocess as sp
+        my_pid = os.getpid()
+        exodir = str(EXODIR)
         restart_sh = Path("/tmp/ae-restart.sh")
         restart_sh.write_text(
             "#!/bin/bash\n"
             "sleep 2\n"
-            "# Kill gateway by PID file or process match\n"
-            "PID=$(pgrep -f 'python3 -m gateway.run')\n"
-            "if [ -n \"$PID\" ]; then kill -9 $PID; fi\n"
+            f"kill {my_pid} 2>/dev/null\n"
             "sleep 1\n"
-            "cd ~/.agenticEvolve\n"
+            f"kill -9 {my_pid} 2>/dev/null\n"  # force kill if still alive
+            "sleep 1\n"
+            f"cd {exodir}\n"
             "nohup python3 -m gateway.run > /dev/null 2>&1 &\n"
         )
         restart_sh.chmod(0o755)
