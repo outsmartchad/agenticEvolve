@@ -8,6 +8,14 @@ EXODIR="$HOME/.agenticEvolve"
 # Load v1 config if it exists (backward compat)
 [ -f "$EXODIR/config.sh" ] && source "$EXODIR/config.sh" || true
 
+# Helper: read from tty if available, otherwise return empty
+_prompt() {
+    local prompt="$1"
+    REPLY=""
+    { read -p "$prompt" REPLY </dev/tty; } 2>/dev/null || REPLY=""
+    echo "$REPLY"
+}
+
 CMD="${1:-help}"
 shift 2>/dev/null || true
 
@@ -103,7 +111,7 @@ PLIST_EOF
                 cat "$EXODIR/memory/USER.md"
                 ;;
             reset)
-                read -p "Reset all memory? This cannot be undone. [y/N] " confirm </dev/tty
+                confirm=$(_prompt "Reset all memory? This cannot be undone. [y/N] ")
                 if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
                     echo "" > "$EXODIR/memory/MEMORY.md"
                     echo "" > "$EXODIR/memory/USER.md"
@@ -309,7 +317,7 @@ print(f'DB size: {s[\"db_size_mb\"]} MB')
             echo "  2. Send /newbot and follow the prompts"
             echo "  3. Copy the bot token"
             echo ""
-            read -p "  Paste your Telegram bot token (or press Enter to skip): " BOT_TOKEN </dev/tty
+            BOT_TOKEN=$(_prompt "  Paste your Telegram bot token (or press Enter to skip): ")
             if [ -n "$BOT_TOKEN" ]; then
                 # Update .env
                 if grep -q "^TELEGRAM_BOT_TOKEN=" "$EXODIR/.env" 2>/dev/null; then
@@ -335,7 +343,7 @@ print(f'DB size: {s[\"db_size_mb\"]} MB')
             echo "    → Message @userinfobot on Telegram"
             echo "    → It replies with your numeric ID"
             echo ""
-            read -p "  Enter your Telegram user ID (or press Enter to skip): " USER_ID </dev/tty
+            USER_ID=$(_prompt "  Enter your Telegram user ID (or press Enter to skip): ")
             if [ -n "$USER_ID" ]; then
                 # Update config.yaml
                 if [ -f "$EXODIR/config.yaml" ]; then
@@ -371,7 +379,7 @@ print(f'DB size: {s[\"db_size_mb\"]} MB')
 
         # ── 7. Optional: Daemon ────────────────────────────────
         echo ""
-        read -p "Install as background service (launchd)? [y/N] " INSTALL_DAEMON </dev/tty
+        INSTALL_DAEMON=$(_prompt "Install as background service (launchd)? [y/N] ")
         if [ "$INSTALL_DAEMON" = "y" ] || [ "$INSTALL_DAEMON" = "Y" ]; then
             mkdir -p "$EXODIR/logs"
             PLIST="$HOME/Library/LaunchAgents/com.agenticevolve.gateway.plist"
