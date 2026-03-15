@@ -215,13 +215,13 @@ class AdminMixin:
             self._gateway._session_msg_count.pop(key, None)
             self._gateway._locks.pop(key, None)
             if sid:
-                from ..session_db import end_session, set_session_title
+                from ..session_db import end_session, set_title
                 end_session(sid)
             # If title provided, pre-create a titled session
             if title:
-                from ..session_db import create_session
-                new_sid = create_session("telegram", chat_id)
-                set_session_title(new_sid, title)
+                from ..session_db import create_session, generate_session_id
+                new_sid = create_session(generate_session_id(), "telegram", chat_id)
+                set_title(new_sid, title)
                 self._gateway._active_sessions[key] = new_sid
         msg = f"New session started: *{title}*" if title else "New session started. Send your next message."
         await update.message.reply_text(msg, parse_mode="Markdown")
