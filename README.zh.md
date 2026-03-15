@@ -21,7 +21,10 @@
 > "去 Anthropic 文档找最新的 Claude 模型定价。" 代理打开 ABP 浏览器，导航，提取数据，发送简洁摘要。如果 Cloudflare 拦截，自动切换到 Brave。
 
 **在你的 WhatsApp 和 Discord 群组中服务**
-> `/serve` → WhatsApp → 群组 → 开启 Crypto🚀。现在群组里任何人都能和你的 AI 代理对话。它回复每条消息，维护每个群组的对话记忆，你通过 Telegram 内联键盘控制一切。Discord 频道同样支持——代理通过 Chrome DevTools Protocol 接入你的桌面应用。
+> `/serve` → WhatsApp → 群组 → 开启你的开发群。现在群组里任何人都能和你的 AI 代理对话。它回复每条消息，维护每个群组的对话记忆，你通过 Telegram 内联键盘控制一切。Discord 频道同样支持——代理通过 Chrome DevTools Protocol 接入你的桌面应用。
+
+**订阅频道并获取摘要**
+> `/subscribe` → Discord → 选择你常看的频道。第二天早上运行 `/discord`，就能获得一份简洁的摘要——关键讨论、分享的链接、提到的工具、待办事项。支持 Discord 频道、WhatsApp 群组和微信群。再也不用翻 500 条未读消息了。
 
 **搜索你自己的微信聊天记录**
 > 微信自带的搜索太烂了。代理读取你本地的微信数据库，给你一个可搜索的导出——联系人、消息、群聊、收藏。全部离线，全在你自己的机器上。

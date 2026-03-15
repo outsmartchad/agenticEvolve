@@ -23,7 +23,10 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 > "Go to the Anthropic docs and find the latest Claude model pricing." The agent opens ABP browser, navigates, extracts the data, and sends you a clean summary. If Cloudflare blocks it, it auto-switches to Brave.
 
 **Serve your WhatsApp and Discord groups**
-> `/serve` → WhatsApp → Groups → toggle Crypto🚀 on. Now anyone in that group can talk to your AI agent. It responds to every message, maintains per-group conversation memory, and you control it all from Telegram inline keyboards. Works with Discord channels too — the agent hooks into your desktop app via Chrome DevTools Protocol.
+> `/serve` → WhatsApp → Groups → toggle your dev group on. Now anyone in that group can talk to your AI agent. It responds to every message, maintains per-group conversation memory, and you control it all from Telegram inline keyboards. Works with Discord channels too — the agent hooks into your desktop app via Chrome DevTools Protocol.
+
+**Subscribe to channels and get digests**
+> `/subscribe` → Discord → pick your favorite channels. Next morning, run `/discord` and get a clean summary of everything you missed — key discussions, links shared, tools mentioned, action items. Works across Discord channels, WhatsApp groups, and WeChat groups. Never scroll through 500 unread messages again.
 
 **Search your own WeChat history**
 > WeChat's built-in search is terrible. The agent reads your local WeChat databases and gives you a searchable export — contacts, messages, groups, favorites. All offline, all on your machine.
