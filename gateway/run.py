@@ -177,6 +177,35 @@ _CHANNEL_KNOWLEDGE: dict[str, str] = {
 }
 
 
+import re as _re
+
+# Keywords/patterns that indicate a message needs stronger reasoning (math/code/logic)
+_REASONING_PATTERNS = _re.compile(
+    r'(?i)(?:'
+    # Math signals
+    r'(?:solve|calculate|compute|derive|integrate|differentiate|equation|formula|proof|theorem|factorial|fibonacci|prime)'
+    r'|(?:what is \d+[\s]*[\+\-\*\/\^%])'  # "what is 5 + 3", "what is 2^10"
+    r'|(?:\d+\s*[\+\-\*\/\^%]\s*\d+)'  # inline math expressions
+    r'|(?:how (?:many|much).*(?:if|when|total|sum|average|probability))'
+    # Code signals
+    r'|(?:write (?:a |me )?(?:code|script|function|program|class|algo))'
+    r'|(?:debug|refactor|implement|code review|fix (?:this|the) (?:code|bug|error))'
+    r'|(?:```)'  # code blocks
+    r'|(?:(?:in |using )?(?:python|javascript|typescript|rust|solidity|java|c\+\+|go|sql)[\s,].*(?:write|create|build|make|implement|how))'
+    # Logic/reasoning signals
+    r'|(?:logic(?:al)?|riddle|puzzle|brain ?teaser|paradox)'
+    r'|(?:explain (?:why|how).*(?:works?|happens?|possible))'
+    r'|(?:what (?:would|could|should) happen if)'
+    r'|(?:compare|contrast|trade.?offs?|pros? (?:and|&) cons?)'
+    r'|(?:step.by.step|walk me through|break(?:ing)? down)'
+    r')'
+)
+
+def _needs_reasoning(text: str) -> bool:
+    """Detect if a message likely needs math, coding, or logical reasoning."""
+    return bool(_REASONING_PATTERNS.search(text))
+
+
 class GatewayRunner:
     """Main gateway process — routes platform messages to Claude Code."""
 
@@ -436,8 +465,14 @@ class GatewayRunner:
                         if channel_kb:
                             session_context += f"\n\n{channel_kb}"
 
-            # Use cheaper model for served channels
-            model = self.config.get("serve_model", "haiku") if _is_served else self.config.get("model", "sonnet")
+            # Model selection for served channels
+            if _is_served:
+                if _needs_reasoning(text):
+                    model = self.config.get("serve_reasoning_model", "opus")
+                else:
+                    model = self.config.get("serve_model", "sonnet")
+            else:
+                model = self.config.get("model", "sonnet")
 
             # Allow before_invoke hooks to mutate the prompt
             invoke_text = await hooks.fire_modifying("before_invoke", text)
