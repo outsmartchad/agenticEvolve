@@ -516,10 +516,19 @@ class TelegramAdapter(
                         r for r in rows
                         if r[0] == "user"
                         and r[1].strip().lower() in _GREETINGS
-                        and r[1].strip().lower() != text.strip().lower()
                     ]
                     if prior_user_greetings:
-                        await update.message.reply_text("What are you building today?")
+                        import hashlib as _hl
+                        _hooks = [
+                            "What are you building today?",
+                            "What's the problem you're trying to solve?",
+                            "What's the next thing to ship?",
+                            "Anything blocking you right now?",
+                            "What did you ship last?",
+                        ]
+                        # Deterministic rotation based on message count so it cycles
+                        _idx = len(prior_user_greetings) % len(_hooks)
+                        await update.message.reply_text(_hooks[_idx])
                         return
             except Exception:
                 pass  # fall through to Claude on any DB error

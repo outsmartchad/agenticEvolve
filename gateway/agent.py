@@ -289,9 +289,11 @@ def build_system_prompt(config: dict | None = None,
                 }
                 lang_name = _LANG_NAMES.get(lang_code, lang_code)
                 parts.append(
-                    f"Language preference: the user prefers {lang_name} by default. "
-                    f"Match the language the user writes in — if they write in English, "
-                    f"reply in English. If they write in {lang_name}, reply in {lang_name}."
+                    f"Language preference: the user prefers {lang_name}. "
+                    f"Always reply in {lang_name} UNLESS the user's current message is "
+                    f"clearly written in a different language (more than 4 words of prose). "
+                    f"Short messages like 'hi', 'yo', 'ok', 'yes', 'no' are language-neutral "
+                    f"— reply in {lang_name} for those."
                 )
         except Exception:
             pass
