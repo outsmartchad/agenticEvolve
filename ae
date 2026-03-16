@@ -16,7 +16,7 @@ _prompt() {
     echo "$REPLY"
 }
 
-CMD="${1:-help}"
+CMD="${1:-chat}"
 shift 2>/dev/null || true
 
 case "$CMD" in
@@ -836,11 +836,12 @@ except Exception:
 
     # ── Help ────────────────────────────────────────────────────
 
-    help|*)
+    help)
         cat <<'EOF'
 ae — agenticEvolve CLI (v2)
 
 CHAT
+  ae                     Interactive REPL (default)
   ae chat                Interactive REPL (like claude CLI)
   ae chat --resume ID    Resume a previous session
 
@@ -877,5 +878,10 @@ LEGACY (v1)
   ae collect [source]    Run collectors
   ae notify <msg>        Send Telegram notification (v1)
 EOF
+        ;;
+
+    *)
+        echo "Unknown command: $CMD"
+        echo "Run 'ae help' for usage."
         ;;
 esac
