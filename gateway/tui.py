@@ -2448,7 +2448,7 @@ class AEApp(App):
         try:
             proc = subprocess.run(
                 [
-                    "python3", "-c",
+                    sys.executable, "-c",
                     "import asyncio; from gateway.voice import text_to_speech; "
                     "p = asyncio.run(text_to_speech('''{}''', output_format='mp3')); "
                     "print(p if p else '')".format(arg.replace("'", "\\'"))
