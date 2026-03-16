@@ -545,6 +545,33 @@ def _cmd_help():
     # Admin
     table.add_row("[bold white]ADMIN[/bold white]", "")
     table.add_row("  /autonomy [level]", "Show or set (full/supervised/locked)")
+    table.add_row("")
+
+    # Voice (Telegram only)
+    table.add_row("[bold white]VOICE[/bold white]", "[dim italic]Telegram only[/dim italic]")
+    table.add_row("  /speak <text>", "Text-to-speech (auto-detects language)")
+    table.add_row("  /speak --voices [lang]", "List available voices")
+    table.add_row("  /speak --mode <off|always|inbound>", "Set auto-TTS mode")
+    table.add_row("")
+
+    # Platform digests (Telegram only)
+    table.add_row("[bold white]PLATFORM DIGESTS[/bold white]", "[dim italic]Telegram only[/dim italic]")
+    table.add_row("  /wechat [--hours N]", "WeChat group chat digest")
+    table.add_row("  /discord [--hours N]", "Discord channel digest")
+    table.add_row("  /whatsapp", "WhatsApp group digest")
+    table.add_row("")
+
+    # Monitoring (Telegram only)
+    table.add_row("[bold white]MONITORING[/bold white]", "[dim italic]Telegram only[/dim italic]")
+    table.add_row("  /subscribe", "Select channels to monitor for digests")
+    table.add_row("  /serve", "Select channels/contacts for agent to respond in")
+    table.add_row("")
+
+    # Other (Telegram only)
+    table.add_row("[bold white]OTHER[/bold white]", "[dim italic]Telegram only[/dim italic]")
+    table.add_row("  /do <instruction>", "Natural language -> structured command")
+    table.add_row("  /lang [code]", "Set output language (zh, en, ja, ko)")
+    table.add_row("  /restart", "Restart gateway remotely")
 
     console.print()
     console.print(Panel(table, title="[bold]Commands[/bold]", border_style="blue", padding=(1, 2)))
