@@ -25,6 +25,7 @@ from rich.table import Table
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import Completer, Completion
 
 # ── Bootstrap ───────────────────────────────────────────────────
 
@@ -333,6 +334,39 @@ def _tool_description(name: str, input_data: dict) -> str:
 
 # ── Slash Commands ──────────────────────────────────────────────
 
+SLASH_COMMANDS = [
+    ("/help", "Show available commands"),
+    ("/new", "Start a new session"),
+    ("/cost", "Show cost breakdown"),
+    ("/model", "Show or switch model (e.g. /model opus)"),
+    ("/sessions", "List recent sessions (e.g. /sessions 10)"),
+    ("/search", "Search past conversations (e.g. /search LID JID)"),
+    ("/memory", "Show MEMORY.md"),
+    ("/status", "System status overview"),
+    ("/quit", "Exit the REPL"),
+]
+
+
+class SlashCompleter(Completer):
+    """Auto-complete slash commands with descriptions."""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor.lstrip()
+        # Only complete if the line starts with /
+        if not text.startswith("/"):
+            return
+        # Don't complete if there's already a space (user is typing args)
+        if " " in text:
+            return
+        for cmd, desc in SLASH_COMMANDS:
+            if cmd.startswith(text):
+                yield Completion(
+                    cmd,
+                    start_position=-len(text),
+                    display_meta=desc,
+                )
+
+
 def handle_command(cmd: str, state: SessionState) -> bool:
     """Handle a slash command. Returns True if handled, False if not a command."""
     parts = cmd.strip().split(None, 1)
@@ -550,6 +584,8 @@ def main(resume_session: str = None):
     prompt_session = PromptSession(
         history=FileHistory(str(history_file)),
         auto_suggest=AutoSuggestFromHistory(),
+        completer=SlashCompleter(),
+        complete_while_typing=True,
     )
 
     while True:
