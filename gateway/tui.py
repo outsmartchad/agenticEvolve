@@ -2422,23 +2422,34 @@ class AEApp(App):
                 self.call_from_thread(self._add_system_message, f"[red]Voice list failed: {e}[/red]")
             return
 
-        # Generate TTS
+        # Generate TTS — use subprocess to avoid asyncio event loop conflicts in worker thread
         self.call_from_thread(self._add_system_message, "[dim]Generating speech...[/dim]")
         try:
-            from gateway.voice import text_to_speech
-            loop = _asyncio.new_event_loop()
-            audio_path = loop.run_until_complete(text_to_speech(arg, output_format="mp3"))
-            loop.close()
+            proc = subprocess.run(
+                [
+                    "python3", "-c",
+                    "import asyncio; from gateway.voice import text_to_speech; "
+                    "p = asyncio.run(text_to_speech('''{}''', output_format='mp3')); "
+                    "print(p if p else '')".format(arg.replace("'", "\\'"))
+                ],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(EXODIR),
+            )
+            audio_path_str = proc.stdout.strip()
+            if proc.returncode != 0 or not audio_path_str:
+                err = proc.stderr.strip()[:200] if proc.stderr else "unknown error"
+                self.call_from_thread(self._add_system_message, f"[red]TTS produced no audio: {err}[/red]")
+                return
 
-            if not audio_path or not audio_path.exists():
-                self.call_from_thread(self._add_system_message, "[red]TTS produced no audio.[/red]")
+            audio_path = Path(audio_path_str)
+            if not audio_path.exists() or audio_path.stat().st_size == 0:
+                self.call_from_thread(self._add_system_message, "[red]TTS produced empty file.[/red]")
                 return
 
             self.call_from_thread(
                 self._add_system_message,
                 f"[green]Playing audio ({audio_path.stat().st_size // 1024}KB)...[/green]"
             )
-            # Play with afplay (macOS)
             subprocess.run(["afplay", str(audio_path)], timeout=120)
             self.call_from_thread(self._add_system_message, "[dim]Playback complete.[/dim]")
 
