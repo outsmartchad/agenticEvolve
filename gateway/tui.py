@@ -2460,6 +2460,15 @@ class AEApp(App):
 
         parts = arg.strip().split() if arg.strip() else []
 
+        # Discord serve DISABLED — account got limited from CDP sending
+        if mode == "serve" and len(parts) >= 2 and parts[1].lower() == "discord":
+            if parts[0] == "add":
+                self._add_system_message(
+                    "[red]Discord serve is DISABLED — account got limited from CDP sending. "
+                    "Read-only /subscribe for digests still works.[/red]"
+                )
+                return
+
         # /subscribe add <platform> <target_id> [name]
         if len(parts) >= 3 and parts[0] == "add":
             platform = parts[1].lower()

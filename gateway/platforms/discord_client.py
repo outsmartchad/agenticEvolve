@@ -88,18 +88,10 @@ class DiscordClientAdapter(BasePlatformAdapter):
             self.user_id = user.get("id")
             log.info(f"Discord client connected as {user.get('username')} (ID: {self.user_id})")
 
-        # Step 4: Load serve targets from DB and merge into watch_channels
-        try:
-            from ..session_db import get_serve_targets
-            targets = get_serve_targets("discord")
-            for t in targets:
-                tid = str(t["target_id"])
-                self.watch_channels.add(tid)
-                self._serve_channels.add(tid)
-            if targets:
-                log.info(f"Loaded {len(targets)} Discord serve targets from DB")
-        except Exception as e:
-            log.warning(f"Failed to load Discord serve targets: {e}")
+        # Step 4: Discord serve targets DISABLED — account got limited from CDP sending.
+        # Read-only polling still works for /subscribe digests.
+        # Serve targets are NOT loaded so no replies are attempted.
+        log.info("Discord serve targets DISABLED (account limited). Read-only mode only.")
 
         # Step 5: Start message polling
         # CDP WebSocket frame interception doesn't work for ETF+zstd,
@@ -298,18 +290,13 @@ class DiscordClientAdapter(BasePlatformAdapter):
                 await asyncio.sleep(5)
 
     async def send(self, chat_id: str, text: str, reply_to: str = None):
-        """Send a message to a Discord channel via REST API."""
-        # Discord 2000 char limit
-        for idx, i in enumerate(range(0, len(text), 1900)):
-            chunk = text[i:i + 1900]
-            payload = {"content": chunk}
-            # Only reply to the original message on the first chunk
-            if idx == 0 and reply_to:
-                payload["message_reference"] = {"message_id": reply_to}
-            await self._api_post(
-                f"/channels/{chat_id}/messages",
-                payload
-            )
+        """Send a message to a Discord channel via REST API.
+
+        DISABLED: Discord account got limited from CDP-based sending.
+        Keeping method signature so callers don't crash, but it no-ops.
+        """
+        log.warning("Discord send() is DISABLED — account was limited. Dropping message to %s", chat_id)
+        return
 
     async def list_guilds(self) -> list[dict]:
         """List all guilds (servers) the user is in."""

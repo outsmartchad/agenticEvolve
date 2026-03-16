@@ -87,9 +87,9 @@ class SubscribeMixin:
 
         text += "Select a platform:"
 
+        # Discord serve DISABLED — account got limited from CDP sending.
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("Discord", callback_data="serve:platform:discord"),
                 InlineKeyboardButton("WhatsApp", callback_data="serve:platform:whatsapp"),
             ],
             [

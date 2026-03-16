@@ -412,8 +412,10 @@ class GatewayRunner:
 
             _is_served = False
 
-            # Discord served channels: add fun personality
-            if platform == "discord":
+            # Discord serve DISABLED — account got limited from CDP sending.
+            # Messages from Discord are still received (read-only for digests)
+            # but we never flag them as served, so no reply is attempted.
+            if platform == "discord" and False:  # DISABLED
                 discord_adapter = next(
                     (a for a in self.adapters if a.name == "discord"), None
                 )
