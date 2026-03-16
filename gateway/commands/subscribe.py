@@ -611,9 +611,10 @@ class SubscribeMixin:
             log.info(f"Discord serve targets updated: {len(channel_ids)} channels")
 
         elif platform == "whatsapp":
-            # For WhatsApp, we accept all messages from groups we're serving
-            # The read loop already handles this via allowed_users
             group_ids = {t["target_id"] for t in targets if t["target_type"] == "group"}
+            contact_ids = {t["target_id"] for t in targets if t["target_type"] == "contact"}
             if hasattr(adapter, "_serve_groups"):
                 adapter._serve_groups = group_ids
-            log.info(f"WhatsApp serve targets updated: {len(group_ids)} groups")
+            if hasattr(adapter, "_serve_contacts"):
+                adapter._serve_contacts = contact_ids
+            log.info(f"WhatsApp serve targets updated: {len(group_ids)} groups + {len(contact_ids)} contacts")

@@ -21,6 +21,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
         super().__init__(config, on_message)
         self.allowed_users = set(str(u) for u in config.get("allowed_users", []))
         self._serve_groups: set[str] = set()  # group JIDs being actively served
+        self._serve_contacts: set[str] = set()  # contact JIDs being actively served
         self._subscribe_groups: set[str] = set()  # group JIDs subscribed for digests
         self.process = None
         self._reader_task = None
@@ -64,8 +65,10 @@ class WhatsAppAdapter(BasePlatformAdapter):
             from ..session_db import get_serve_targets, get_subscriptions
             targets = get_serve_targets("whatsapp")
             self._serve_groups = {t["target_id"] for t in targets if t["target_type"] == "group"}
-            if self._serve_groups:
-                log.info(f"WhatsApp serving {len(self._serve_groups)} groups from DB")
+            self._serve_contacts = {t["target_id"] for t in targets if t["target_type"] == "contact"}
+            serve_total = len(self._serve_groups) + len(self._serve_contacts)
+            if serve_total:
+                log.info(f"WhatsApp serving {len(self._serve_groups)} groups + {len(self._serve_contacts)} contacts from DB")
             # Load subscribed groups (for message storage / digests)
             # Use a dummy user_id — we want ALL subscriptions across users
             subs = get_subscriptions("934847281", mode="subscribe", platform="whatsapp")
@@ -105,6 +108,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
 
                     is_group = chat_id.endswith("@g.us")
                     is_served_group = is_group and chat_id in self._serve_groups
+                    is_served_contact = (not is_group) and chat_id in self._serve_contacts
+                    is_served = is_served_group or is_served_contact
 
                     # Store messages from served + subscribed groups for digests
                     if is_group and (chat_id in self._serve_groups or chat_id in self._subscribe_groups):
@@ -142,8 +147,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
                             if not self._is_allowed(user_id):
                                 continue
                     else:
-                        # DMs: require allowed_users
-                        if not self._is_allowed(user_id):
+                        # DMs: served contacts skip allowed_users check
+                        if not is_served_contact and not self._is_allowed(user_id):
                             continue
 
                     # Build message key for reply-to quoting
