@@ -399,8 +399,63 @@ class StatusBar(Widget):
         return text
 
 
+class CommandSuggestions(Widget):
+    """Autocomplete dropdown for slash commands."""
+    DEFAULT_CSS = """
+    CommandSuggestions {
+        dock: bottom;
+        height: auto;
+        max-height: 8;
+        margin: 0 1;
+        background: $surface;
+        border: tall $accent;
+        display: none;
+        layer: overlay;
+    }
+    CommandSuggestions .suggestion {
+        padding: 0 1;
+        height: 1;
+    }
+    CommandSuggestions .suggestion.highlighted {
+        background: $primary-background;
+        color: $text;
+        text-style: bold;
+    }
+    """
+
+    suggestions: reactive[list[tuple[str, str]]] = reactive(list, always_update=True)
+    selected_index: reactive[int] = reactive(0)
+
+    def render(self) -> Text:
+        text = Text()
+        for i, (cmd, desc) in enumerate(self.suggestions[:7]):
+            prefix = "▸ " if i == self.selected_index else "  "
+            style = "bold" if i == self.selected_index else "dim"
+            text.append(f"{prefix}{cmd:16s} {desc}\n", style=style)
+        return text
+
+    def update_suggestions(self, prefix: str) -> None:
+        if not prefix.startswith("/") or " " in prefix:
+            self.suggestions = []
+            self.display = False
+            return
+        matches = [(cmd, desc) for cmd, desc in SLASH_COMMANDS if cmd.startswith(prefix)]
+        self.suggestions = matches
+        self.selected_index = 0
+        self.display = bool(matches) and prefix != matches[0][0] if len(matches) == 1 else bool(matches)
+
+    def move_selection(self, delta: int) -> None:
+        if self.suggestions:
+            self.selected_index = (self.selected_index + delta) % len(self.suggestions)
+
+    def get_selected(self) -> str | None:
+        if self.suggestions and 0 <= self.selected_index < len(self.suggestions):
+            return self.suggestions[self.selected_index][0]
+        return None
+
+
 class ChatInput(Input):
-    """The chat input box."""
+    """The chat input box with slash command autocomplete."""
     DEFAULT_CSS = """
     ChatInput {
         dock: bottom;
@@ -414,6 +469,41 @@ class ChatInput(Input):
 
     def __init__(self) -> None:
         super().__init__(placeholder="Type a message or /command...", id="chat-input")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Update autocomplete suggestions as user types."""
+        try:
+            suggestions = self.app.query_one(CommandSuggestions)
+            suggestions.update_suggestions(event.value.strip())
+        except NoMatches:
+            pass
+
+    def _on_key(self, event) -> None:
+        """Handle Tab/arrow keys for autocomplete."""
+        try:
+            suggestions = self.app.query_one(CommandSuggestions)
+        except NoMatches:
+            return
+
+        if not suggestions.suggestions:
+            return
+
+        if event.key == "tab":
+            selected = suggestions.get_selected()
+            if selected:
+                self.value = selected + " "
+                self.cursor_position = len(self.value)
+                suggestions.display = False
+            event.prevent_default()
+            event.stop()
+        elif event.key == "up":
+            suggestions.move_selection(-1)
+            event.prevent_default()
+            event.stop()
+        elif event.key == "down":
+            suggestions.move_selection(1)
+            event.prevent_default()
+            event.stop()
 
 
 # ── Slash Command List ──────────────────────────────────────────
@@ -677,6 +767,7 @@ class AEApp(App):
             with Vertical(id="chat-pane"):
                 with VerticalScroll(id="messages-scroll"):
                     yield Vertical(id="messages")
+                yield CommandSuggestions()
                 yield ChatInput()
             yield Sidebar(self._state)
         yield StatusBar()
@@ -1334,13 +1425,419 @@ class AEApp(App):
         self.post_message(CommandOutput(msg, is_markdown=True))
 
     def _cmd_pipeline(self, name: str, arg: str) -> None:
-        """Run a pipeline command via LLM."""
-        # For pipelines, we send the command as a message to Claude
-        prompt = f"{name} {arg}".strip()
-        self._add_system_message(f"[dim]Running pipeline: {prompt}[/dim]")
-        self._state.add_user_message(prompt)
-        self.query_one(Sidebar).refresh_info()
-        self._start_stream(prompt)
+        """Run a pipeline command with proper implementation."""
+        if name == "/produce":
+            self._run_produce(arg)
+        elif name == "/evolve":
+            self._run_evolve(arg)
+        elif name == "/decompose":
+            self._run_decompose(arg)
+        elif name == "/learn":
+            self._run_learn(arg)
+        elif name == "/absorb":
+            self._run_absorb(arg)
+        elif name == "/reflect":
+            self._run_reflect(arg)
+        elif name == "/digest":
+            self._cmd_digest(arg)
+        elif name == "/gc":
+            self._cmd_gc(arg)
+
+    @work(thread=True)
+    def _run_produce(self, arg: str) -> None:
+        """Aggregate signals and brainstorm business ideas."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        self.call_from_thread(
+            self._add_system_message, "[dim]Aggregating signals, brainstorming ideas...[/dim]"
+        )
+        try:
+            from gateway.cli import _cmd_produce as _cli_produce, SessionState as _CliState
+            # Use _invoke_claude_streaming directly
+            signals_dir = EXODIR / "signals"
+            today = datetime.now().strftime("%Y-%m-%d")
+            today_dir = signals_dir / today
+            all_signals = []
+            source_counts = {}
+            if today_dir.exists():
+                for f in sorted(today_dir.glob("*.json")):
+                    try:
+                        data = json.loads(f.read_text())
+                        sigs = data if isinstance(data, list) else [data]
+                        source_counts[f.stem] = len(sigs)
+                        all_signals.extend(sigs)
+                    except Exception:
+                        continue
+            if not all_signals:
+                self.call_from_thread(
+                    self._add_system_message,
+                    "[yellow]No signals found for today. Run /evolve first.[/yellow]"
+                )
+                return
+            source_summaries = []
+            for source_name, count in sorted(source_counts.items()):
+                source_signals = [s for s in all_signals
+                                  if s.get("source", "") in (source_name.replace("-", ""), source_name)
+                                  or s.get("id", "").startswith(source_name.split("-")[0])]
+                source_signals.sort(
+                    key=lambda x: (x.get("metadata", {}).get("points", 0) or
+                                   x.get("metadata", {}).get("stars", 0) or 0),
+                    reverse=True
+                )
+                items = []
+                for s in source_signals[:8]:
+                    title = s.get("title", "")
+                    content = s.get("content", "")[:200]
+                    url = s.get("url", "")
+                    engagement = (s.get("metadata", {}).get("points", 0) or
+                                  s.get("metadata", {}).get("stars", 0) or 0)
+                    items.append(f"  - {title} ({engagement} pts) {url}\n    {content}")
+                if items:
+                    source_summaries.append(f"### {source_name} ({count} signals)\n" + "\n".join(items))
+            signals_text = "\n\n".join(source_summaries)
+            if len(signals_text) > 40000:
+                signals_text = signals_text[:40000] + "\n\n... (truncated)"
+            num_ideas = 5
+            prompt = (
+                f"You are Vincent's personal AI business strategist.\n\n"
+                f"Vincent builds AI agents, onchain infrastructure, and developer tools.\n\n"
+                f"Here are the latest signals from {len(source_counts)} sources ({len(all_signals)} total):\n\n"
+                f"{signals_text}\n\n"
+                f"Generate exactly {num_ideas} concrete business/app ideas. "
+                f"For each: one-liner, why now, target users, revenue model, tech stack, MVP scope, "
+                f"competitive moat, estimated effort, revenue potential.\n"
+                f"Rank by feasibility x market timing x revenue potential. Use Markdown."
+            )
+            result = _invoke_claude_streaming(
+                prompt, on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+                model=self._state.model,
+                session_context=f"[Produce: {num_ideas} ideas from {len(all_signals)} signals]"
+            )
+            text = result.get("text", "No ideas generated.")
+            cost = result.get("cost", 0.0)
+            self._state.add_assistant_message(text, cost)
+            self.call_from_thread(self.post_message, CommandOutput(text, is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="produce")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]Produce failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+
+    @work(thread=True)
+    def _run_evolve(self, arg: str) -> None:
+        """Run the multi-stage evolve pipeline."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        dry_run = "--dry-run" in arg or "--dry" in arg
+        stages = "COLLECT -> ANALYZE" if dry_run else "COLLECT -> ANALYZE -> BUILD -> REVIEW -> REPORT"
+        self.call_from_thread(
+            self._add_system_message,
+            f"[dim]Evolving... {stages} (~{'2-4' if dry_run else '5-10'} min)[/dim]"
+        )
+        try:
+            from gateway.evolve import EvolveOrchestrator
+            orchestrator = EvolveOrchestrator(
+                model=self._state.model,
+                on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+            )
+            summary, cost = orchestrator.run(dry_run=dry_run)
+            self._state.add_assistant_message(summary, cost)
+            self.call_from_thread(self.post_message, CommandOutput(summary, is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="evolve")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]Evolve failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+
+    @work(thread=True)
+    def _run_decompose(self, arg: str) -> None:
+        """Decompose a goal into tasks."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        goal = arg.replace("--dry-run", "").replace("--dry", "").strip()
+        if not goal:
+            self.call_from_thread(
+                self._add_system_message,
+                "[yellow]Usage: /decompose <goal>[/yellow]"
+            )
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+            return
+        dry_run = "--dry-run" in arg or "--dry" in arg
+        self.call_from_thread(
+            self._add_system_message,
+            f"[dim]Decomposing: {goal[:60]}...[/dim]"
+        )
+        try:
+            system_context = (
+                "You are the DECOMPOSE agent for agenticEvolve — Vincent's personal closed-loop agent system.\n\n"
+                "Our system: Python asyncio gateway → Claude Code (claude -p) → Telegram. "
+                "Skills in ~/.claude/skills/, memory in ~/.agenticEvolve/memory/.\n\n"
+            )
+            planner_prompt = (
+                system_context +
+                f"GOAL: {goal}\n\n"
+                f"Break this into parallel-executable tasks. Output a task DAG as JSON, then implement.\n"
+            )
+            if dry_run:
+                planner_prompt += "\nDRY RUN: Output the DAG only. Do NOT implement.\n"
+            result = _invoke_claude_streaming(
+                planner_prompt,
+                on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+                model=self._state.model,
+                session_context=f"[Decompose: {goal[:50]}]",
+            )
+            text = result.get("text", "No output.")
+            cost = result.get("cost", 0.0)
+            self._state.add_assistant_message(text, cost)
+            self.call_from_thread(self.post_message, CommandOutput(text, is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="decompose")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]Decompose failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+
+    @work(thread=True)
+    def _run_learn(self, arg: str) -> None:
+        """Deep-dive a repo/URL/tech."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        target = arg.replace("--dry-run", "").replace("--dry", "").strip()
+        if not target:
+            self.call_from_thread(
+                self._add_system_message,
+                "[yellow]Usage: /learn <repo-url or tech>[/yellow]"
+            )
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+            return
+        self.call_from_thread(
+            self._add_system_message,
+            f"[dim]Learning: {target[:60]}... (~3-6 min)[/dim]"
+        )
+        try:
+            is_github = "github.com" in target
+            is_url = target.startswith("http://") or target.startswith("https://")
+            system_context = (
+                "You are the LEARN agent for agenticEvolve — Vincent's personal closed-loop agent system.\n\n"
+                "Vincent builds AI agents, onchain infrastructure, and developer tools.\n\n"
+            )
+            analysis = (
+                "EXTRACT PATTERNS: design patterns, architectural decisions, stealable techniques.\n"
+                "EVALUATE: ADOPT / STEAL / SKIP verdict. If ADOPT or STEAL, create a skill.\n"
+                "Update MEMORY.md with findings.\n"
+            )
+            if is_github:
+                prompt = system_context + f"Deep-dive this GitHub repo: {target}\n\n" + analysis
+            elif is_url:
+                prompt = system_context + f"Research this URL: {target}\n\n" + analysis
+            else:
+                prompt = system_context + f"Research this technology: {target}\n\n" + analysis
+            result = _invoke_claude_streaming(
+                prompt, on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+                model=self._state.model,
+                session_context=f"[Learn: {target[:50]}]"
+            )
+            text = result.get("text", "No output.")
+            cost = result.get("cost", 0.0)
+            self._state.add_assistant_message(text, cost)
+            self.call_from_thread(self.post_message, CommandOutput(text, is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="learn")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]Learn failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+
+    @work(thread=True)
+    def _run_absorb(self, arg: str) -> None:
+        """Scan + implement improvements from a target."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        target = arg.replace("--dry-run", "").replace("--dry", "").strip()
+        if not target:
+            self.call_from_thread(
+                self._add_system_message,
+                "[yellow]Usage: /absorb <repo-url or tech>[/yellow]"
+            )
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+            return
+        dry_run = "--dry-run" in arg or "--dry" in arg
+        is_github = "github.com" in target
+        is_url = target.startswith("http://") or target.startswith("https://")
+        target_type = "github" if is_github else ("url" if is_url else "topic")
+        self.call_from_thread(
+            self._add_system_message,
+            f"[dim]Absorbing: {target[:60]} (~{'3-5' if dry_run else '8-15'} min)[/dim]"
+        )
+        try:
+            from gateway.absorb import AbsorbOrchestrator
+            orchestrator = AbsorbOrchestrator(
+                target=target, target_type=target_type, model=self._state.model,
+                on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+            )
+            summary, cost = orchestrator.run(dry_run=dry_run)
+            self._state.add_assistant_message(summary, cost)
+            self.call_from_thread(self.post_message, CommandOutput(summary, is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="absorb")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]Absorb failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+
+    @work(thread=True)
+    def _run_reflect(self, arg: str) -> None:
+        """Self-analysis: patterns, gaps, next actions."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        days = 7
+        self.call_from_thread(
+            self._add_system_message,
+            f"[dim]Reflecting on the last {days} days... ~2-4 min[/dim]"
+        )
+        try:
+            now = datetime.now(timezone.utc)
+            since = (now - timedelta(days=days)).isoformat()
+            prompt = (
+                f"You are the REFLECT agent for agenticEvolve.\n\n"
+                f"Run a {days}-day self-analysis:\n"
+                f"1. Query SQLite DB at {EXODIR}/memory/sessions.db for sessions since {since}\n"
+                f"2. Check git log in ~/Desktop/projects/agenticEvolve since {since[:10]}\n"
+                f"3. List skills in ~/.claude/skills/\n"
+                f"4. Read MEMORY.md and USER.md\n"
+                f"5. Return: patterns, avoidance, 3 things to build next, system health\n"
+            )
+            result = _invoke_claude_streaming(
+                prompt, on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+                model=self._state.model,
+                session_context="[Reflect pipeline]"
+            )
+            text = result.get("text", "No output.")
+            cost = result.get("cost", 0.0)
+            self._state.add_assistant_message(text, cost)
+            self.call_from_thread(self.post_message, CommandOutput(
+                f"**Reflect — last {days}d**\n\n{text}", is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="reflect")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]Reflect failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+
+    def _cmd_digest(self, arg: str) -> None:
+        """Morning briefing: sessions, signals, cost, skills, cron."""
+        import sqlite3
+        from gateway.session_db import DB_PATH
+        from gateway.commands.cron_core import CRON_JOBS_FILE
+        now = datetime.now(timezone.utc)
+        since = now - timedelta(days=1)
+        since_str = since.isoformat()
+        # Sessions
+        sessions_summary = ""
+        try:
+            conn = sqlite3.connect(str(DB_PATH), timeout=5)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT title, message_count, source, started_at FROM sessions "
+                "WHERE started_at >= ? ORDER BY started_at DESC LIMIT 20",
+                (since_str,)
+            ).fetchall()
+            conn.close()
+            if rows:
+                lines = [f"  {r['started_at'][:16]} — {(r['title'] or '(untitled)')[:50]} ({r['message_count']} msgs)" for r in rows]
+                sessions_summary = "\n".join(lines)
+            else:
+                sessions_summary = "  (none)"
+        except Exception:
+            sessions_summary = "  (error)"
+        # Signals
+        signals_summary = ""
+        try:
+            sig_dir = EXODIR / "signals" / now.strftime("%Y-%m-%d")
+            if not sig_dir.exists():
+                sig_dirs = sorted((EXODIR / "signals").glob("????-??-??")) if (EXODIR / "signals").exists() else []
+                sig_dir = sig_dirs[-1] if sig_dirs else None
+            if sig_dir and sig_dir.exists():
+                signal_lines = []
+                for f in sorted(sig_dir.glob("*.json"))[:3]:
+                    try:
+                        for line in f.read_text().splitlines()[:5]:
+                            if not line.strip():
+                                continue
+                            obj = json.loads(line)
+                            title = obj.get("title", obj.get("name", ""))[:60]
+                            if title:
+                                signal_lines.append(f"  [{f.stem}] {title}")
+                    except Exception:
+                        pass
+                signals_summary = "\n".join(signal_lines[:5]) if signal_lines else "  (none)"
+            else:
+                signals_summary = "  (no signals)"
+        except Exception:
+            signals_summary = "  (error)"
+        # Skills
+        skills_built = ""
+        try:
+            skills_dir = Path.home() / ".claude" / "skills"
+            if skills_dir.exists():
+                new_skills = [sp.parent.name for sp in skills_dir.glob("*/SKILL.md")
+                              if datetime.fromtimestamp(sp.stat().st_mtime, tz=timezone.utc) >= since]
+                skills_built = "\n".join(f"  {s}" for s in new_skills) if new_skills else "  (none)"
+            else:
+                skills_built = "  (none)"
+        except Exception:
+            skills_built = "  (error)"
+        cost_today = get_today_cost()
+        # Cron
+        cron_summary = ""
+        try:
+            if CRON_JOBS_FILE.exists():
+                jobs = json.loads(CRON_JOBS_FILE.read_text())
+                active = [j for j in jobs if not j.get("paused")]
+                lines = [f"  {j.get('id', '?')} -> {j.get('next_run_at', '?')[:16]}" for j in active[:5]]
+                cron_summary = "\n".join(lines) if lines else "  (none active)"
+            else:
+                cron_summary = "  (no jobs)"
+        except Exception:
+            cron_summary = "  (error)"
+        text = (
+            f"**Digest — {now.strftime('%Y-%m-%d %H:%M')} UTC**\n\n"
+            f"**Sessions (today):**\n{sessions_summary}\n\n"
+            f"**Top signals:**\n{signals_summary}\n\n"
+            f"**Skills built (today):**\n{skills_built}\n\n"
+            f"**Cost today:** ${cost_today:.2f}\n\n"
+            f"**Cron (next runs):**\n{cron_summary}"
+        )
+        self.post_message(CommandOutput(text, is_markdown=True))
+
+    def _cmd_gc(self, arg: str) -> None:
+        """Run garbage collection."""
+        dry_run = "--dry-run" in arg or "--dry" in arg
+        try:
+            from gateway.gc import run_gc, format_gc_report
+            self._add_system_message(f"[dim]Running GC{' (dry run)' if dry_run else ''}...[/dim]")
+            report = run_gc(dry_run=dry_run)
+            text = format_gc_report(report)
+            self.post_message(CommandOutput(text, is_markdown=True))
+        except Exception as e:
+            self._add_system_message(f"[red]GC failed: {e}[/red]")
 
     def _cmd_cron(self, name: str, arg: str) -> None:
         """Handle cron commands locally."""
@@ -1393,11 +1890,209 @@ class AEApp(App):
             )
 
     def _cmd_platform_digest(self, name: str, arg: str) -> None:
-        """Run platform digest via LLM pipeline."""
-        prompt = f"{name} {arg}".strip()
-        self._add_system_message(f"[dim]Running: {prompt}[/dim]")
-        self._state.add_user_message(prompt)
-        self._start_stream(prompt)
+        """Route to proper platform digest."""
+        if name == "/wechat":
+            self._run_wechat_digest(arg)
+        elif name == "/discord":
+            self._run_discord_digest(arg)
+        elif name == "/whatsapp":
+            self._run_whatsapp_digest(arg)
+
+    @work(thread=True)
+    def _run_wechat_digest(self, arg: str) -> None:
+        """WeChat group chat digest."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        hours = 24
+        self.call_from_thread(
+            self._add_system_message,
+            f"[dim]Reading WeChat groups (last {hours}h)...[/dim]"
+        )
+        try:
+            tools_dir = Path.home() / ".agenticEvolve" / "tools" / "wechat-decrypt"
+            decrypted_dir = tools_dir / "decrypted"
+            if not decrypted_dir.exists():
+                self.call_from_thread(
+                    self._add_system_message,
+                    "[yellow]No decrypted WeChat data found.[/yellow]"
+                )
+                return
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "wechat_collector",
+                str(Path.home() / ".agenticEvolve" / "collectors" / "wechat.py")
+            )
+            wechat_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(wechat_mod)
+            signals = wechat_mod.extract_group_messages(decrypted_dir, hours=hours)
+            if not signals:
+                self.call_from_thread(
+                    self._add_system_message,
+                    f"[dim]No WeChat messages in the last {hours}h.[/dim]"
+                )
+                return
+            chat_lines = []
+            total_msgs = 0
+            for s in signals:
+                meta = s.get("metadata", {})
+                chat_lines.append(f"## {meta.get('group_name', 'Unknown')} "
+                                  f"({meta.get('message_count', 0)} msgs)")
+                chat_lines.append(s.get("content", ""))
+                total_msgs += meta.get("message_count", 0)
+            chat_text = "\n".join(chat_lines)
+            if len(chat_text) > 30000:
+                chat_text = chat_text[:30000] + "\n\n... (truncated)"
+            prompt = (
+                f"Analyze WeChat group chats ({total_msgs} msgs, {len(signals)} groups, last {hours}h):\n\n"
+                f"{chat_text}\n\n"
+                f"Digest each group separately. 简体中文. Markdown."
+            )
+            result = _invoke_claude_streaming(
+                prompt, on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+                model=self._state.model,
+                session_context=f"[WeChat digest: {hours}h]"
+            )
+            text = result.get("text", "No analysis.")
+            cost = result.get("cost", 0.0)
+            self._state.add_assistant_message(text, cost)
+            self.call_from_thread(self.post_message, CommandOutput(text, is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="wechat")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]WeChat digest failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+
+    @work(thread=True)
+    def _run_discord_digest(self, arg: str) -> None:
+        """Discord channel digest from platform_messages."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        hours = 24
+        try:
+            from gateway.session_db import get_platform_messages, get_subscriptions
+            subs = get_subscriptions("934847281", mode="subscribe", platform="discord")
+            if not subs:
+                self.call_from_thread(
+                    self._add_system_message,
+                    "[yellow]No Discord channels subscribed. Use /subscribe in Telegram.[/yellow]"
+                )
+                return
+            channel_ids = [s["target_id"] for s in subs]
+            channel_names = {s["target_id"]: s.get("target_name", s["target_id"]) for s in subs}
+            messages = get_platform_messages("discord", channel_ids, hours=hours)
+            if not messages:
+                self.call_from_thread(
+                    self._add_system_message,
+                    f"[dim]No Discord messages in the last {hours}h.[/dim]"
+                )
+                return
+            from collections import defaultdict
+            by_channel = defaultdict(list)
+            for m in messages:
+                by_channel[m["chat_id"]].append(m)
+            chat_lines = []
+            for cid, msgs in by_channel.items():
+                name = channel_names.get(cid, cid)
+                chat_lines.append(f"## #{name} ({len(msgs)} messages)")
+                for m in msgs:
+                    sender = m.get("sender_name") or m["user_id"]
+                    chat_lines.append(f"{sender}: {m['content']}")
+                chat_lines.append("")
+            chat_text = "\n".join(chat_lines)
+            if len(chat_text) > 30000:
+                chat_text = chat_text[:30000]
+            total = len(messages)
+            prompt = (
+                f"Analyze Discord messages ({total} msgs, {len(by_channel)} channels, last {hours}h):\n\n"
+                f"{chat_text}\n\nDigest each channel separately. Markdown."
+            )
+            result = _invoke_claude_streaming(
+                prompt, on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+                model=self._state.model,
+                session_context=f"[Discord digest: {hours}h]"
+            )
+            text = result.get("text", "No analysis.")
+            cost = result.get("cost", 0.0)
+            self._state.add_assistant_message(text, cost)
+            self.call_from_thread(self.post_message, CommandOutput(text, is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="discord")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]Discord digest failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
+
+    @work(thread=True)
+    def _run_whatsapp_digest(self, arg: str) -> None:
+        """WhatsApp group digest from platform_messages."""
+        self.is_streaming = True
+        self.call_from_thread(self._update_status_bar)
+        hours = 24
+        try:
+            from gateway.session_db import get_platform_messages, get_subscriptions, get_serve_targets
+            subs = get_subscriptions("934847281", mode="subscribe", platform="whatsapp")
+            serves = get_serve_targets("whatsapp")
+            all_ids = {s["target_id"] for s in subs} | {t["target_id"] for t in serves}
+            all_names = {}
+            for s in subs:
+                all_names[s["target_id"]] = s.get("target_name", s["target_id"])
+            for t in serves:
+                all_names[t["target_id"]] = t.get("target_name", t["target_id"])
+            if not all_ids:
+                self.call_from_thread(
+                    self._add_system_message,
+                    "[yellow]No WhatsApp groups subscribed/served.[/yellow]"
+                )
+                return
+            messages = get_platform_messages("whatsapp", list(all_ids), hours=hours)
+            if not messages:
+                self.call_from_thread(
+                    self._add_system_message,
+                    f"[dim]No WhatsApp messages in the last {hours}h.[/dim]"
+                )
+                return
+            from collections import defaultdict
+            by_group = defaultdict(list)
+            for m in messages:
+                by_group[m["chat_id"]].append(m)
+            chat_lines = []
+            for gid, msgs in by_group.items():
+                name = all_names.get(gid, gid)
+                chat_lines.append(f"## {name} ({len(msgs)} messages)")
+                for m in msgs:
+                    sender = m.get("sender_name") or m["user_id"].split("@")[0]
+                    chat_lines.append(f"{sender}: {m['content']}")
+                chat_lines.append("")
+            chat_text = "\n".join(chat_lines)
+            if len(chat_text) > 30000:
+                chat_text = chat_text[:30000]
+            total = len(messages)
+            prompt = (
+                f"Analyze WhatsApp group messages ({total} msgs, {len(by_group)} groups, last {hours}h):\n\n"
+                f"{chat_text}\n\nDigest each group separately. Markdown."
+            )
+            result = _invoke_claude_streaming(
+                prompt, on_progress=lambda m: self.call_from_thread(
+                    self._add_system_message, f"[dim]  {m}[/dim]"),
+                model=self._state.model,
+                session_context=f"[WhatsApp digest: {hours}h]"
+            )
+            text = result.get("text", "No analysis.")
+            cost = result.get("cost", 0.0)
+            self._state.add_assistant_message(text, cost)
+            self.call_from_thread(self.post_message, CommandOutput(text, is_markdown=True))
+            if cost > 0:
+                log_cost(cost, platform="cli", session_id=self._state.session_id, pipeline="whatsapp")
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]WhatsApp digest failed: {e}[/red]")
+        finally:
+            self.is_streaming = False
+            self.call_from_thread(self._update_status_bar)
 
 
 # ── Entry Point ─────────────────────────────────────────────────
