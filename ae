@@ -21,6 +21,32 @@ shift 2>/dev/null || true
 
 case "$CMD" in
 
+    # ── v2: Interactive Chat ────────────────────────────────────
+
+    chat)
+        # Optional: ae chat --resume <session_id>
+        RESUME=""
+        if [ "${1:-}" = "--resume" ] || [ "${1:-}" = "-r" ]; then
+            shift
+            RESUME="${1:-}"
+            shift 2>/dev/null || true
+        fi
+        cd "$EXODIR"
+        if [ -n "$RESUME" ]; then
+            python3 -c "
+import sys; sys.path.insert(0, '$EXODIR')
+from gateway.cli import main
+main(resume_session='$RESUME')
+"
+        else
+            python3 -c "
+import sys; sys.path.insert(0, '$EXODIR')
+from gateway.cli import main
+main()
+"
+        fi
+        ;;
+
     # ── v2: Gateway ─────────────────────────────────────────────
 
     gateway)
@@ -808,6 +834,10 @@ except Exception:
     help|*)
         cat <<'EOF'
 ae — agenticEvolve CLI (v2)
+
+CHAT
+  ae chat                Interactive REPL (like claude CLI)
+  ae chat --resume ID    Resume a previous session
 
 GATEWAY
   ae gateway [start]     Start the messaging gateway (foreground)
