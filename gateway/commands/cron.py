@@ -1,6 +1,6 @@
 """Cron / loop command handlers, extracted as a mixin."""
+from __future__ import annotations
 import asyncio
-import json
 import logging
 import os
 import re
@@ -8,11 +8,9 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from .cron_core import CRON_DIR, CRON_JOBS_FILE, load_cron_jobs, save_cron_jobs, parse_interval
 
-EXODIR = Path.home() / ".agenticEvolve"
-CRON_DIR = EXODIR / "cron"
-CRON_JOBS_FILE = CRON_DIR / "jobs.json"
+log = logging.getLogger(__name__)
 
 try:
     from telegram import Update
@@ -70,13 +68,7 @@ class CronMixin:
         if interval_seconds < 60:
             return await update.message.reply_text("Minimum interval is 60 seconds.")
 
-        CRON_DIR.mkdir(parents=True, exist_ok=True)
-        jobs = []
-        if CRON_JOBS_FILE.exists():
-            try:
-                jobs = json.loads(CRON_JOBS_FILE.read_text())
-            except Exception:
-                jobs = []
+        jobs = load_cron_jobs()
 
         job_id = uuid.uuid4().hex[:8]
         chat_id = str(update.message.chat_id)
@@ -103,7 +95,7 @@ class CronMixin:
         if flags["--max-runs"]:
             job["max_runs"] = flags["--max-runs"]
         jobs.append(job)
-        CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+        save_cron_jobs(jobs)
 
         unit_names = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
         extras = []
@@ -129,14 +121,7 @@ class CronMixin:
         if not self._is_allowed(update.message.from_user.id):
             return await self._deny(update)
 
-        if not CRON_JOBS_FILE.exists():
-            return await update.message.reply_text("No loops configured.")
-
-        try:
-            jobs = json.loads(CRON_JOBS_FILE.read_text())
-        except Exception:
-            return await update.message.reply_text("Error reading jobs.json.")
-
+        jobs = load_cron_jobs()
         if not jobs:
             return await update.message.reply_text("No loops configured.")
 
@@ -170,19 +155,12 @@ class CronMixin:
         if not job_id:
             return await update.message.reply_text("Usage: `/unloop <job_id>`", parse_mode="Markdown")
 
-        if not CRON_JOBS_FILE.exists():
-            return await update.message.reply_text("No loops configured.")
-
-        try:
-            jobs = json.loads(CRON_JOBS_FILE.read_text())
-        except Exception:
-            return await update.message.reply_text("Error reading jobs.json.")
-
+        jobs = load_cron_jobs()
         new_jobs = [j for j in jobs if j.get("id") != job_id]
         if len(new_jobs) == len(jobs):
             return await update.message.reply_text(f"Loop `{job_id}` not found.", parse_mode="Markdown")
 
-        CRON_JOBS_FILE.write_text(json.dumps(new_jobs, indent=2))
+        save_cron_jobs(new_jobs)
         await update.message.reply_text(f"Loop `{job_id}` removed.", parse_mode="Markdown")
 
     # ── /heartbeat — check if bot is alive ─────────────────────
@@ -258,13 +236,7 @@ class CronMixin:
         multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
         delay_seconds = value * multipliers[unit]
 
-        CRON_DIR.mkdir(parents=True, exist_ok=True)
-        jobs = []
-        if CRON_JOBS_FILE.exists():
-            try:
-                jobs = json.loads(CRON_JOBS_FILE.read_text())
-            except Exception:
-                jobs = []
+        jobs = load_cron_jobs()
 
         job_id = uuid.uuid4().hex[:8]
         chat_id = str(update.message.chat_id)
@@ -285,7 +257,7 @@ class CronMixin:
             "last_run_at": None,
         }
         jobs.append(job)
-        CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+        save_cron_jobs(jobs)
 
         unit_names = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
         await update.message.reply_text(
@@ -326,13 +298,9 @@ class CronMixin:
                 f"       /{action} --all\n\nUse /loops to see job IDs."
             )
 
-        if not CRON_JOBS_FILE.exists():
+        jobs = load_cron_jobs()
+        if not jobs:
             return await update.message.reply_text("No jobs configured.")
-
-        try:
-            jobs = json.loads(CRON_JOBS_FILE.read_text())
-        except Exception:
-            return await update.message.reply_text("Failed to read jobs.json.")
 
         if toggle_all:
             count = 0
@@ -340,7 +308,7 @@ class CronMixin:
                 if job.get("paused") != paused:
                     job["paused"] = paused
                     count += 1
-            CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+            save_cron_jobs(jobs)
             past = "Paused" if paused else "Unpaused"
             return await update.message.reply_text(f"{past} {count} job(s).")
 
@@ -354,6 +322,6 @@ class CronMixin:
         if not found:
             return await update.message.reply_text(f"Job not found: {job_id}")
 
-        CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
+        save_cron_jobs(jobs)
         past = "Paused" if paused else "Unpaused"
         await update.message.reply_text(f"{past} job: {job_id}")

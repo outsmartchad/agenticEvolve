@@ -31,12 +31,13 @@ from prompt_toolkit.completion import Completer, Completion
 # ── Bootstrap ───────────────────────────────────────────────────
 
 EXODIR = Path.home() / ".agenticEvolve"
-CRON_DIR = EXODIR / "cron"
-CRON_JOBS_FILE = CRON_DIR / "jobs.json"
 
 sys.path.insert(0, str(EXODIR))
 
 from gateway.config import load_config, CONFIG_PATH
+from gateway.commands.cron_core import (
+    CRON_DIR, CRON_JOBS_FILE, load_cron_jobs, save_cron_jobs, parse_interval as _parse_interval_cron,
+)
 from gateway.agent import (
     build_system_prompt,
     invoke_claude_streaming as _invoke_claude_streaming,
@@ -1624,37 +1625,9 @@ def _cmd_whatsapp(state: SessionState, arg: str):
 #  CRON COMMANDS
 # ══════════════════════════════════════════════════════════════════
 
-def _load_cron_jobs() -> list[dict]:
-    if CRON_JOBS_FILE.exists():
-        try:
-            return json.loads(CRON_JOBS_FILE.read_text())
-        except Exception:
-            return []
-    return []
-
-
-def _save_cron_jobs(jobs: list[dict]):
-    CRON_DIR.mkdir(parents=True, exist_ok=True)
-    CRON_JOBS_FILE.write_text(json.dumps(jobs, indent=2))
-
-
-def _parse_interval(s: str) -> int | None:
-    """Parse interval string like '5m', '2h', '1d' to seconds."""
-    import re
-    m = re.match(r'^(\d+)\s*(s|sec|m|min|h|hr|hour|d|day)s?$', s.lower())
-    if not m:
-        return None
-    n = int(m.group(1))
-    unit = m.group(2)
-    if unit in ('s', 'sec'):
-        return n
-    if unit in ('m', 'min'):
-        return n * 60
-    if unit in ('h', 'hr', 'hour'):
-        return n * 3600
-    if unit in ('d', 'day'):
-        return n * 86400
-    return None
+_load_cron_jobs = load_cron_jobs
+_save_cron_jobs = save_cron_jobs
+_parse_interval = _parse_interval_cron
 
 
 def _cmd_loop(arg: str):

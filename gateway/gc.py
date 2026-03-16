@@ -78,12 +78,12 @@ def cleanup_stale_sessions(dry_run: bool = False) -> dict:
 
         if removed_stale or removed_empty:
             conn.commit()
-            # Rebuild FTS index after deletions
+            # Optimize FTS index after bulk deletes (compacts fragmentation)
             try:
-                conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+                conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
                 conn.commit()
             except Exception as e:
-                log.warning(f"FTS rebuild failed: {e}")
+                log.warning(f"FTS optimize failed: {e}")
 
     conn.close()
 
