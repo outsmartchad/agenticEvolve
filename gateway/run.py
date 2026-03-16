@@ -17,6 +17,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
+from croniter import croniter
+
 from .config import load_config, config_changed, reload_config
 from .agent import invoke_claude, get_today_cost, generate_title, consolidate_session
 from .hooks import hooks
@@ -228,6 +230,10 @@ class GatewayRunner:
         self._draining: bool = False
         self._inflight: set[asyncio.Future] = set()
         self._pending_images: dict[str, list[bytes]] = {}  # session_key -> screenshot bytes
+        self._jobs_cache: list = []          # cached jobs.json contents
+        self._jobs_mtime: float = 0.0       # mtime of last successful read
+        self._cost_cap_backoff_until: Optional[datetime] = None  # hard backoff end time
+        self._cost_cap_strike: int = 0
 
     # ── Channel context for served channels ───────────────────────
 
@@ -298,20 +304,44 @@ class GatewayRunner:
     # ── Cost cap ─────────────────────────────────────────────────
 
     def _check_cost_cap(self) -> tuple[bool, str]:
-        """Check if daily or weekly cost cap is exceeded. Returns (allowed, reason)."""
+        """Check if daily or weekly cost cap is exceeded. Returns (allowed, reason).
+
+        Hard backoff: 1m → 5m → 30m after cap is hit, rather than retrying every message.
+        """
         from .agent import get_week_cost
+
+        now = datetime.now(timezone.utc)
+
+        # Still within hard backoff window — reject immediately without hitting disk
+        if self._cost_cap_backoff_until and now < self._cost_cap_backoff_until:
+            remaining = int((self._cost_cap_backoff_until - now).total_seconds())
+            return False, f"Cost cap — cooling down for {remaining}s."
 
         daily_cap = self.config.get("daily_cost_cap", 5.0)
         today_cost = get_today_cost()
         if today_cost >= daily_cap:
+            self._escalate_cost_backoff(now)
             return False, f"Daily cost cap reached (${today_cost:.2f}/${daily_cap:.2f}). Resets at midnight UTC."
 
         weekly_cap = self.config.get("weekly_cost_cap", 25.0)
         week_cost = get_week_cost()
         if week_cost >= weekly_cap:
+            self._escalate_cost_backoff(now)
             return False, f"Weekly cost cap reached (${week_cost:.2f}/${weekly_cap:.2f}). Resets Monday UTC."
 
+        # Cap cleared — reset backoff
+        self._cost_cap_backoff_until = None
+        self._cost_cap_strike = 0
         return True, ""
+
+    def _escalate_cost_backoff(self, now: datetime) -> None:
+        """Set exponential backoff window: strike 0→1m, 1→5m, 2+→30m."""
+        strike = getattr(self, "_cost_cap_strike", 0)
+        delays = [60, 300, 1800]
+        delay = delays[min(strike, len(delays) - 1)]
+        self._cost_cap_backoff_until = now + timedelta(seconds=delay)
+        self._cost_cap_strike = strike + 1
+        log.warning(f"Cost cap hit (strike {strike + 1}) — blocking for {delay}s")
 
     # ── Message handler ──────────────────────────────────────────
 
@@ -624,15 +654,23 @@ class GatewayRunner:
             except Exception as e:
                 log.error(f"Cron scheduler error: {e}")
 
+    def _load_jobs_cached(self) -> list:
+        """Load jobs.json with mtime-based cache. Returns cached list on no change."""
+        if not CRON_JOBS_FILE.exists():
+            return []
+        try:
+            mtime = CRON_JOBS_FILE.stat().st_mtime
+            if mtime != self._jobs_mtime:
+                self._jobs_cache = json.loads(CRON_JOBS_FILE.read_text())
+                self._jobs_mtime = mtime
+        except (OSError, json.JSONDecodeError) as e:
+            log.error(f"Failed to read jobs.json: {e}")
+        return self._jobs_cache
+
     async def _run_due_jobs(self):
         """Check and execute due cron jobs."""
-        if not CRON_JOBS_FILE.exists():
-            return
-
-        try:
-            jobs = json.loads(CRON_JOBS_FILE.read_text())
-        except (json.JSONDecodeError, Exception) as e:
-            log.error(f"Failed to read jobs.json: {e}")
+        jobs = self._load_jobs_cached()
+        if not jobs:
             return
 
         now = datetime.now(timezone.utc)
@@ -759,59 +797,28 @@ class GatewayRunner:
     # ── Cron expression parser ──────────────────────────────────
 
     def _next_cron_run(self, job: dict, after: datetime) -> datetime:
-        """Calculate next run time from a cron expression with optional timezone.
+        """Calculate next run time using croniter (full 5-field support including day/month/weekday).
 
-        Supports standard 5-field cron: minute hour day month weekday
-        Handles *, specific values, and */N step syntax.
-        Falls back to +24h if parsing fails.
+        Falls back to +24h if the expression is invalid.
         """
-        cron_expr = job.get("cron", "")
-        tz_name = job.get("timezone", "")
+        import zoneinfo
 
-        # Resolve timezone offset
-        tz = timezone.utc
-        TZ_OFFSETS = {
-            "Asia/Hong_Kong": 8, "Asia/Shanghai": 8, "Asia/Tokyo": 9,
-            "US/Eastern": -5, "US/Pacific": -8, "Europe/London": 0,
-            "Europe/Berlin": 1, "UTC": 0,
-        }
-        if tz_name in TZ_OFFSETS:
-            tz = timezone(timedelta(hours=TZ_OFFSETS[tz_name]))
+        cron_expr = job.get("cron", "")
+        tz_name = job.get("timezone") or "UTC"
 
         if not cron_expr or len(cron_expr.split()) != 5:
             return after + timedelta(hours=24)
 
         try:
-            parts = cron_expr.split()
-            minute_spec, hour_spec = parts[0], parts[1]
-            # day_spec, month_spec, weekday_spec = parts[2], parts[3], parts[4]
+            tz = zoneinfo.ZoneInfo(tz_name)
+        except (zoneinfo.ZoneInfoNotFoundError, KeyError, ValueError):
+            tz = timezone.utc
 
-            def _parse_field(spec: str, max_val: int) -> list[int]:
-                """Parse a cron field into a sorted list of valid values."""
-                if spec == "*":
-                    return list(range(max_val))
-                if spec.startswith("*/"):
-                    step = int(spec[2:])
-                    return list(range(0, max_val, step))
-                if "," in spec:
-                    return sorted(int(v) for v in spec.split(","))
-                return [int(spec)]
-
-            valid_minutes = _parse_field(minute_spec, 60)
-            valid_hours = _parse_field(hour_spec, 24)
-
-            # Start searching from 1 minute after 'after', in the job's timezone
-            candidate = after.astimezone(tz).replace(second=0, microsecond=0) + timedelta(minutes=1)
-
-            # Search up to 48 hours ahead
-            for _ in range(48 * 60):
-                if candidate.hour in valid_hours and candidate.minute in valid_minutes:
-                    return candidate.astimezone(timezone.utc)
-                candidate += timedelta(minutes=1)
-
-            # Fallback
-            return after + timedelta(hours=24)
-
+        try:
+            after_local = after.astimezone(tz)
+            cron = croniter(cron_expr, after_local)
+            next_dt = cron.get_next(datetime)
+            return next_dt.astimezone(timezone.utc)
         except Exception as e:
             log.warning(f"Failed to parse cron '{cron_expr}': {e}, falling back to +24h")
             return after + timedelta(hours=24)

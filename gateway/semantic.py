@@ -13,6 +13,7 @@ Usage:
     results = semantic_search("how does the memory system work", top_k=5)
 """
 import logging
+import os
 import sqlite3
 import pickle
 from pathlib import Path
@@ -31,7 +32,36 @@ _corpus_built_at = None
 
 
 def _ensure_cache_dir():
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    CORPUS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _source_mtime() -> float:
+    """Return the most recent mtime across DB + markdown sources."""
+    from .session_db import DB_PATH
+
+    paths = [
+        DB_PATH,
+        Path.home() / ".agenticEvolve" / "memory" / "MEMORY.md",
+        Path.home() / ".agenticEvolve" / "memory" / "USER.md",
+    ]
+    mtime = 0.0
+    for p in paths:
+        try:
+            mtime = max(mtime, os.stat(p).st_mtime)
+        except OSError:
+            pass
+    return mtime
+
+
+def _cache_is_fresh() -> bool:
+    """Return True if the pickle cache exists and is newer than all source files."""
+    if not CORPUS_CACHE.exists():
+        return False
+    try:
+        cache_mtime = os.stat(CORPUS_CACHE).st_mtime
+        return cache_mtime >= _source_mtime()
+    except OSError:
+        return False
 
 
 def build_corpus(force: bool = False) -> int:
@@ -44,14 +74,22 @@ def build_corpus(force: bool = False) -> int:
       - MEMORY.md entries
       - USER.md entries
 
+    Rebuilds only when source files are newer than the cache (mtime comparison).
+    Pass force=True to unconditionally rebuild.
+
     Returns number of documents in corpus.
     """
     global _vectorizer, _tfidf_matrix, _corpus_docs, _corpus_built_at
 
-    # Skip rebuild if cache is fresh (< 1 hour old) unless forced
+    # Skip rebuild if in-memory corpus is fresh (< 1 hour old) unless forced
     if not force and _corpus_built_at:
         age = (datetime.now(timezone.utc) - _corpus_built_at).total_seconds()
         if age < 3600:
+            return len(_corpus_docs) if _corpus_docs else 0
+
+    # Skip rebuild if on-disk cache is newer than sources (startup path)
+    if not force and _vectorizer is None and _cache_is_fresh():
+        if _load_cache():
             return len(_corpus_docs) if _corpus_docs else 0
 
     from .session_db import DB_PATH
@@ -198,7 +236,12 @@ def _load_cache() -> bool:
         _vectorizer = data["vectorizer"]
         _tfidf_matrix = data["matrix"]
         _corpus_docs = data["docs"]
-        _corpus_built_at = datetime.now(timezone.utc)
+        # Use the cache file's mtime so freshness checks work correctly
+        try:
+            cache_mtime = os.stat(CORPUS_CACHE).st_mtime
+            _corpus_built_at = datetime.fromtimestamp(cache_mtime, tz=timezone.utc)
+        except OSError:
+            _corpus_built_at = datetime.now(timezone.utc)
         log.info(f"[semantic] Loaded cached corpus: {len(_corpus_docs)} docs")
         return True
     except Exception as e:

@@ -56,6 +56,8 @@ class EvolveOrchestrator:
         self.on_progress = on_progress or (lambda x: None)
         self.skip_security_scan = skip_security_scan
         self._cost_total = 0.0
+        from .session_db import generate_trace_id
+        self.trace_id: str = generate_trace_id()
 
     def _report(self, msg: str):
         """Send progress update."""
@@ -103,7 +105,7 @@ class EvolveOrchestrator:
             prompt,
             on_progress=self.on_progress,
             model=model,
-            session_context=f"[Evolve/{stage}]",
+            session_context=f"[Evolve/{stage}] trace={self.trace_id}",
             allowed_tools=allowed_tools,
             context_mode=context_mode,
             use_workspace=use_workspace,
@@ -111,6 +113,20 @@ class EvolveOrchestrator:
 
         cost = result.get("cost", 0)
         self._cost_total += cost
+
+        # Audit: record every Claude invocation with outcome
+        try:
+            from .session_db import log_audit
+            log_audit(
+                trace_id=self.trace_id,
+                stage=stage_key,
+                action="invoke_claude",
+                result="ok" if result.get("success") else "fail",
+                metadata={"model": model, "cost": cost},
+            )
+        except Exception as _ae:
+            log.debug(f"Audit log failed: {_ae}")
+
         return result
 
     # ── Stage 1: Collect ─────────────────────────────────────────
@@ -213,19 +229,30 @@ class EvolveOrchestrator:
             except (json.JSONDecodeError, OSError):
                 pass
 
-        # Deduplicate across sources by URL, then by normalized title
-        seen_urls: set[str] = set()
+        # Deduplicate across sources by URL (persistent SQLite, 7-day TTL), then by title.
+        # Falls back to in-memory set if session_db is unavailable.
+        # _url_seen_fn(url) -> bool: returns True if already seen, records it if not.
+        try:
+            from .session_db import signal_url_seen as _db_seen
+            _url_seen_fn = _db_seen
+        except Exception:
+            _mem_seen: set[str] = set()
+
+            def _url_seen_fn(u: str) -> bool:
+                if u in _mem_seen:
+                    return True
+                _mem_seen.add(u)
+                return False
+
         seen_titles: set[str] = set()
         unique: list[dict] = []
         for s in signals:
             url = s.get("url", "").rstrip("/").lower()
-            if url and url in seen_urls:
+            if url and _url_seen_fn(url):
                 continue
             title_key = s.get("title", "").lower().strip()
             if title_key and len(title_key) > 15 and title_key in seen_titles:
                 continue
-            if url:
-                seen_urls.add(url)
             if title_key and len(title_key) > 15:
                 seen_titles.add(title_key)
             unique.append(s)
@@ -637,8 +664,21 @@ class EvolveOrchestrator:
     def run(self, dry_run: bool = False) -> tuple[str, float]:
         """Run the evolve pipeline. If dry_run=True, stops after ANALYZE and shows what would happen."""
         mode = "DRY RUN" if dry_run else "full"
-        self._report(f"*Starting evolution cycle ({mode})...*")
+        self._report(f"*Starting evolution cycle ({mode})... [trace={self.trace_id}]*")
         self._cost_total = 0.0
+
+        # Audit: pipeline start
+        try:
+            from .session_db import log_audit
+            log_audit(
+                trace_id=self.trace_id,
+                stage="PIPELINE",
+                action="start",
+                result="ok",
+                metadata={"mode": mode, "model": self.model},
+            )
+        except Exception as _ae:
+            log.debug(f"Audit log failed: {_ae}")
 
         # Stage 1
         collect_result = self.stage_collect()
@@ -696,6 +736,19 @@ class EvolveOrchestrator:
         # Stage 5
         summary = self.stage_report(collect_result, analyze_result,
                                      build_result, review_result)
+
+        # Audit: pipeline complete
+        try:
+            from .session_db import log_audit
+            log_audit(
+                trace_id=self.trace_id,
+                stage="PIPELINE",
+                action="complete",
+                result="ok",
+                metadata={"total_cost": self._cost_total},
+            )
+        except Exception as _ae:
+            log.debug(f"Audit log failed: {_ae}")
 
         self._report("*Pipeline complete.*")
         return summary, self._cost_total
@@ -784,6 +837,19 @@ def approve_skill(name: str) -> tuple[bool, str]:
     # Clean up queue
     shutil.rmtree(str(QUEUE_DIR / name))
 
+    # Audit: record approval
+    try:
+        from .session_db import log_audit, generate_trace_id
+        log_audit(
+            trace_id=generate_trace_id(),
+            stage="APPROVE",
+            action="skill_approved",
+            result="ok",
+            metadata={"skill": name},
+        )
+    except Exception as _ae:
+        log.debug(f"Audit log failed: {_ae}")
+
     return True, f"Skill `{name}` installed to `~/.claude/skills/{name}/`"
 
 
@@ -809,6 +875,20 @@ def reject_skill(name: str, reason: str = "") -> tuple[bool, str]:
 
     import shutil
     shutil.rmtree(str(queue_path))
+
+    # Audit: record rejection
+    try:
+        from .session_db import log_audit, generate_trace_id
+        log_audit(
+            trace_id=generate_trace_id(),
+            stage="APPROVE",
+            action="skill_rejected",
+            result="ok",
+            metadata={"skill": name, "reason": reason},
+        )
+    except Exception as _ae:
+        log.debug(f"Audit log failed: {_ae}")
+
     return True, f"Skill `{name}` rejected and removed." + (f" Reason: {reason}" if reason else "")
 
 

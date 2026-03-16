@@ -1,6 +1,7 @@
 """Tests for gateway/platforms/telegram.py — pure functions and static methods."""
 import pytest
 
+pytest.importorskip("telegram")
 from gateway.platforms.telegram import TelegramAdapter
 
 

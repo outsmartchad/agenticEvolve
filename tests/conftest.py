@@ -18,6 +18,22 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "e2e: end-to-end tests that call real external services")
 
 
+# ── Autouse: isolate session_db to a tmp DB for every test ──────────
+@pytest.fixture(autouse=True)
+def _isolate_session_db(tmp_path, monkeypatch):
+    """Redirect session_db.DB_PATH to a per-test temp DB for all tests.
+
+    Prevents test pollution of the real ~/.agenticEvolve/memory/sessions.db
+    and ensures persistent dedup (signal_urls table) is isolated per test.
+    """
+    import gateway.session_db as sdb
+
+    p = tmp_path / "isolated_sessions.db"
+    monkeypatch.setattr(sdb, "DB_PATH", p)
+    sdb.init_db()
+    yield
+
+
 @pytest.fixture()
 def signals_dir(tmp_path: Path) -> Path:
     """Create a temporary signals directory."""
@@ -111,6 +127,7 @@ def adapter(mock_gateway, tmp_path, monkeypatch):
     Patches EXODIR in all mixin modules to use a temp directory.
     Sets up the adapter with allowed users and a mock gateway.
     """
+    pytest.importorskip("telegram")
     from gateway.platforms.telegram import TelegramAdapter
 
     # Create adapter without calling __init__ (avoids needing real token)
@@ -155,10 +172,12 @@ def adapter(mock_gateway, tmp_path, monkeypatch):
     import gateway.commands.search as search_mod
     import gateway.commands.media as media_mod
     import gateway.commands.misc as misc_mod
+    import gateway.commands.cron_core as cron_core_mod
 
     for mod in [admin_mod, cron_mod, signals_mod, pipelines_mod,
-                approval_mod, search_mod, media_mod, misc_mod]:
-        monkeypatch.setattr(mod, "EXODIR", exo)
+                approval_mod, search_mod, media_mod, misc_mod, cron_core_mod]:
+        if hasattr(mod, "EXODIR"):
+            monkeypatch.setattr(mod, "EXODIR", exo)
         if hasattr(mod, "CRON_DIR"):
             monkeypatch.setattr(mod, "CRON_DIR", cron_dir)
         if hasattr(mod, "CRON_JOBS_FILE"):

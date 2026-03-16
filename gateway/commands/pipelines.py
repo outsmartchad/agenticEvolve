@@ -1,4 +1,5 @@
 """Pipeline command handlers (evolve, learn, absorb, gc) extracted as a mixin."""
+from __future__ import annotations
 import asyncio
 import json
 import logging
@@ -425,6 +426,160 @@ class PipelineMixin:
             log.info(f"[learn] Stored learning: {target} -> {learning_data.get('verdict', '?')}")
         except Exception as e:
             log.warning(f"[learn] Failed to store learning: {e}")
+
+    async def _handle_decompose(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Decompose a goal into a parallel task DAG, execute workers, eval results, commit."""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        raw_args = list(context.args) if context.args else []
+        flags = self._parse_flags(raw_args, {
+            "--dry-run": {"aliases": ["dry-run", "dry", "preview"], "type": "bool"},
+            "--model": {"type": "value"},
+            "--workers": {"type": "value"},
+        })
+        dry_run = flags["--dry-run"]
+        model_override = flags["--model"]
+        max_workers = int(flags["--workers"] or 3)
+
+        goal = self._resolve_reply_target(" ".join(raw_args), update)
+        if not goal:
+            await update.message.reply_text(
+                "*Usage:* `/decompose <goal>`\n\n"
+                "*Options:*\n"
+                "`--dry-run` — planner only, no execution\n"
+                "`--model <name>` — override model\n"
+                "`--workers N` — max parallel tasks (default: 3)\n\n"
+                "*Examples:*\n"
+                "`/decompose add rate limiting to the gateway`\n"
+                "`/decompose --dry-run refactor memory system to use SQLite only`\n"
+                "`/decompose --workers 5 build a new digest pipeline`",
+                parse_mode="Markdown",
+            )
+            return
+
+        short_goal = goal[:60] + ("..." if len(goal) > 60 else "")
+        stages = ["plan"] if dry_run else ["plan", "execute", "eval", "commit"]
+        stage_label = " -> ".join(s.upper() for s in stages)
+        await update.message.reply_text(
+            f"Decomposing: {short_goal}\n{stage_label}\n~{'1-2' if dry_run else '5-15'} min.",
+        )
+
+        chat_id = str(update.message.chat_id)
+        user_id = str(update.message.from_user.id)
+        loop = asyncio.get_running_loop()
+        model = model_override or (self._gateway.config.get("model", "sonnet") if self._gateway else "sonnet")
+
+        on_progress_sync, get_tool_count, start_reporter, stop_reporter = \
+            self._make_progress_tracker(chat_id, loop, pipeline_stages=stages)
+
+        lang_instruction = self._get_lang_instruction(user_id)
+
+        system_context = (
+            "You are the DECOMPOSE agent for agenticEvolve — Vincent's personal closed-loop agent system.\n\n"
+            "Our system: Python asyncio gateway → Claude Code (claude -p) → Telegram. "
+            "Skills in ~/.claude/skills/, memory in ~/.agenticEvolve/memory/, "
+            "SQLite+FTS5 sessions, bounded MEMORY.md (2200 chars).\n\n"
+            "Vincent builds AI agents, onchain infrastructure, and developer tools. "
+            "Stack: TypeScript/React frontends, Python for infra/agents.\n\n"
+        )
+
+        planner_prompt = (
+            system_context +
+            f"GOAL: {goal}\n\n"
+            f"PHASE 1 — DECOMPOSE:\n"
+            f"Break this goal into {max_workers} or fewer discrete, parallel-executable tasks.\n"
+            f"Each task must be:\n"
+            f"- Self-contained (no inter-task dependencies if possible)\n"
+            f"- Concrete and actionable (not vague like 'improve X')\n"
+            f"- Scoped to a single file, module, or concern\n\n"
+            f"Output a task DAG as JSON:\n"
+            f"```json\n"
+            f'{{"goal": "{goal}", "tasks": ['
+            f'{{"id": 1, "title": "...", "description": "...", "files": ["path/to/file"], "depends_on": []}},'
+            f'...'
+            f"]}}\n"
+            f"```\n\n"
+            f"Then for each task, write a clear implementation brief (2-4 sentences).\n"
+        )
+
+        if dry_run:
+            planner_prompt += (
+                "\nDRY RUN: Output the task DAG and briefs only. Do NOT implement anything.\n"
+            )
+        else:
+            planner_prompt += (
+                f"\nPHASE 2 — EXECUTE:\n"
+                f"After outputting the DAG, implement each task sequentially (parallelism is simulated).\n"
+                f"For each task:\n"
+                f"1. Read the relevant files first\n"
+                f"2. Implement the change\n"
+                f"3. Run a quick sanity check (e.g. grep for syntax errors, check imports)\n\n"
+                f"PHASE 3 — EVAL:\n"
+                f"After all tasks are done:\n"
+                f"- List what was changed (file + summary per task)\n"
+                f"- Flag any task that was skipped or partially done and why\n"
+                f"- Verdict: PASS (all tasks complete) or PARTIAL (some skipped)\n\n"
+                f"PHASE 4 — COMMIT:\n"
+                f"If verdict is PASS or PARTIAL with >50% tasks done:\n"
+                f"- Run: cd ~/Desktop/projects/agenticEvolve && git add -A && "
+                f"git commit -m 'feat: {goal[:60]}'\n"
+                f"- Report the commit hash\n\n"
+                f"STRUCTURED OUTPUT (REQUIRED at the end):\n"
+                f"```json\n"
+                f'{{"verdict": "PASS|PARTIAL|FAIL", '
+                f'"tasks_total": N, "tasks_done": N, '
+                f'"files_changed": ["path/to/file", ...], '
+                f'"commit_hash": "abc1234 or empty"}}\n'
+                f"```\n"
+            )
+
+        if lang_instruction:
+            planner_prompt += lang_instruction
+
+        start_reporter()
+        try:
+            from ..agent import invoke_claude_streaming
+
+            result = await loop.run_in_executor(
+                None,
+                lambda: invoke_claude_streaming(
+                    planner_prompt,
+                    on_progress=on_progress_sync,
+                    model=model,
+                    session_context=f"[Decompose: {goal[:50]}]",
+                )
+            )
+        except Exception as e:
+            stop_reporter()
+            log.error(f"Decompose error: {e}")
+            await self.app.bot.send_message(chat_id=int(chat_id), text=f"Decompose failed: {e}")
+            return
+        finally:
+            stop_reporter()
+
+        response = result.get("text", "No output.")
+        cost = result.get("cost", 0)
+        tools_used = get_tool_count()
+
+        header = f"*Decompose: {short_goal}*\n({tools_used} steps, ${cost:.2f})\n\n"
+        full = header + response
+        for i in range(0, len(full), 4000):
+            chunk = full[i:i+4000]
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(chat_id), text=chunk, parse_mode="Markdown"
+                )
+            except Exception:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+
+        if cost > 0 and self._gateway:
+            self._gateway._log_cost("telegram", "decompose", cost)
+
+        if not dry_run:
+            await self._auto_sync_to_repo("decompose")
 
     async def _handle_absorb(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Deep scan a target, analyze gaps in our system, and implement improvements."""

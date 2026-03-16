@@ -1,4 +1,5 @@
 """Admin command handlers mixin — extracted from TelegramAdapter."""
+from __future__ import annotations
 import json
 import logging
 from pathlib import Path
@@ -62,7 +63,8 @@ class AdminMixin:
             "/skills — List installed skills\n"
             "/queue — Skills pending approval\n"
             "/approve <name> [--force] — Install a queued skill\n"
-            "/reject <name> [reason] — Remove a queued skill\n\n"
+            "/reject <name> [reason] — Remove a queued skill\n"
+            "/scan-skills — AgentShield security scan of all installed skills\n\n"
             "Scheduling\n"
             "/loop <interval> <prompt> [--model X] [--max-runs N] [--start-now]\n"
             "/loops — List active loops\n"
