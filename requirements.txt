@@ -9,4 +9,9 @@ python-telegram-bot>=21.0
 # Discord (optional — gateway skips if not installed)
 discord.py>=2.3
 
+# CLI TUI
+textual>=1.0.0
+rich>=13.0
+
 # WhatsApp uses Node.js bridge (see whatsapp-bridge/package.json)
+croniter>=2.0.0

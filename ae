@@ -20,31 +20,55 @@ CMD="${1:-}"
 shift 2>/dev/null || true
 
 # ── Default: Interactive Chat REPL ──────────────────────────
-# No subcommand → launch the REPL directly
-if [ -z "$CMD" ] || [ "$CMD" = "--resume" ] || [ "$CMD" = "-r" ]; then
+# No subcommand → launch the TUI (or --classic for old Rich REPL)
+if [ -z "$CMD" ] || [ "$CMD" = "--resume" ] || [ "$CMD" = "-r" ] || [ "$CMD" = "--classic" ]; then
     RESUME=""
+    USE_CLASSIC=false
+    if [ "$CMD" = "--classic" ]; then
+        USE_CLASSIC=true
+        CMD="${1:-}"
+        shift 2>/dev/null || true
+    fi
     if [ "$CMD" = "--resume" ] || [ "$CMD" = "-r" ]; then
         RESUME="${1:-}"
         shift 2>/dev/null || true
     fi
     # Ensure deps are available
-    if ! python3 -c "import rich, prompt_toolkit" 2>/dev/null; then
-        echo "Installing dependencies (rich, prompt-toolkit)..."
-        python3 -m pip install -q rich prompt-toolkit
+    if ! python3 -c "import textual" 2>/dev/null; then
+        echo "Installing dependencies (textual)..."
+        python3 -m pip install -q textual
     fi
     cd "$EXODIR"
-    if [ -n "$RESUME" ]; then
-        python3 -c "
+    if $USE_CLASSIC; then
+        # Fallback to old Rich REPL
+        if [ -n "$RESUME" ]; then
+            python3 -c "
 import sys; sys.path.insert(0, '$EXODIR')
 from gateway.cli import main
 main(resume_session='$RESUME')
 "
-    else
-        python3 -c "
+        else
+            python3 -c "
 import sys; sys.path.insert(0, '$EXODIR')
 from gateway.cli import main
 main()
 "
+        fi
+    else
+        # New Textual TUI
+        if [ -n "$RESUME" ]; then
+            python3 -c "
+import sys; sys.path.insert(0, '$EXODIR')
+from gateway.tui import main
+main(resume_session='$RESUME')
+"
+        else
+            python3 -c "
+import sys; sys.path.insert(0, '$EXODIR')
+from gateway.tui import main
+main()
+"
+        fi
     fi
     exit 0
 fi
