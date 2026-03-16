@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
 
+pytest.importorskip("discord")
 from gateway.platforms.discord import DiscordAdapter
 
 

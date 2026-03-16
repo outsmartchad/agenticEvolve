@@ -1,4 +1,5 @@
 """Signal-related command handlers: produce, wechat, whatsapp, discord, digest, reflect."""
+from __future__ import annotations
 import asyncio
 import json
 import logging

@@ -3,6 +3,7 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 
+pytest.importorskip("telegram")
 from gateway.run import GatewayRunner
 
 

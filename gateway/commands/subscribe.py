@@ -1,4 +1,5 @@
 """Subscribe and Serve commands — manage which channels/users the bot monitors."""
+from __future__ import annotations
 import asyncio
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
