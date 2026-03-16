@@ -76,7 +76,63 @@ from gateway.session_db import (
     log_cost,
     unified_search,
     format_recall_context,
+    get_user_pref,
+    set_user_pref,
+    delete_user_pref,
+    get_subscriptions,
+    add_subscription,
+    remove_subscription,
+    get_serve_targets,
 )
+
+# ── Language codes ──────────────────────────────────────────────
+
+LANG_NAMES = {
+    "zh": "Simplified Chinese (简体中文)",
+    "zh-tw": "Traditional Chinese (繁體中文)",
+    "en": "English",
+    "ja": "Japanese (日本語)",
+    "ko": "Korean (한국어)",
+    "es": "Spanish (Español)",
+    "fr": "French (Français)",
+    "de": "German (Deutsch)",
+    "pt": "Portuguese (Português)",
+    "ru": "Russian (Русский)",
+}
+
+# ── Intent parser schema (for /do) ─────────────────────────────
+
+_COMMAND_SCHEMA = """Available commands:
+/absorb <repo-url or topic> [--dry-run] [--model <name>] [--skip-security-scan]
+/learn <repo-url or topic> [--dry-run] [--model <name>] [--skip-security-scan]
+/evolve [--dry-run] [--model <name>] [--skip-security-scan]
+/search <query> [--limit <n>]
+/sessions [--limit <n>]
+/new [title]
+/memory
+/cost [--week]
+/status
+/skills
+/learnings [query] [--limit <n>]
+/model <name>
+/produce [--ideas N] [--model <name>]
+/wechat [--hours N] [--model <name>]
+/digest [--days N]
+/gc [--dry-run]
+/loop <interval> <prompt> [--model <name>] [--max-runs <n>] [--start-now]
+/loops
+/unloop <id>
+/pause <id|--all>
+/unpause <id|--all>
+/queue
+/approve <name> [--force]
+/reject <name>
+/soul
+/config
+/heartbeat
+/notify <duration> <message>
+/help
+"""
 
 # ── Session State ───────────────────────────────────────────────
 
@@ -545,6 +601,12 @@ SLASH_COMMANDS = [
     ("/wechat", "WeChat digest"),
     ("/discord", "Discord digest"),
     ("/whatsapp", "WhatsApp digest"),
+    ("/lang", "Set output language"),
+    ("/do", "Natural language → command"),
+    ("/restart", "Restart the gateway"),
+    ("/speak", "Text-to-speech"),
+    ("/subscribe", "Manage digest subscriptions"),
+    ("/serve", "Manage serve targets"),
 ]
 
 
@@ -598,8 +660,10 @@ class HelpScreen(ModalScreen[None]):
                               "/absorb", "/reflect", "/digest", "/gc"],
                 "Cron": ["/loop", "/loops", "/unloop", "/pause", "/unpause", "/notify"],
                 "Approval": ["/queue", "/approve", "/reject"],
-                "Admin": ["/autonomy"],
+                "Admin": ["/autonomy", "/restart"],
                 "Platform Digests": ["/wechat", "/discord", "/whatsapp"],
+                "Subscriptions": ["/subscribe", "/serve"],
+                "Utilities": ["/lang", "/do", "/speak"],
             }
             _cmd_map = {cmd: desc for cmd, desc in SLASH_COMMANDS}
 
@@ -1275,9 +1339,28 @@ class AEApp(App):
         elif name in ("/wechat", "/discord", "/whatsapp"):
             self._cmd_platform_digest(name, arg)
 
-        # Telegram-only
-        elif name in ("/subscribe", "/serve", "/speak", "/do", "/lang", "/restart"):
-            self._add_system_message(f"[yellow]{name} is Telegram-only[/yellow]")
+        # Language
+        elif name in ("/lang",):
+            self._cmd_lang(arg)
+
+        # Natural language → command
+        elif name in ("/do",):
+            self._cmd_do(arg)
+
+        # Restart gateway
+        elif name in ("/restart",):
+            self._cmd_restart()
+
+        # Text-to-speech
+        elif name in ("/speak",):
+            self._cmd_speak(arg)
+
+        # Subscriptions
+        elif name in ("/subscribe",):
+            self._cmd_subscribe(arg)
+
+        elif name in ("/serve",):
+            self._cmd_serve(arg)
 
         else:
             self._add_system_message(f"[yellow]Unknown command: {name}[/yellow]")
@@ -2116,6 +2199,347 @@ class AEApp(App):
         finally:
             self.is_streaming = False
             self.call_from_thread(self._update_status_bar)
+
+    # ── /lang — language preference ─────────────────────────────
+
+    def _cmd_lang(self, arg: str) -> None:
+        """Set or view preferred output language."""
+        user_id = "934847281"  # Vincent's Telegram user ID (canonical)
+
+        if not arg:
+            current = get_user_pref(user_id, "lang") or "en"
+            name = LANG_NAMES.get(current, current)
+            codes = ", ".join(f"`{k}`" for k in sorted(LANG_NAMES))
+            self.post_message(CommandOutput(
+                f"**Language**\n"
+                f"- Current: {name} (`{current}`)\n\n"
+                f"**Set:** `/lang <code>`\n"
+                f"Codes: {codes}\n\n"
+                f"**Reset:** `/lang reset` or `/lang off`",
+                is_markdown=True,
+            ))
+            return
+
+        code = arg.strip().lower()
+        if code in ("reset", "off"):
+            delete_user_pref(user_id, "lang")
+            self._add_system_message("[green]Language reset to English.[/green]")
+            return
+
+        set_user_pref(user_id, "lang", code)
+        name = LANG_NAMES.get(code, code)
+        self._add_system_message(f"[green]Output language set to: {name} ({code})[/green]")
+
+    # ── /do — natural language → command ────────────────────────
+
+    def _cmd_do(self, arg: str) -> None:
+        """Parse natural language into a slash command, then execute it."""
+        if not arg:
+            self.post_message(CommandOutput(
+                "**Usage:** `/do <natural language instruction>`\n\n"
+                "**Options:** `--preview` — show parsed command without running it\n\n"
+                "**Examples:**\n"
+                "- `/do absorb this repo https://github.com/foo/bar`\n"
+                "- `/do learn about htmx`\n"
+                "- `/do --preview search for memory management`\n"
+                "- `/do show me the cost so far`\n",
+                is_markdown=True,
+            ))
+            return
+        self._run_do(arg)
+
+    @work(thread=True)
+    def _run_do(self, text: str) -> None:
+        """Background worker: parse intent via haiku, then dispatch."""
+        preview = False
+        if "--preview" in text or "--dry-run" in text:
+            preview = True
+            text = text.replace("--preview", "").replace("--dry-run", "").strip()
+
+        self.call_from_thread(self._add_system_message, "[dim]Parsing intent...[/dim]")
+
+        try:
+            proc = subprocess.run(
+                [
+                    "claude", "-p", "--model", "haiku",
+                    "--no-chrome", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config",
+                    (
+                        "You are a command parser. The user sent a natural language message to an AI agent system.\n"
+                        "Your job: determine if this message maps to one of the available commands below.\n\n"
+                        f"{_COMMAND_SCHEMA}\n"
+                        "Rules:\n"
+                        "- If the message clearly maps to a command, return the exact command string.\n"
+                        "- If the message is general chat/question NOT related to any command, return null.\n"
+                        "- Preserve URLs and arguments exactly as the user provided them.\n"
+                        "- Map synonyms: 'study'/'research'/'dive into' -> /learn, 'integrate'/'absorb'/'steal from' -> /absorb, "
+                        "'scan'/'evolve'/'find new tools' -> /evolve, 'find'/'search for' -> /search\n"
+                        "- Map flags from natural language: 'skip security' -> --skip-security-scan, 'preview'/'dry run' -> --dry-run\n\n"
+                        "Return ONLY a JSON object, nothing else:\n"
+                        '{"command": "/absorb https://...", "confidence": 0.95}\n'
+                        "or\n"
+                        '{"command": null, "confidence": 0.0}\n\n'
+                        f"User message: {text}"
+                    ),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+
+            if proc.returncode != 0:
+                self.call_from_thread(
+                    self._add_system_message,
+                    "[red]Intent parsing failed (claude returned non-zero).[/red]"
+                )
+                return
+
+            output = proc.stdout.strip()
+            start = output.find("{")
+            end = output.rfind("}") + 1
+            if start < 0 or end <= start:
+                self.call_from_thread(
+                    self._add_system_message,
+                    "[yellow]Couldn't map that to a known command. Try rephrasing, or use a command directly.[/yellow]"
+                )
+                return
+
+            import json as _json
+            parsed = _json.loads(output[start:end])
+            cmd = parsed.get("command")
+            confidence = parsed.get("confidence", 0)
+
+            if not cmd or confidence < 0.7:
+                self.call_from_thread(
+                    self._add_system_message,
+                    "[yellow]Couldn't map that to a known command (low confidence). Try rephrasing.[/yellow]"
+                )
+                return
+
+            if preview:
+                self.call_from_thread(
+                    self.post_message,
+                    CommandOutput(
+                        f"**Preview (not executed):**\n`{cmd}` (confidence: {confidence:.0%})\n\n"
+                        f"Run `/do {text}` without --preview to execute.",
+                        is_markdown=True,
+                    )
+                )
+                return
+
+            self.call_from_thread(
+                self._add_system_message,
+                f"[dim]Parsed: {cmd} (confidence: {confidence:.0%}) — running...[/dim]"
+            )
+            # Dispatch the parsed command on the main thread
+            self.call_from_thread(self._handle_command, cmd)
+
+        except subprocess.TimeoutExpired:
+            self.call_from_thread(
+                self._add_system_message, "[red]Intent parsing timed out.[/red]"
+            )
+        except Exception as e:
+            self.call_from_thread(
+                self._add_system_message, f"[red]Intent parsing error: {e}[/red]"
+            )
+
+    # ── /restart — restart the gateway ──────────────────────────
+
+    def _cmd_restart(self) -> None:
+        """Restart the gateway process."""
+        my_pid = os.getpid()
+        exodir = str(EXODIR)
+        restart_sh = Path("/tmp/ae-restart.sh")
+        restart_sh.write_text(
+            "#!/bin/bash\n"
+            "sleep 2\n"
+            f"kill {my_pid} 2>/dev/null\n"
+            "sleep 1\n"
+            f"kill -9 {my_pid} 2>/dev/null\n"
+            "sleep 1\n"
+            f"cd {exodir}\n"
+            "nohup python3 -m gateway.run > /dev/null 2>&1 &\n"
+        )
+        restart_sh.chmod(0o755)
+        subprocess.Popen(
+            [str(restart_sh)],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self._add_system_message("[yellow]Restarting gateway in 2s... TUI will close.[/yellow]")
+        # Give user a moment to see the message, then exit
+        import threading as _threading
+        def _exit_delayed():
+            time.sleep(1)
+            os._exit(0)
+        _threading.Thread(target=_exit_delayed, daemon=True).start()
+
+    # ── /speak — text-to-speech ─────────────────────────────────
+
+    def _cmd_speak(self, arg: str) -> None:
+        """Convert text to speech and play locally."""
+        if not arg:
+            self.post_message(CommandOutput(
+                "**Usage:** `/speak <text>`\n\n"
+                "**Options:**\n"
+                "- `/speak --voices [lang]` — list available edge-tts voices\n"
+                "- `/speak <text>` — convert text to speech and play via afplay\n",
+                is_markdown=True,
+            ))
+            return
+        self._run_speak(arg)
+
+    @work(thread=True)
+    def _run_speak(self, arg: str) -> None:
+        """Background worker: TTS via edge-tts, then play with afplay."""
+        import asyncio as _asyncio
+
+        # /speak --voices [lang]
+        parts = arg.split()
+        if parts[0] in ("--voices", "--list"):
+            lang = parts[1] if len(parts) > 1 else "en"
+            try:
+                from gateway.voice import list_voices
+                loop = _asyncio.new_event_loop()
+                voices = loop.run_until_complete(list_voices(lang))
+                loop.close()
+                if not voices:
+                    self.call_from_thread(self._add_system_message, "[yellow]No voices found.[/yellow]")
+                    return
+                lines = [f"Edge TTS voices ({lang}):"]
+                for v in voices[:30]:
+                    name = v.get("ShortName", "?")
+                    gender = v.get("Gender", "?")
+                    lines.append(f"  {name} ({gender})")
+                if len(voices) > 30:
+                    lines.append(f"  ... and {len(voices) - 30} more")
+                self.call_from_thread(self._add_system_message, "\n".join(lines))
+            except Exception as e:
+                self.call_from_thread(self._add_system_message, f"[red]Voice list failed: {e}[/red]")
+            return
+
+        # Generate TTS
+        self.call_from_thread(self._add_system_message, "[dim]Generating speech...[/dim]")
+        try:
+            from gateway.voice import text_to_speech
+            loop = _asyncio.new_event_loop()
+            audio_path = loop.run_until_complete(text_to_speech(arg, output_format="mp3"))
+            loop.close()
+
+            if not audio_path or not audio_path.exists():
+                self.call_from_thread(self._add_system_message, "[red]TTS produced no audio.[/red]")
+                return
+
+            self.call_from_thread(
+                self._add_system_message,
+                f"[green]Playing audio ({audio_path.stat().st_size // 1024}KB)...[/green]"
+            )
+            # Play with afplay (macOS)
+            subprocess.run(["afplay", str(audio_path)], timeout=120)
+            self.call_from_thread(self._add_system_message, "[dim]Playback complete.[/dim]")
+
+        except Exception as e:
+            self.call_from_thread(self._add_system_message, f"[red]TTS failed: {e}[/red]")
+
+    # ── /subscribe — manage digest subscriptions ────────────────
+
+    def _cmd_subscribe(self, arg: str) -> None:
+        """View or manage digest subscriptions."""
+        user_id = "934847281"
+        self._cmd_subscription_common(arg, user_id, mode="subscribe")
+
+    # ── /serve — manage serve targets ───────────────────────────
+
+    def _cmd_serve(self, arg: str) -> None:
+        """View or manage serve targets."""
+        user_id = "934847281"
+        self._cmd_subscription_common(arg, user_id, mode="serve")
+
+    def _cmd_subscription_common(self, arg: str, user_id: str, mode: str) -> None:
+        """Shared logic for /subscribe and /serve."""
+        label = "Subscriptions" if mode == "subscribe" else "Serve targets"
+        verb = "subscribe" if mode == "subscribe" else "serve"
+
+        parts = arg.strip().split() if arg.strip() else []
+
+        # /subscribe add <platform> <target_id> [name]
+        if len(parts) >= 3 and parts[0] == "add":
+            platform = parts[1].lower()
+            target_id = parts[2]
+            target_name = " ".join(parts[3:]) if len(parts) > 3 else target_id
+            is_new = add_subscription(user_id, platform, target_id, target_name, "channel", mode)
+            if is_new:
+                self._add_system_message(
+                    f"[green]Added {verb}: {platform} — {target_name}[/green]"
+                )
+                # Hot-reload serve targets if in serve mode
+                if mode == "serve":
+                    self._reload_serve_targets(platform)
+            else:
+                self._add_system_message(f"[yellow]Already {verb}d: {platform} — {target_name}[/yellow]")
+            return
+
+        # /subscribe remove <platform> <target_id>
+        if len(parts) >= 3 and parts[0] in ("remove", "rm", "delete"):
+            platform = parts[1].lower()
+            target_id = parts[2]
+            removed = remove_subscription(user_id, platform, target_id, mode)
+            if removed:
+                self._add_system_message(f"[green]Removed {verb}: {platform} — {target_id}[/green]")
+                if mode == "serve":
+                    self._reload_serve_targets(platform)
+            else:
+                self._add_system_message(f"[yellow]Not found: {platform} — {target_id}[/yellow]")
+            return
+
+        # /subscribe clear [platform]
+        if parts and parts[0] == "clear":
+            platform = parts[1].lower() if len(parts) > 1 else None
+            subs = get_subscriptions(user_id, mode=mode, platform=platform)
+            count = 0
+            for s in subs:
+                remove_subscription(user_id, s["platform"], s["target_id"], mode)
+                count += 1
+            self._add_system_message(f"[green]Cleared {count} {verb} target(s).[/green]")
+            if mode == "serve":
+                for p in {s["platform"] for s in subs}:
+                    self._reload_serve_targets(p)
+            return
+
+        # Default: show current subscriptions
+        subs = get_subscriptions(user_id, mode=mode)
+        if not subs:
+            self.post_message(CommandOutput(
+                f"**{label}**\n\nNo {verb} targets configured.\n\n"
+                f"**Add:** `/{verb} add <platform> <target_id> [name]`\n"
+                f"**Remove:** `/{verb} remove <platform> <target_id>`\n"
+                f"**Clear:** `/{verb} clear [platform]`",
+                is_markdown=True,
+            ))
+            return
+
+        lines = [f"**{label}**\n"]
+        by_platform: dict[str, list] = {}
+        for s in subs:
+            by_platform.setdefault(s["platform"], []).append(s)
+        for platform, items in sorted(by_platform.items()):
+            lines.append(f"**{platform.title()}:**")
+            for s in items:
+                lines.append(f"  - {s['target_name']} (`{s['target_id']}`, {s['target_type']})")
+        lines.append(f"\n**Add:** `/{verb} add <platform> <target_id> [name]`")
+        lines.append(f"**Remove:** `/{verb} remove <platform> <target_id>`")
+        self.post_message(CommandOutput("\n".join(lines), is_markdown=True))
+
+    def _reload_serve_targets(self, platform: str) -> None:
+        """Attempt to hot-reload serve targets for a platform adapter."""
+        try:
+            from gateway.run import GatewayRunner
+            # If a running gateway instance exists, update its serve targets
+            # This is best-effort — may not work if gateway is separate process
+            import importlib
+            mod = importlib.import_module(f"gateway.platforms.{platform}")
+            if hasattr(mod, "_update_serve_targets"):
+                mod._update_serve_targets(platform)
+        except Exception:
+            pass  # Best-effort: gateway may be a separate process
 
 
 # ── Entry Point ─────────────────────────────────────────────────
