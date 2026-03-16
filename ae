@@ -16,41 +16,40 @@ _prompt() {
     echo "$REPLY"
 }
 
-CMD="${1:-chat}"
+CMD="${1:-}"
 shift 2>/dev/null || true
 
-case "$CMD" in
-
-    # ── v2: Interactive Chat ────────────────────────────────────
-
-    chat)
-        # Optional: ae chat --resume <session_id>
-        RESUME=""
-        if [ "${1:-}" = "--resume" ] || [ "${1:-}" = "-r" ]; then
-            shift
-            RESUME="${1:-}"
-            shift 2>/dev/null || true
-        fi
-        # Ensure deps are available
-        if ! python3 -c "import rich, prompt_toolkit" 2>/dev/null; then
-            echo "Installing dependencies (rich, prompt-toolkit)..."
-            python3 -m pip install -q rich prompt-toolkit
-        fi
-        cd "$EXODIR"
-        if [ -n "$RESUME" ]; then
-            python3 -c "
+# ── Default: Interactive Chat REPL ──────────────────────────
+# No subcommand → launch the REPL directly
+if [ -z "$CMD" ] || [ "$CMD" = "--resume" ] || [ "$CMD" = "-r" ]; then
+    RESUME=""
+    if [ "$CMD" = "--resume" ] || [ "$CMD" = "-r" ]; then
+        RESUME="${1:-}"
+        shift 2>/dev/null || true
+    fi
+    # Ensure deps are available
+    if ! python3 -c "import rich, prompt_toolkit" 2>/dev/null; then
+        echo "Installing dependencies (rich, prompt-toolkit)..."
+        python3 -m pip install -q rich prompt-toolkit
+    fi
+    cd "$EXODIR"
+    if [ -n "$RESUME" ]; then
+        python3 -c "
 import sys; sys.path.insert(0, '$EXODIR')
 from gateway.cli import main
 main(resume_session='$RESUME')
 "
-        else
-            python3 -c "
+    else
+        python3 -c "
 import sys; sys.path.insert(0, '$EXODIR')
 from gateway.cli import main
 main()
 "
-        fi
-        ;;
+    fi
+    exit 0
+fi
+
+case "$CMD" in
 
     # ── v2: Gateway ─────────────────────────────────────────────
 
@@ -842,8 +841,7 @@ ae — agenticEvolve CLI (v2)
 
 CHAT
   ae                     Interactive REPL (default)
-  ae chat                Interactive REPL (like claude CLI)
-  ae chat --resume ID    Resume a previous session
+  ae --resume ID         Resume a previous session
 
 GATEWAY
   ae gateway [start]     Start the messaging gateway (foreground)
