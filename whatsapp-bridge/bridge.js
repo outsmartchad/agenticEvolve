@@ -21,11 +21,13 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  downloadMediaMessage,
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const qrcode = require("qrcode-terminal");
 const path = require("path");
 const readline = require("readline");
+const os = require("os");
 
 const fs = require("fs");
 const AUTH_DIR = path.join(__dirname, "auth");
@@ -145,19 +147,47 @@ async function startBridge() {
       const text =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
+        msg.message?.imageMessage?.caption ||
         null;
 
-      if (!text) continue;
+      // Check for image message
+      const imageMsg = msg.message?.imageMessage;
+      let imagePath = null;
 
-      emit({
+      if (imageMsg) {
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {}, {
+            logger,
+            reuploadRequest: sock.updateMediaMessage,
+          });
+          // Save to temp file
+          const tmpDir = path.join(os.tmpdir(), "agenticEvolve-wa-images");
+          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+          const ext = (imageMsg.mimetype || "image/jpeg").split("/")[1] || "jpg";
+          const filename = `${msg.key.id}.${ext}`;
+          imagePath = path.join(tmpDir, filename);
+          fs.writeFileSync(imagePath, buffer);
+        } catch (imgErr) {
+          // Non-fatal: emit message without image
+          imagePath = null;
+        }
+      }
+
+      // Skip messages with no text AND no image
+      if (!text && !imagePath) continue;
+
+      const payload = {
         type: "message",
         chat_id: chatId,
         user_id: userId,
         sender_name: msg.pushName || userId.split("@")[0],
-        text,
+        text: text || "",
         message_id: msg.key.id,
         timestamp: msgTs,
-      });
+      };
+      if (imagePath) payload.image_path = imagePath;
+
+      emit(payload);
     }
   });
 

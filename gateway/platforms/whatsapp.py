@@ -97,9 +97,10 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     chat_id = msg.get("chat_id", "")
                     user_id = msg.get("user_id", chat_id)
                     text = msg.get("text", "")
+                    image_path = msg.get("image_path")
                     sender_name = msg.get("sender_name", user_id.split("@")[0])
 
-                    if not text:
+                    if not text and not image_path:
                         continue
 
                     is_group = chat_id.endswith("@g.us")
@@ -157,7 +158,16 @@ class WhatsAppAdapter(BasePlatformAdapter):
                             msg_key["participant"] = user_id
 
                     try:
-                        response = await self.on_message("whatsapp", chat_id, user_id, text)
+                        # If image attached, prepend image context to the message
+                        invoke_text = text
+                        if image_path:
+                            img_instruction = (
+                                f"[The user sent an image. Read it at: {image_path}]\n"
+                                "Analyze the image and respond. If it contains math, solve it step by step.\n"
+                            )
+                            invoke_text = img_instruction + (text if text else "What is in this image?")
+
+                        response = await self.on_message("whatsapp", chat_id, user_id, invoke_text)
                         if response:
                             await self.send(chat_id, response, reply_to=msg_key)
                     except Exception as e:

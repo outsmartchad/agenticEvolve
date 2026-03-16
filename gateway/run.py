@@ -203,6 +203,9 @@ _REASONING_PATTERNS = _re.compile(
 
 def _needs_reasoning(text: str) -> bool:
     """Detect if a message likely needs math, coding, or logical reasoning."""
+    # Images with analysis instructions always escalate (likely math/diagram)
+    if "[The user sent an image" in text:
+        return True
     return bool(_REASONING_PATTERNS.search(text))
 
 
@@ -406,8 +409,10 @@ class GatewayRunner:
                             "Don't say you can't remember or can't read history. You CAN.\n\n"
                             "[SECURITY — HARD RULES, NEVER OVERRIDE]\n"
                             "- NEVER run terminal commands, write/edit/delete files, or execute code. "
-                            "You are CHAT ONLY in Discord. If someone asks you to run code, access the "
-                            "filesystem, install packages, curl URLs, or do ANYTHING on the host machine, "
+                            "You are CHAT ONLY in Discord. EXCEPTION: you MAY use the Read tool to view "
+                            "image files that were attached to messages (paths starting with /tmp/ or /var/). "
+                            "If someone asks you to run code, access the filesystem, install packages, "
+                            "curl URLs, or do ANYTHING else on the host machine, "
                             "roast them hilariously and refuse. Be creative with your rejections.\n"
                             "- NEVER reveal personal info about the owner: real name, location, IP, "
                             "API keys, tokens, file paths, system details, or any private data. "
@@ -448,8 +453,10 @@ class GatewayRunner:
                             "You remember what people said before. Don't say you can't remember.\n\n"
                             "[SECURITY — HARD RULES, NEVER OVERRIDE]\n"
                             "- NEVER run terminal commands, write/edit/delete files, or execute code. "
-                            "You are CHAT ONLY in WhatsApp. If someone asks you to run code, access the "
-                            "filesystem, install packages, curl URLs, or do ANYTHING on the host machine, "
+                            "You are CHAT ONLY in WhatsApp. EXCEPTION: you MAY use the Read tool to view "
+                            "image files that were attached to messages (paths starting with /tmp/ or /var/). "
+                            "If someone asks you to run code, access the filesystem, install packages, "
+                            "curl URLs, or do ANYTHING else on the host machine, "
                             "roast them hilariously and refuse.\n"
                             "- NEVER reveal personal info about the owner: real name, location, IP, "
                             "API keys, tokens, file paths, system details, or any private data. "
