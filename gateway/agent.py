@@ -498,6 +498,8 @@ def invoke_claude(message: str, model: str = "sonnet",
         "--output-format", "stream-json",
         "--verbose",
         "--no-chrome",
+        "--mcp-config", '{"mcpServers":{}}',
+        "--strict-mcp-config",
     ]
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])
@@ -675,6 +677,8 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         "--output-format", "stream-json",
         "--verbose",
         "--no-chrome",
+        "--mcp-config", '{"mcpServers":{}}',
+        "--strict-mcp-config",
     ]
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])

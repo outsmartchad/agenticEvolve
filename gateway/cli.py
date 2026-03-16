@@ -152,6 +152,8 @@ def invoke_streaming(message: str, state: SessionState) -> dict:
         "--output-format", "stream-json",
         "--verbose",
         "--no-chrome",
+        "--mcp-config", '{"mcpServers":{}}',
+        "--strict-mcp-config",
     ]
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])
@@ -329,6 +331,7 @@ SLASH_COMMANDS = [
     # Pipelines (LLM-backed)
     ("/produce", "Brainstorm business ideas from signals"),
     ("/evolve", "Run evolve pipeline (COLLECT->ANALYZE->BUILD->REVIEW->REPORT)"),
+    ("/decompose", "Decompose a goal into tasks, execute in parallel, eval, commit"),
     ("/learn", "Deep-dive a repo/URL/tech"),
     ("/absorb", "Scan + implement improvements from a target"),
     ("/reflect", "Self-analysis (patterns, gaps, next actions)"),
@@ -449,6 +452,8 @@ def handle_command(cmd: str, state: SessionState) -> bool:
         _cmd_produce(state, arg)
     elif name in ("/evolve",):
         _cmd_evolve(state, arg)
+    elif name in ("/decompose",):
+        _cmd_decompose(state, arg)
     elif name in ("/learn",):
         _cmd_learn(state, arg)
     elif name in ("/absorb",):
@@ -528,6 +533,7 @@ def _cmd_help():
     table.add_row("[bold white]PIPELINES[/bold white]", "[dim italic]LLM-backed, takes 2-15 min[/dim italic]")
     table.add_row("  /produce [--ideas N]", "Brainstorm biz ideas from today's signals")
     table.add_row("  /evolve [--dry-run]", "Collect signals -> build -> install skills")
+    table.add_row("  /decompose <goal>", "Decompose goal -> tasks -> execute -> eval -> commit")
     table.add_row("  /learn <target>", "Deep-dive a repo, URL, or tech")
     table.add_row("  /absorb <target>", "Scan a repo and implement improvements")
     table.add_row("  /reflect [--days N]", "Self-analysis: patterns, gaps, next moves")
@@ -977,6 +983,103 @@ def _cmd_evolve(state: SessionState, arg: str):
     console.print(f"\n[dim]${cost:.4f}[/dim]")
     if cost > 0:
         log_cost(cost, platform="cli", session_id=state.session_id, pipeline="evolve")
+
+
+def _cmd_decompose(state: SessionState, arg: str):
+    """Decompose a goal into a task DAG, execute workers, eval, commit."""
+    raw_args = arg.split() if arg else []
+    flags = _parse_flags(raw_args, {
+        "--dry-run": {"aliases": ["dry-run", "dry", "preview"], "type": "bool"},
+        "--model": {"type": "value"},
+        "--workers": {"type": "value"},
+    })
+    goal = " ".join(raw_args).strip()
+    if not goal:
+        console.print("[yellow]Usage: /decompose <goal>[/yellow]")
+        console.print("[dim]  --dry-run      Plan only, no execution[/dim]")
+        console.print("[dim]  --model X      Override model[/dim]")
+        console.print("[dim]  --workers N    Max parallel tasks (default: 3)[/dim]")
+        return
+
+    dry_run = flags["--dry-run"]
+    model = flags["--model"] or state.model
+    max_workers = int(flags["--workers"] or 3)
+
+    stages = "PLAN" if dry_run else "PLAN -> EXECUTE -> EVAL -> COMMIT"
+    console.print(f"[dim]Decomposing: {goal[:60]}...[/dim]")
+    console.print(f"[dim]{stages}[/dim]")
+
+    system_context = (
+        "You are the DECOMPOSE agent for agenticEvolve — Vincent's personal closed-loop agent system.\n\n"
+        "Our system: Python asyncio gateway → Claude Code (claude -p) → Telegram. "
+        "Skills in ~/.claude/skills/, memory in ~/.agenticEvolve/memory/, "
+        "SQLite+FTS5 sessions, bounded MEMORY.md (2200 chars).\n\n"
+        "Vincent builds AI agents, onchain infrastructure, and developer tools. "
+        "Stack: TypeScript/React frontends, Python for infra/agents.\n\n"
+    )
+
+    planner_prompt = (
+        system_context +
+        f"GOAL: {goal}\n\n"
+        f"PHASE 1 — DECOMPOSE:\n"
+        f"Break this goal into {max_workers} or fewer discrete, parallel-executable tasks.\n"
+        f"Each task must be:\n"
+        f"- Self-contained (no inter-task dependencies if possible)\n"
+        f"- Concrete and actionable (not vague like 'improve X')\n"
+        f"- Scoped to a single file, module, or concern\n\n"
+        f"Output a task DAG as JSON:\n"
+        f"```json\n"
+        f'{{"goal": "{goal}", "tasks": ['
+        f'{{"id": 1, "title": "...", "description": "...", "files": ["path/to/file"], "depends_on": []}},'
+        f'...'
+        f"]}}\n"
+        f"```\n\n"
+        f"Then for each task, write a clear implementation brief (2-4 sentences).\n"
+    )
+
+    if dry_run:
+        planner_prompt += "\nDRY RUN: Output the task DAG and briefs only. Do NOT implement anything.\n"
+    else:
+        planner_prompt += (
+            f"\nPHASE 2 — EXECUTE:\n"
+            f"After outputting the DAG, implement each task sequentially.\n"
+            f"For each task: read relevant files, implement, sanity check.\n\n"
+            f"PHASE 3 — EVAL:\n"
+            f"List what was changed. Flag skipped tasks. "
+            f"Verdict: PASS (all done) or PARTIAL (some skipped).\n\n"
+            f"PHASE 4 — COMMIT:\n"
+            f"If PASS or PARTIAL (>50% done): "
+            f"cd ~/Desktop/projects/agenticEvolve && git add -A && "
+            f"git commit -m 'feat: {goal[:60]}'\n\n"
+            f"STRUCTURED OUTPUT (REQUIRED at end):\n"
+            f"```json\n"
+            f'{{"verdict": "PASS|PARTIAL|FAIL", '
+            f'"tasks_total": N, "tasks_done": N, '
+            f'"files_changed": ["path/to/file"], '
+            f'"commit_hash": "abc1234 or empty"}}\n'
+            f"```\n"
+        )
+
+    from gateway.agent import invoke_claude_streaming
+
+    try:
+        result = invoke_claude_streaming(
+            planner_prompt,
+            on_progress=_cli_progress,
+            model=model,
+            session_context=f"[Decompose: {goal[:50]}]",
+        )
+    except Exception as e:
+        console.print(f"[red]Decompose failed: {e}[/red]")
+        return
+
+    response = result.get("text", "No output.")
+    cost = result.get("cost", 0)
+    console.print()
+    console.print(Markdown(response))
+    console.print(f"\n[dim]${cost:.4f}[/dim]")
+    if cost > 0:
+        log_cost(cost, platform="cli", session_id=state.session_id, pipeline="decompose")
 
 
 def _cmd_learn(state: SessionState, arg: str):
