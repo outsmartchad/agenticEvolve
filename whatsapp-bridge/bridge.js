@@ -35,6 +35,70 @@ const logger = pino({ level: "silent" }); // quiet baileys internal logs
 
 let sock = null;
 
+// ── LID ↔ Phone JID resolution ─────────────────────────────────
+// Baileys v7 may deliver DM messages under a LID JID (@lid) instead of
+// the traditional phone JID (@s.whatsapp.net).  We maintain a bidirectional
+// map so every layer (incoming messages, outbound sends, history, contacts)
+// always works with phone JIDs.
+
+const lidToPhone = new Map(); // "200725447631040" -> "85254083858"
+const phoneToLid = new Map(); // "85254083858" -> "200725447631040"
+
+/**
+ * Load all lid-mapping-*_reverse.json files from AUTH_DIR on startup.
+ * File format: { "phone": "85254083858" } (or just a bare number string).
+ */
+function loadLidMappings() {
+  try {
+    const files = fs.readdirSync(AUTH_DIR);
+    for (const f of files) {
+      // Forward: lid-mapping-<phone>.json  →  contains { lid: "..." }
+      const fwd = f.match(/^lid-mapping-(\d+)\.json$/);
+      if (fwd) {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, f), "utf-8"));
+          const phone = fwd[1];
+          const lid = String(data.lid || data).replace(/\D/g, "");
+          if (lid && phone) {
+            lidToPhone.set(lid, phone);
+            phoneToLid.set(phone, lid);
+          }
+        } catch (_) { /* skip corrupt files */ }
+      }
+      // Reverse: lid-mapping-<lid>_reverse.json  →  contains { phone: "..." }
+      const rev = f.match(/^lid-mapping-(\d+)_reverse\.json$/);
+      if (rev) {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, f), "utf-8"));
+          const lid = rev[1];
+          const phone = String(data.phone || data).replace(/\D/g, "");
+          if (lid && phone) {
+            lidToPhone.set(lid, phone);
+            phoneToLid.set(phone, lid);
+          }
+        } catch (_) { /* skip corrupt files */ }
+      }
+    }
+  } catch (_) { /* auth dir may not exist yet */ }
+}
+
+/**
+ * Resolve a JID: if it's a LID JID, convert to phone JID.
+ * e.g. "200725447631040@lid" → "85254083858@s.whatsapp.net"
+ * Non-LID JIDs are returned unchanged.
+ */
+function resolveJid(jid) {
+  if (!jid) return jid;
+  if (!jid.endsWith("@lid")) return jid;
+  const lid = jid.replace("@lid", "");
+  const phone = lidToPhone.get(lid);
+  if (phone) return `${phone}@s.whatsapp.net`;
+  return jid; // unknown LID — pass through (will be logged)
+}
+
+// Load mappings immediately
+loadLidMappings();
+
 // Track all seen chat JIDs (contacts + groups) from incoming messages
 const seenChats = new Map(); // jid -> { name, lastSeen }
 
@@ -113,23 +177,30 @@ async function startBridge() {
       if (msg.key.fromMe) continue;
       if (msg.key.remoteJid === "status@broadcast") continue;
 
-      const chatId = msg.key.remoteJid;
-      // For groups, participant is the sender. For DMs, it's the chat itself.
-      const userId = msg.key.participant || chatId;
+      const rawChatId = msg.key.remoteJid;
+      const rawUserId = msg.key.participant || rawChatId;
+      // Resolve LID JIDs → phone JIDs so Python can match against serve targets
+      const chatId = resolveJid(rawChatId);
+      const userId = resolveJid(rawUserId);
 
       // Track message key as anchor for history fetching
+      // NOTE: store under BOTH raw and resolved JID so fetch_messages can find anchors
       const msgTs = typeof msg.messageTimestamp === "number"
         ? msg.messageTimestamp
         : (msg.messageTimestamp?.toNumber?.() || Math.floor(Date.now() / 1000));
       const existing = latestMsgKeys.get(chatId);
       if (!existing || msgTs > existing.timestamp) {
-        latestMsgKeys.set(chatId, {
-          key: msg.key,
-          timestamp: msgTs,
-        });
+        latestMsgKeys.set(chatId, { key: msg.key, timestamp: msgTs });
+      }
+      // Also store under raw JID (LID) so history sync can find anchor
+      if (rawChatId !== chatId) {
+        const existingRaw = latestMsgKeys.get(rawChatId);
+        if (!existingRaw || msgTs > existingRaw.timestamp) {
+          latestMsgKeys.set(rawChatId, { key: msg.key, timestamp: msgTs });
+        }
       }
 
-      // Track seen JIDs for contact/group listing
+      // Track seen JIDs for contact/group listing (use resolved JIDs)
       if (chatId && !chatId.endsWith("@broadcast")) {
         seenChats.set(chatId, {
           name: msg.pushName || chatId.split("@")[0],
@@ -201,8 +272,8 @@ async function startBridge() {
           // Extract text messages from history
           const extracted = [];
           for (const msg of messages) {
-            const chatId = msg.key?.remoteJid;
-            const userId = msg.key?.participant || chatId;
+            const chatId = resolveJid(msg.key?.remoteJid);
+            const userId = resolveJid(msg.key?.participant || msg.key?.remoteJid);
             const text =
               msg.message?.conversation ||
               msg.message?.extendedTextMessage?.text ||
@@ -362,12 +433,8 @@ async function startBridge() {
           }
         }
       } else if (cmd.type === "send" && cmd.chat_id && cmd.text) {
-        // LID JIDs can't receive messages — resolve to phone JID if available
-        let targetJid = cmd.chat_id;
-        if (targetJid.endsWith("@lid")) {
-          const phoneJid = sock.user?.id?.replace(/:.*@/, "@") || targetJid;
-          if (phoneJid.endsWith("@s.whatsapp.net")) targetJid = phoneJid;
-        }
+        // Resolve LID JIDs → phone JIDs using our mapping
+        let targetJid = resolveJid(cmd.chat_id);
         try {
           const msgPayload = { text: cmd.text };
           // Support reply-to (quote) by passing the original message key
