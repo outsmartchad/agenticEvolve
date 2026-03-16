@@ -773,18 +773,105 @@ class ModelScreen(ModalScreen[str]):
 # ── Subscribe / Serve Screen ───────────────────────────────────
 
 def _discover_targets(user_id: str, mode: str) -> dict[str, list[dict]]:
-    """Discover available targets from DB + Discord REST API.
+    """Discover all available targets from multiple sources.
+
+    Sources:
+    - DB platform_messages: channels/groups we've seen messages from
+    - DB subscriptions: currently subscribed targets (both modes)
+    - WhatsApp auth dir: lid-mapping files for known contacts
+    - Discord subscriptions: existing subscribed channels (REST API disabled)
 
     Returns {platform: [{id, name, type, subscribed}]}.
     """
-    # Get current subscriptions for comparison
+    from gateway.session_db import _connect
+
+    # Get current subscriptions for this mode
     subs = get_subscriptions(user_id, mode=mode)
     sub_keys = {(s["platform"], s["target_id"]) for s in subs}
 
-    result: dict[str, list[dict]] = {}
+    # Also get subscriptions from the OTHER mode to find more known targets
+    other_mode = "serve" if mode == "subscribe" else "subscribe"
+    other_subs = get_subscriptions(user_id, mode=other_mode)
 
-    # ── Discord: fetch guilds + channels via REST using cached token ──
-    if mode == "subscribe":  # Discord serve is disabled
+    # Build a name lookup from all subscriptions
+    name_lookup: dict[tuple[str, str], str] = {}
+    for s in subs + other_subs:
+        name_lookup[(s["platform"], s["target_id"])] = s["target_name"]
+
+    result: dict[str, list[dict]] = {}
+    seen: dict[str, set] = {}  # platform -> set of target_ids already added
+
+    def _add(platform: str, tid: str, name: str, ttype: str):
+        if platform not in seen:
+            seen[platform] = set()
+        if tid in seen[platform]:
+            return
+        seen[platform].add(tid)
+        if platform not in result:
+            result[platform] = []
+        # Use subscription name if available (usually better)
+        display_name = name_lookup.get((platform, tid), name)
+        result[platform].append({
+            "id": tid,
+            "name": display_name,
+            "type": ttype,
+            "subscribed": (platform, tid) in sub_keys,
+        })
+
+    # ── 1. All subscriptions (both modes) — these are known good targets ──
+    for s in subs + other_subs:
+        _add(s["platform"], s["target_id"], s["target_name"], s["target_type"])
+
+    # ── 2. platform_messages — channels/groups we've received messages from ──
+    try:
+        conn = _connect()
+        rows = conn.execute("""
+            SELECT platform, chat_id, MAX(sender_name) as sample_name, COUNT(*) as cnt
+            FROM platform_messages
+            GROUP BY platform, chat_id ORDER BY platform, cnt DESC
+        """).fetchall()
+        conn.close()
+
+        for r in rows:
+            plat = r["platform"]
+            cid = r["chat_id"]
+            # Skip Discord serve targets (disabled)
+            if mode == "serve" and plat == "discord":
+                continue
+            # Build a reasonable name
+            if plat == "whatsapp":
+                if cid.endswith("@g.us"):
+                    name = r["sample_name"] or cid.split("@")[0]
+                else:
+                    name = cid.split("@")[0]
+                ttype = "group" if cid.endswith("@g.us") else "contact"
+            elif plat == "discord":
+                name = f"Channel {cid}"
+                ttype = "channel"
+            else:
+                name = cid
+                ttype = "channel"
+            _add(plat, cid, name, ttype)
+    except Exception:
+        pass
+
+    # ── 3. WhatsApp auth dir — lid-mapping files reveal known contacts ──
+    try:
+        auth_dir = EXODIR / "whatsapp-bridge" / "auth"
+        if auth_dir.exists():
+            import re
+            for f in auth_dir.iterdir():
+                m = re.match(r"^lid-mapping-(\d+)\.json$", f.name)
+                if m:
+                    phone = m.group(1)
+                    jid = f"{phone}@s.whatsapp.net"
+                    _add("whatsapp", jid, phone, "contact")
+    except Exception:
+        pass
+
+    # ── 4. Discord: fetch guilds + channels via REST (reads still work) ──
+    # Only sending is disabled. Reading channels/guilds is fine.
+    if mode == "subscribe":  # Discord serve is disabled, but subscribe is fine
         try:
             token_file = EXODIR / ".discord-token"
             if token_file.exists():
@@ -792,103 +879,44 @@ def _discover_targets(user_id: str, mode: str) -> dict[str, list[dict]]:
                 import urllib.request
                 headers = {"Authorization": token}
 
-                # Get guilds
-                req = urllib.request.Request("https://discord.com/api/v10/users/@me/guilds", headers=headers)
+                req = urllib.request.Request(
+                    "https://discord.com/api/v10/users/@me/guilds", headers=headers
+                )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     guilds = json.loads(resp.read())
 
-                discord_targets = []
-                for g in guilds[:10]:  # Limit to 10 guilds
-                    # Get channels for each guild
-                    req2 = urllib.request.Request(
-                        f"https://discord.com/api/v10/guilds/{g['id']}/channels", headers=headers
-                    )
+                for g in guilds[:10]:
                     try:
+                        req2 = urllib.request.Request(
+                            f"https://discord.com/api/v10/guilds/{g['id']}/channels",
+                            headers=headers,
+                        )
                         with urllib.request.urlopen(req2, timeout=10) as resp2:
                             channels = json.loads(resp2.read())
-                        # Text channels only (type 0 = text, 5 = announcement)
+                        # Category name lookup
+                        cat_names = {
+                            c["id"]: c["name"]
+                            for c in channels
+                            if c.get("type") == 4
+                        }
                         for ch in channels:
-                            if ch.get("type") in (0, 5):
-                                cat = ""
-                                # Find category name
-                                if ch.get("parent_id"):
-                                    for c2 in channels:
-                                        if c2["id"] == ch["parent_id"] and c2.get("type") == 4:
-                                            cat = c2["name"]
-                                            break
-                                discord_targets.append({
-                                    "id": ch["id"],
-                                    "name": f"{g['name']} / {cat + ' / ' if cat else ''}{ch['name']}",
-                                    "type": "channel",
-                                    "subscribed": ("discord", ch["id"]) in sub_keys,
-                                })
+                            if ch.get("type") in (0, 5):  # text, announcement
+                                cat = cat_names.get(ch.get("parent_id", ""), "")
+                                prefix = f"{cat} / " if cat else ""
+                                _add(
+                                    "discord",
+                                    ch["id"],
+                                    f"{g['name']} / {prefix}{ch['name']}",
+                                    "channel",
+                                )
                     except Exception:
                         continue
-                if discord_targets:
-                    result["discord"] = discord_targets
         except Exception:
-            pass
+            pass  # REST may fail — fall back to DB targets from steps 1 & 2
 
-    # ── WhatsApp: from platform_messages + subscriptions DB ──
-    wa_targets = []
-    try:
-        conn = __import__("gateway.session_db", fromlist=["_connect"])._connect()
-        rows = conn.execute("""
-            SELECT chat_id, MAX(sender_name) as sample_name, COUNT(*) as cnt
-            FROM platform_messages WHERE platform='whatsapp'
-            GROUP BY chat_id ORDER BY cnt DESC
-        """).fetchall()
-        conn.close()
-
-        for r in rows:
-            cid = r["chat_id"]
-            # Find a better name from subscriptions if available
-            name = None
-            for s in subs:
-                if s["target_id"] == cid:
-                    name = s["target_name"]
-                    break
-            if not name:
-                if cid.endswith("@g.us"):
-                    name = r["sample_name"] or cid.split("@")[0]
-                    name = f"Group: {name}"
-                else:
-                    name = cid.split("@")[0]
-            is_group = cid.endswith("@g.us")
-            wa_targets.append({
-                "id": cid,
-                "name": name,
-                "type": "group" if is_group else "contact",
-                "subscribed": ("whatsapp", cid) in sub_keys,
-            })
-
-        # Also add subscribed targets not in platform_messages
-        for s in subs:
-            if s["platform"] == "whatsapp" and not any(t["id"] == s["target_id"] for t in wa_targets):
-                wa_targets.append({
-                    "id": s["target_id"],
-                    "name": s["target_name"],
-                    "type": s["target_type"],
-                    "subscribed": True,
-                })
-    except Exception:
-        pass
-    if wa_targets:
-        result["whatsapp"] = wa_targets
-
-    # ── WeChat: from subscriptions only (read-only, no live bridge) ──
-    if mode == "subscribe":
-        wc_targets = []
-        for s in subs:
-            if s["platform"] == "wechat":
-                wc_targets.append({
-                    "id": s["target_id"],
-                    "name": s["target_name"],
-                    "type": s["target_type"],
-                    "subscribed": True,
-                })
-        if wc_targets:
-            result["wechat"] = wc_targets
+    # ── Sort each platform: subscribed first, then by name ──
+    for platform in result:
+        result[platform].sort(key=lambda x: (not x["subscribed"], x["name"].lower()))
 
     return result
 
