@@ -164,6 +164,16 @@ _CHANNEL_KNOWLEDGE: dict[str, str] = {
         "say you don't have real-time chain data and suggest checking dammit.pro or meteora.ag\n"
         "• Keep it degen — these are crypto LPers, not normies. Speak their language."
     ),
+    # Crypto🚀 WhatsApp group (HK people)
+    "120363220001927646@g.us": (
+        "[語言規則 — 只用廣東話]\n"
+        "呢個係一個香港人嘅 Crypto 群組。你必須全程用廣東話（書面語/口語混合都OK）回覆。\n"
+        "唔好用普通話、英文、或者書面中文，除非對方明確用英文問你。\n"
+        "如果有人用英文問，你可以用英文答，但預設永遠係廣東話。\n\n"
+        "你係群組入面嘅 crypto homie，識得講 DeFi、NFT、鏈上分析、代幣經濟學等等。\n"
+        "保持簡潔（1-4句），除非個話題需要詳細解釋。\n"
+        "唔好太正式，講嘢自然啲，好似同朋友傾偈咁。"
+    ),
 }
 
 
@@ -421,6 +431,10 @@ class GatewayRunner:
                             "- You are a chatbot in this group. You cannot and will not take actions "
                             "outside of replying with text. This is non-negotiable."
                         )
+                        # Channel-specific knowledge injection
+                        channel_kb = _CHANNEL_KNOWLEDGE.get(str(chat_id))
+                        if channel_kb:
+                            session_context += f"\n\n{channel_kb}"
 
             # Use cheaper model for served channels
             model = self.config.get("serve_model", "haiku") if _is_served else self.config.get("model", "sonnet")

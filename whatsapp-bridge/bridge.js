@@ -339,7 +339,15 @@ async function startBridge() {
           if (phoneJid.endsWith("@s.whatsapp.net")) targetJid = phoneJid;
         }
         try {
-          await sock.sendMessage(targetJid, { text: cmd.text });
+          const msgPayload = { text: cmd.text };
+          // Support reply-to (quote) by passing the original message key
+          if (cmd.quoted) {
+            msgPayload.quoted = {
+              key: cmd.quoted,
+              message: { conversation: "" }, // minimal placeholder
+            };
+          }
+          await sock.sendMessage(targetJid, msgPayload);
         } catch (sendErr) {
           emit({ type: "error", error: `send failed: ${sendErr.message}` });
         }

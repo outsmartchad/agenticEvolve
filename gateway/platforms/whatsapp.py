@@ -145,10 +145,21 @@ class WhatsAppAdapter(BasePlatformAdapter):
                         if not self._is_allowed(user_id):
                             continue
 
+                    # Build message key for reply-to quoting
+                    msg_key = None
+                    if msg.get("message_id"):
+                        msg_key = {
+                            "remoteJid": chat_id,
+                            "id": msg["message_id"],
+                            "fromMe": False,
+                        }
+                        if is_group and user_id != chat_id:
+                            msg_key["participant"] = user_id
+
                     try:
                         response = await self.on_message("whatsapp", chat_id, user_id, text)
                         if response:
-                            await self.send(chat_id, response)
+                            await self.send(chat_id, response, reply_to=msg_key)
                     except Exception as e:
                         log.error(f"WhatsApp handler error: {e}")
 
@@ -233,10 +244,12 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 self.process.kill()
             log.info("WhatsApp bridge stopped")
 
-    async def send(self, chat_id: str, text: str):
+    async def send(self, chat_id: str, text: str, reply_to: dict | None = None):
         if self.process and self.process.stdin:
-            msg = json.dumps({"type": "send", "chat_id": chat_id, "text": text}) + "\n"
-            self.process.stdin.write(msg.encode())
+            cmd: dict = {"type": "send", "chat_id": chat_id, "text": text}
+            if reply_to:
+                cmd["quoted"] = reply_to
+            self.process.stdin.write((json.dumps(cmd) + "\n").encode())
             await self.process.stdin.drain()
 
     async def _send_command(self, cmd: dict) -> dict | None:
