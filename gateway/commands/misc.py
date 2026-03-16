@@ -419,7 +419,7 @@ class MiscMixin:
 
         try:
             proc = sp.run(
-                ["claude", "-p", "--model", "haiku", prompt],
+                ["claude", "-p", "--model", "haiku", "--no-chrome", prompt],
                 capture_output=True, text=True, timeout=30,
             )
             if proc.returncode != 0:

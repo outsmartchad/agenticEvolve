@@ -497,6 +497,7 @@ def invoke_claude(message: str, model: str = "sonnet",
         "--model", model,
         "--output-format", "stream-json",
         "--verbose",
+        "--no-chrome",
     ]
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])
@@ -673,6 +674,7 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         "--model", model,
         "--output-format", "stream-json",
         "--verbose",
+        "--no-chrome",
     ]
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])

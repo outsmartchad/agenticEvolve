@@ -151,6 +151,7 @@ def invoke_streaming(message: str, state: SessionState) -> dict:
         "--model", state.model,
         "--output-format", "stream-json",
         "--verbose",
+        "--no-chrome",
     ]
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])
