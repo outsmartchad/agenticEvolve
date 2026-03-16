@@ -338,6 +338,8 @@ class GatewayRunner:
                 f"user_id={user_id}, session={session_id}]"
             )
 
+            _is_served = False
+
             # Discord served channels: add fun personality
             if platform == "discord":
                 discord_adapter = next(
@@ -345,6 +347,7 @@ class GatewayRunner:
                 )
                 if discord_adapter and hasattr(discord_adapter, "_serve_channels"):
                     if str(chat_id) in discord_adapter._serve_channels:
+                        _is_served = True
                         session_context += (
                             "\n[DISCORD GROUP CHAT MODE] You're chatting in a Discord server. "
                             "Keep replies concise (1-4 sentences usually, longer if the topic demands it). "
@@ -388,6 +391,7 @@ class GatewayRunner:
                 )
                 if wa_adapter and hasattr(wa_adapter, "_serve_groups"):
                     if str(chat_id) in wa_adapter._serve_groups:
+                        _is_served = True
                         session_context += (
                             "\n[WHATSAPP GROUP CHAT MODE] You're chatting in a WhatsApp group. "
                             "Keep replies concise (1-4 sentences usually, longer if the topic demands it). "
@@ -418,7 +422,8 @@ class GatewayRunner:
                             "outside of replying with text. This is non-negotiable."
                         )
 
-            model = self.config.get("model", "sonnet")
+            # Use cheaper model for served channels
+            model = self.config.get("serve_model", "haiku") if _is_served else self.config.get("model", "sonnet")
 
             # Allow before_invoke hooks to mutate the prompt
             invoke_text = await hooks.fire_modifying("before_invoke", text)

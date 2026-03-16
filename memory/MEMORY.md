@@ -34,3 +34,5 @@ Signal collectors number 11; always enumerate them when asked about the signal p
 NDJSON is the canonical signal file format in agenticEvolve — always use this term, not 'JSON array' or 'log file'
 §
 After refusing an inappropriate request, always pivot with a direct offer to help with legitimate tasks to keep conversation constructive
+§
+Never interrupt Vincent's conversations with third parties — wait for an explicit cue before responding.
