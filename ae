@@ -31,6 +31,11 @@ case "$CMD" in
             RESUME="${1:-}"
             shift 2>/dev/null || true
         fi
+        # Ensure deps are available
+        if ! python3 -c "import rich, prompt_toolkit" 2>/dev/null; then
+            echo "Installing dependencies (rich, prompt-toolkit)..."
+            python3 -m pip install -q rich prompt-toolkit
+        fi
         cd "$EXODIR"
         if [ -n "$RESUME" ]; then
             python3 -c "
