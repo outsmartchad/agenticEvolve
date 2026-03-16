@@ -963,7 +963,7 @@ class SubscribeScreen(ModalScreen[None]):
     def _load_targets(self) -> None:
         targets = _discover_targets(self._user_id, self._mode)
         self._targets = targets
-        self.call_from_thread(self._render_targets)
+        self.app.call_from_thread(self._render_targets)
 
     def _render_targets(self) -> None:
         # Remove loading indicator
