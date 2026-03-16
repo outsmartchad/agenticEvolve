@@ -10,6 +10,7 @@ Command handlers are organized into mixins in gateway/commands/:
   MediaMixin     — speak, voice, photo, document, screenshot
   MiscMixin      — restart, do/intent-parsing, callback handler, URL extraction
 """
+from __future__ import annotations
 import asyncio
 import json
 import logging
@@ -19,7 +20,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Callable
-from .base import BasePlatformAdapter
+from .base import BasePlatformAdapter, CircuitBreaker, retry_with_backoff
 from ..voice import text_to_speech, speech_to_text, list_voices, maybe_tts_reply, get_tts_config, TtsMode, parse_tts_directives, detect_language_voice
 from ..commands import (
     AdminMixin, PipelineMixin, SignalsMixin, CronMixin,
@@ -59,6 +60,7 @@ class TelegramAdapter(
         self._gateway = None  # set by GatewayRunner after creation
         self._user_lang: dict[str, str] = {}  # user_id -> language code, loaded from DB on first access
         self._user_lang_loaded = False
+        self._breaker = CircuitBreaker("telegram")
 
     def _get_reply_context(self, update) -> tuple[str, list[str]]:
         """Extract text and URLs from the message being replied to.
@@ -543,6 +545,7 @@ class TelegramAdapter(
             "cost": self._handle_cost,
             "model": self._handle_model,
             "evolve": self._handle_evolve,
+            "decompose": self._handle_decompose,
             "loop": self._handle_loop,
             "loops": self._handle_loops,
             "unloop": self._handle_unloop,
@@ -551,6 +554,7 @@ class TelegramAdapter(
             "queue": self._handle_queue,
             "approve": self._handle_approve,
             "reject": self._handle_reject,
+            "scan-skills": self._handle_scan_skills,
             "learn": self._handle_learn,
             "gc": self._handle_gc,
             "absorb": self._handle_absorb,
@@ -671,6 +675,16 @@ class TelegramAdapter(
             log.info("Telegram adapter stopped")
 
     async def send(self, chat_id: str, text: str):
-        if self.app and self.app.bot:
-            for i in range(0, len(text), 4000):
-                await self.app.bot.send_message(chat_id=int(chat_id), text=text[i:i+4000])
+        if not self.app or not self.app.bot:
+            return
+        for i in range(0, len(text), 4000):
+            chunk = text[i:i+4000]
+            if self._breaker.is_open():
+                log.warning(f"[telegram] circuit breaker open, dropping send to {chat_id}")
+                return
+            try:
+                await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+                self._breaker.record_success()
+            except Exception as exc:
+                self._breaker.record_failure()
+                log.error(f"[telegram] send failed (chat={chat_id}): {exc}")

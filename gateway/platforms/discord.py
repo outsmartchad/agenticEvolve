@@ -1,7 +1,7 @@
 """Discord platform adapter using discord.py."""
 import asyncio
 import logging
-from .base import BasePlatformAdapter
+from .base import BasePlatformAdapter, CircuitBreaker, retry_with_backoff
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +23,8 @@ class DiscordAdapter(BasePlatformAdapter):
         self.allowed_users = set(str(u) for u in config.get("allowed_users", []))
         self.client = None
         self._ready = asyncio.Event()
+        self._breaker = CircuitBreaker("discord")
+        self._connect_task = None
 
     def _is_allowed(self, user_id: int) -> bool:
         # Deny-by-default (ZeroClaw pattern): empty allowlist = deny all
@@ -30,24 +32,22 @@ class DiscordAdapter(BasePlatformAdapter):
             return False
         return str(user_id) in self.allowed_users
 
-    async def start(self):
-        if not self.token:
-            log.warning("Discord token not set, skipping")
-            return
-
+    def _build_client(self) -> "discord.Client":
+        """Create a fresh discord.Client with all event handlers attached."""
         intents = discord.Intents.default()
         intents.message_content = True
-        self.client = discord.Client(intents=intents)
+        client = discord.Client(intents=intents)
         adapter = self
 
-        @self.client.event
+        @client.event
         async def on_ready():
-            log.info(f"Discord adapter started as {self.client.user}")
+            log.info(f"Discord adapter started as {client.user}")
             adapter._ready.set()
+            adapter._breaker.record_success()
 
-        @self.client.event
+        @client.event
         async def on_message(message: discord.Message):
-            if message.author == self.client.user:
+            if message.author == client.user:
                 return
             if not adapter._is_allowed(message.author.id):
                 return
@@ -61,13 +61,13 @@ class DiscordAdapter(BasePlatformAdapter):
 
             # Check if bot is mentioned or in DM
             is_dm = isinstance(message.channel, discord.DMChannel)
-            is_mentioned = self.client.user in message.mentions if self.client.user else False
+            is_mentioned = client.user in message.mentions if client.user else False
             if not is_dm and not is_mentioned:
                 return
 
             # Remove mention from text
-            if is_mentioned and self.client.user:
-                text = text.replace(f"<@{self.client.user.id}>", "").strip()
+            if is_mentioned and client.user:
+                text = text.replace(f"<@{client.user.id}>", "").strip()
 
             async with message.channel.typing():
                 try:
@@ -81,7 +81,30 @@ class DiscordAdapter(BasePlatformAdapter):
                     log.error(f"Discord handler error: {e}")
                     await message.channel.send(f"Error: {e}")
 
-        asyncio.create_task(self.client.start(self.token))
+        return client
+
+    async def _connect_loop(self):
+        """Connect to Discord with exponential backoff retries."""
+        async def _attempt():
+            self._ready.clear()
+            self.client = self._build_client()
+            await self.client.start(self.token)
+
+        await retry_with_backoff(
+            _attempt,
+            name="discord",
+            breaker=self._breaker,
+            max_attempts=8,
+            base_delay=2.0,
+            max_delay=120.0,
+        )
+
+    async def start(self):
+        if not self.token:
+            log.warning("Discord token not set, skipping")
+            return
+
+        self._connect_task = asyncio.create_task(self._connect_loop())
         # Wait for ready with timeout
         try:
             await asyncio.wait_for(self._ready.wait(), timeout=30)
@@ -89,6 +112,8 @@ class DiscordAdapter(BasePlatformAdapter):
             log.error("Discord connection timed out")
 
     async def stop(self):
+        if self._connect_task:
+            self._connect_task.cancel()
         if self.client:
             await self.client.close()
             log.info("Discord adapter stopped")

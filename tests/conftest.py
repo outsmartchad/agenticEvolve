@@ -18,6 +18,22 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "e2e: end-to-end tests that call real external services")
 
 
+# ── Autouse: isolate session_db to a tmp DB for every test ──────────
+@pytest.fixture(autouse=True)
+def _isolate_session_db(tmp_path, monkeypatch):
+    """Redirect session_db.DB_PATH to a per-test temp DB for all tests.
+
+    Prevents test pollution of the real ~/.agenticEvolve/memory/sessions.db
+    and ensures persistent dedup (signal_urls table) is isolated per test.
+    """
+    import gateway.session_db as sdb
+
+    p = tmp_path / "isolated_sessions.db"
+    monkeypatch.setattr(sdb, "DB_PATH", p)
+    sdb.init_db()
+    yield
+
+
 @pytest.fixture()
 def signals_dir(tmp_path: Path) -> Path:
     """Create a temporary signals directory."""
@@ -111,6 +127,7 @@ def adapter(mock_gateway, tmp_path, monkeypatch):
     Patches EXODIR in all mixin modules to use a temp directory.
     Sets up the adapter with allowed users and a mock gateway.
     """
+    pytest.importorskip("telegram")
     from gateway.platforms.telegram import TelegramAdapter
 
     # Create adapter without calling __init__ (avoids needing real token)

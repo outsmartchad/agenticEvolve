@@ -145,8 +145,115 @@ def init_db():
             conn.execute(stmt)
         except sqlite3.OperationalError:
             pass  # already exists
+    # Migration: signal_urls dedup table (idempotent)
+    for stmt in [
+        """CREATE TABLE IF NOT EXISTS signal_urls (
+            url TEXT PRIMARY KEY,
+            first_seen TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_signal_urls_expires ON signal_urls(expires_at)",
+    ]:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # already exists
+
+    # Migration: audit log table (idempotent)
+    for stmt in [
+        """CREATE TABLE IF NOT EXISTS audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trace_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            action TEXT NOT NULL,
+            user_id TEXT,
+            result TEXT,
+            metadata TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_audit_trace_id ON audit(trace_id)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_stage ON audit(stage, timestamp)",
+    ]:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # already exists
+
     conn.commit()
     conn.close()
+
+
+def generate_trace_id() -> str:
+    """Generate a unique trace ID for pipeline correlation."""
+    now = datetime.now(timezone.utc)
+    return f"tr_{now.strftime('%Y%m%d_%H%M%S')}_{os.urandom(4).hex()}"
+
+
+def log_audit(
+    trace_id: str,
+    stage: str,
+    action: str,
+    result: str = None,
+    user_id: str = None,
+    metadata: dict | None = None,
+):
+    """Append an audit event to the audit table.
+
+    Args:
+        trace_id: Pipeline correlation ID from generate_trace_id().
+        stage: Pipeline stage name (e.g. "COLLECT", "BUILD", "APPROVE").
+        action: What happened (e.g. "skill_built", "skill_approved", "skill_rejected").
+        result: "ok" | "fail" | free-form outcome string.
+        user_id: Acting user (None for automated pipeline events).
+        metadata: Arbitrary JSON-serialisable dict for extra context.
+    """
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO audit (trace_id, timestamp, stage, action, user_id, result, metadata) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            trace_id,
+            datetime.now(timezone.utc).isoformat(),
+            stage,
+            action,
+            user_id,
+            result,
+            json.dumps(metadata) if metadata else None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def signal_url_seen(url: str, ttl_days: int = 7) -> bool:
+    """Return True if this URL was seen within the last ttl_days.
+
+    Inserts the URL if unseen (or expired). Cleans up expired rows on each call.
+    """
+    from datetime import timedelta
+    conn = _connect()
+    now = datetime.now(timezone.utc)
+    expires = (now + timedelta(days=ttl_days)).isoformat()
+
+    # Purge expired entries (cheap, indexed)
+    conn.execute("DELETE FROM signal_urls WHERE expires_at <= ?", (now.isoformat(),))
+
+    row = conn.execute(
+        "SELECT url FROM signal_urls WHERE url = ?", (url,)
+    ).fetchone()
+
+    if row:
+        conn.commit()
+        conn.close()
+        return True
+
+    conn.execute(
+        "INSERT INTO signal_urls (url, first_seen, expires_at) VALUES (?, ?, ?)",
+        (url, now.isoformat(), expires),
+    )
+    conn.commit()
+    conn.close()
+    return False
 
 
 def get_user_pref(user_id: str, key: str, default: str = None) -> str | None:

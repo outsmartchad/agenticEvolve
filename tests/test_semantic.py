@@ -3,6 +3,8 @@ import pytest
 import gateway.session_db as sdb
 import gateway.semantic as sem
 
+pytest.importorskip("sklearn", reason="scikit-learn not installed")
+
 
 @pytest.fixture(autouse=True)
 def reset_globals(monkeypatch, tmp_path):

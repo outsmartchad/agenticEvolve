@@ -5,7 +5,7 @@ import logging
 import subprocess
 import os
 from pathlib import Path
-from .base import BasePlatformAdapter
+from .base import BasePlatformAdapter, CircuitBreaker, retry_with_backoff
 
 log = logging.getLogger("agenticEvolve.whatsapp")
 
@@ -25,6 +25,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
         self._subscribe_groups: set[str] = set()  # group JIDs subscribed for digests
         self.process = None
         self._reader_task = None
+        self._breaker = CircuitBreaker("whatsapp", fail_threshold=5, recovery_secs=60)
 
     def _is_allowed(self, user_id: str) -> bool:
         # Deny-by-default (ZeroClaw pattern): empty allowlist = deny all
@@ -79,14 +80,19 @@ class WhatsAppAdapter(BasePlatformAdapter):
             log.warning(f"Could not load serve/subscribe targets: {e}")
 
     async def _read_loop(self):
-        """Read JSON messages from the bridge stdout."""
+        """Read JSON messages from the bridge stdout with exponential backoff on errors."""
         if not self.process or not self.process.stdout:
             return
+        _error_count = 0
+        _base_delay = 1.0
+        _max_delay = 60.0
         while True:
             try:
                 line = await self.process.stdout.readline()
                 if not line:
                     break
+                _error_count = 0  # reset backoff on successful read
+                self._breaker.record_success()
                 line = line.decode().strip()
                 if not line:
                     continue
@@ -219,8 +225,20 @@ class WhatsAppAdapter(BasePlatformAdapter):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log.error(f"WhatsApp read loop error: {e}")
-                await asyncio.sleep(1)
+                _error_count += 1
+                self._breaker.record_failure()
+                if self._breaker.is_open():
+                    log.warning(
+                        f"WhatsApp read loop: circuit breaker open, "
+                        f"sleeping {self._breaker.recovery_secs}s"
+                    )
+                    await asyncio.sleep(self._breaker.recovery_secs)
+                    continue
+                import random
+                delay = min(_base_delay * (2 ** (_error_count - 1)), _max_delay)
+                delay *= 1 + random.uniform(-0.2, 0.2)
+                log.error(f"WhatsApp read loop error: {e} — retrying in {delay:.1f}s")
+                await asyncio.sleep(delay)
 
     async def _notify_qr(self, qr_path: Path):
         """Send QR code image to Telegram for easy scanning."""
