@@ -175,7 +175,7 @@ def build_corpus(force: bool = False) -> int:
         return len(docs)
 
     except ImportError:
-        log.warning("[semantic] sklearn not available, skipping corpus build")
+        log.debug("[semantic] sklearn not available, skipping corpus build")
         return 0
     except Exception as e:
         log.error(f"[semantic] Failed to build corpus: {e}")
@@ -202,7 +202,7 @@ def _load_cache() -> bool:
         log.info(f"[semantic] Loaded cached corpus: {len(_corpus_docs)} docs")
         return True
     except Exception as e:
-        log.warning(f"[semantic] Failed to load cache: {e}")
+        log.debug(f"[semantic] Failed to load cache: {e}")
         return False
 
 
