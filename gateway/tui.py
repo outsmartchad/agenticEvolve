@@ -392,7 +392,7 @@ class StatusBar(Widget):
             parts.append(("● ready ", "bold green"))
         parts.append((f"│ {self.model_name} ", ""))
         parts.append((f"│ {self.cost_text} ", "dim"))
-        parts.append(("│ ?:help  ^n:new  ^s:sessions  ^o:model  ^q:quit", "dim"))
+        parts.append(("│ ?:help  ^n:new  ^p:sessions  ^o:model  ^q:quit", "dim"))
         text = Text()
         for content, style in parts:
             text.append(content, style=style)
@@ -493,7 +493,7 @@ class HelpScreen(ModalScreen[None]):
             yield Static("KEYBINDINGS", classes="help-section")
             yield Static(
                 "  Ctrl+N    New session\n"
-                "  Ctrl+S    Switch session\n"
+                "  Ctrl+P    Switch session\n"
                 "  Ctrl+O    Switch model\n"
                 "  Ctrl+Q    Quit\n"
                 "  ?         This help (when input empty)\n"
@@ -653,7 +653,7 @@ class AEApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit_app", "Quit", show=True),
         Binding("ctrl+n", "new_session", "New Session", show=True),
-        Binding("ctrl+s", "switch_session", "Sessions", show=True),
+        Binding("ctrl+p", "switch_session", "Sessions", show=True),
         Binding("ctrl+o", "switch_model", "Model", show=True),
         Binding("escape", "cancel_stream", "Cancel", show=False),
     ]
