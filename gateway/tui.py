@@ -580,22 +580,37 @@ class HelpScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static("agenticEvolve — Help", classes="help-title")
+
             yield Static("KEYBINDINGS", classes="help-section")
             yield Static(
-                "  Ctrl+N    New session\n"
-                "  Ctrl+P    Switch session\n"
-                "  Ctrl+O    Switch model\n"
-                "  Ctrl+Q    Quit\n"
-                "  ?         This help (when input empty)\n"
-                "  Escape    Cancel streaming / close dialog\n"
-                "  Enter     Send message\n"
-                "  PgUp/Dn   Scroll messages"
+                "  Ctrl+N    New session       Ctrl+P    Switch session\n"
+                "  Ctrl+O    Switch model      Ctrl+Q    Quit\n"
+                "  Tab       Accept suggestion  Escape    Cancel / close\n"
+                "  Enter     Send message       PgUp/Dn  Scroll messages"
             )
-            yield Static("COMMANDS", classes="help-section")
-            lines = []
-            for cmd, desc in SLASH_COMMANDS:
-                lines.append(f"  {cmd:16s} {desc}")
-            yield Static("\n".join(lines))
+
+            _categories = {
+                "Session": ["/help", "/new", "/quit"],
+                "Info": ["/cost", "/model", "/status", "/memory", "/soul",
+                         "/config", "/sessions", "/search", "/recall",
+                         "/skills", "/learnings", "/heartbeat"],
+                "Pipelines": ["/produce", "/evolve", "/decompose", "/learn",
+                              "/absorb", "/reflect", "/digest", "/gc"],
+                "Cron": ["/loop", "/loops", "/unloop", "/pause", "/unpause", "/notify"],
+                "Approval": ["/queue", "/approve", "/reject"],
+                "Admin": ["/autonomy"],
+                "Platform Digests": ["/wechat", "/discord", "/whatsapp"],
+            }
+            _cmd_map = {cmd: desc for cmd, desc in SLASH_COMMANDS}
+
+            for category, cmds in _categories.items():
+                yield Static(category.upper(), classes="help-section")
+                lines = []
+                for cmd in cmds:
+                    desc = _cmd_map.get(cmd, "")
+                    lines.append(f"  {cmd:16s} {desc}")
+                yield Static("\n".join(lines))
+
             yield Static("\n[dim]Press Escape to close[/dim]")
 
 
@@ -804,6 +819,10 @@ class AEApp(App):
                 sidebar.refresh_info()
 
         # Focus input
+        self.query_one(ChatInput).focus()
+
+    def on_click(self, event) -> None:
+        """Always keep focus on the input bar."""
         self.query_one(ChatInput).focus()
 
     # ── Input handling ──────────────────────────────────────────
