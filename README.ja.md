@@ -1,6 +1,6 @@
 # agenticEvolve
 
-**開発能力を毎日自動進化させるパーソナル・クローズドループ・エージェントシステム。**
+**自己進化するAIエージェント — 毎日自動的に成長。**
 
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
@@ -9,9 +9,11 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-39-blue?style=for-the-badge" alt="39 Commands"></a>
 </p>
 
+**[English](README.md)** | **[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)**
+
 ---
 
-`claude -p` 上に構築された永続エージェントランタイム。Python asyncio ゲートウェイ搭載。6層メモリ + クロスレイヤー自動リコール。クローズドループスキル合成。音声入出力。ブラウザ自動化。組み込みcron。2層セキュリティ。マルチプラットフォーム（Telegram + Discord + WhatsApp）。39のTelegramコマンド——開発環境をポケットに。
+`claude -p` 上に構築された永続エージェントランタイム。Python asyncioゲートウェイ搭載。6層メモリ + クロスレイヤー自動リコール。クローズドループスキル合成。音声入出力。ブラウザ自動化。組み込みcron。2層セキュリティ。マルチプラットフォーム（Telegram + Discord + WhatsApp）。Rich TUI搭載のインタラクティブCLI REPL。39のTelegramコマンド + 32のCLIコマンド — 開発環境をポケットに。
 
 ---
 
@@ -21,7 +23,7 @@
 > 「Anthropicのドキュメントに行って最新のClaudeモデルの料金を調べて。」エージェントがABPブラウザを開き、ナビゲートし、データを抽出し、簡潔なサマリーを送ってくれる。Cloudflareにブロックされたら自動でBraveに切り替え。
 
 **WhatsAppとDiscordのグループでサービス提供**
-> `/serve` → WhatsApp → グループ → 開発グループをオン。これでグループ内の誰でもあなたのAIエージェントと会話できる。すべてのメッセージに応答し、グループごとの会話メモリを維持し、すべてをTelegramのインラインキーボードで制御できる。Discordチャンネルも同様に動作——エージェントがChrome DevTools Protocolを通じてデスクトップアプリに接続する。
+> `/serve` → WhatsApp → グループ → 開発グループをオン。これでグループ内の誰でもAIエージェントと会話できる。すべてのメッセージに応答し、グループごとの会話メモリを維持し、すべてをTelegramのインラインキーボードで制御できる。Discordチャンネルも同様——エージェントがChrome DevTools Protocolを通じてデスクトップアプリに接続する。
 
 **チャンネルをサブスクライブしてダイジェストを取得**
 > `/subscribe` → Discord → よく見るチャンネルを選択。翌朝 `/discord` を実行すれば、見逃した内容の簡潔なサマリーが届く——主要な議論、共有されたリンク、言及されたツール、アクションアイテム。Discordチャンネル、WhatsAppグループ、WeChatグループに対応。500件の未読メッセージをスクロールする必要はもうない。
@@ -30,7 +32,7 @@
 > WeChatの内蔵検索はひどい。エージェントがローカルのWeChatデータベースを読み取り、検索可能なエクスポートを提供する——連絡先、メッセージ、グループ、お気に入り。すべてオフライン、すべて自分のマシン上。
 
 **グループチャットからアイデアを寝ている間に吸収**
-> 毎朝6時の `/evolve` cronはGitHubをスキャンするだけではない。WeChatの技術グループチャットも読み取り、過去24時間の議論を要約する——メンバーが言及した新ツール、共有されたリポジトリ、議論された技術——そして最良のアイデアをスキルとして吸収する。朝起きたら、グループの集合知があなたのシステムに組み込まれている。
+> 毎朝6時の `/evolve` cronはGitHubをスキャンするだけではない。WeChatの技術グループチャットも読み取り、過去24時間の議論を要約する——メンバーが言及した新ツール、共有されたリポジトリ、議論された技術——そして最良のアイデアをスキルとして吸収する。朝起きたら、グループの集合知がシステムに組み込まれている。
 
 **トレンドシグナルからビジネスアイデアをブレインストーミング**
 > `/produce` — エージェントが11のソース（GitHub Trending、Hacker News、X/Twitter、Reddit、Product Hunt、Lobste.rs、ArXiv、HuggingFace、BestOfJS、WeChatグループ、スター付きリポジトリ）から本日のシグナルを集約し、新興トレンドを特定し、収益モデル・技術スタック・MVPスコープを含む5つの具体的なアプリ/ビジネスアイデアをブレインストーミングする。オンデマンドのシグナル駆動アイデア創出。
@@ -59,20 +61,21 @@
 
 | 機能 | 説明 |
 |------|------|
-| **マルチプラットフォーム** | Telegram（Bot API）+ Discord（デスクトップCDP + REST）+ WhatsApp（Baileys v7ブリッジ）。`/subscribe` でチャンネルをモニタリングしてダイジェストを取得、`/serve` でエージェントが任意のグループやDMで積極的に応答 |
-| **ビルド** | Telegram経由でフルClaude Code——ターミナル、ファイルI/O、Web検索、MCP、26スキル |
+| **CLI REPL** | `ae` — Rich TUI搭載のインタラクティブREPL。ストリーミング出力、Markdownレンダリング、ツール使用スピナー、Tabオートコンプリート対応の32コマンド、セッション永続化、自動リコール。ゲートウェイ不要 |
+| **マルチプラットフォーム** | Telegram（Bot API）+ Discord（デスクトップCDP + REST）+ WhatsApp（Baileys v7ブリッジ）。`/subscribe` でチャンネルをモニタリングしてダイジェストを取得、`/serve` でエージェントが任意のグループやDMで応答 |
+| **ビルド** | TelegramまたはCLI経由でフルClaude Code — ターミナル、ファイルI/O、Web検索、MCP、26スキル |
 | **進化** | 5段階パイプライン：収集 → 分析 → 構築 → レビュー → 自動インストール。11ソースをスキャン：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChatグループ、スキルを合成 |
 | **吸収** | `/absorb <url>` — リポジトリをクローン、アーキテクチャをマッピング、パターンを比較、改善をシステムに統合 |
 | **学習** | `/learn <target>` — 深掘り抽出、ADOPT / ADAPT / SKIP の判定を出力 |
 | **音声** | 音声メッセージ送信 → ローカルwhisper.cpp転写（~500ms）。`/speak` → edge-tts、300+音声。広東語/北京語/日本語/韓国語を自動検出 |
 | **ブラウザ** | ABP（Agent Browser Protocol）をデフォルトブラウザとして使用。Cloudflareブロック時はBrave/Chrome（CDP）に自動切替。隔離されたエージェントプロファイル |
-| **自動リコール** | 毎回の応答前に6層メモリに対して `unified_search()` を実行（約400 tokens/メッセージ） |
+| **自動リコール** | 毎回の応答前に6層メモリに対して `unified_search()` を実行（~400 tokens/メッセージ） |
 | **cron** | `/loop every 6h /evolve` — スケジュールに従い自律的に成長 |
-| **セキュリティ** | L1：インストール前の正規表現スキャン（リバースシェル、認証情報窃取、マイナー）。L2：AgentShieldインストール後スキャン（1282テスト、102ルール）。重大な問題は自動ロールバック |
+| **セキュリティ** | L1：インストール前の正規表現スキャン（リバースシェル、認証情報窃取、暗号通貨マイナー）。L2：AgentShieldインストール後スキャン（1282テスト、102ルール）。重大な問題は自動ロールバック |
 | **フック** | 型付き非同期イベントシステム — `message_received`、`before_invoke`、`llm_output`、`tool_call`、`session_start`、`session_end` |
-| **セマンティックリコール** | TF-IDF コサイン類似度検索レイヤーがFTS5キーワード検索を補強。5000特徴ベクトライザー、バイグラム対応。セッション、学習記録、直感、メモリファイルからコーパスを再構築。`~/.agenticEvolve/cache/` にキャッシュ |
+| **セマンティックリコール** | TF-IDFコサイン類似度検索レイヤーがFTS5キーワード検索を補強。5000特徴ベクトライザー、バイグラム対応。セッション、学習記録、直感、メモリファイルからコーパスを再構築。`~/.agenticEvolve/cache/` にキャッシュ |
 | **直感エンジン** | 行動パターン観察がスコアリングされ直感テーブルにルーティング。高信頼度の直感（0.8以上、2プロジェクト以上または5回以上の観察）がMEMORY.mdに自動昇格 |
-| **耐障害性** | シャットダウン時ドレイン（処理中リクエストを最大30秒待機）。型付き障害分類（認証/課金/レート制限）。3パスコンテキスト圧縮。ホットコンフィグリロード。ループ検出（3回同一ターン警告、5回終了）。メモリキュー読み透し（デバウンス原子書き込み、古いデータ読み取りなし）。並行BUILDステージ（ThreadPoolExecutor、3つの隔離ワークスペース） |
+| **耐障害性** | シャットダウン時ドレイン（処理中リクエストを最大30秒待機）。型付き障害分類（認証/課金/レート制限）。3パスコンテキスト圧縮。ホットコンフィグリロード。ループ検出（3回同一ターンで警告、5回で終了）。メモリキュー読み透し（デバウンス原子書き込み、古いデータ読み取りなし）。並行BUILDステージ（ThreadPoolExecutor、3つの隔離ワークスペース） |
 | **テスト** | 379の自動テスト（379パス、1 xfail）。カバレッジ：81のコマンドハンドラー統合テスト（全35+ハンドラー）、セッションDB、FTS5検索、セキュリティスキャナー、シグナル重複排除、セマンティック検索、直感昇格、cronパーサー、コスト上限、ループ検出、コンテキスト圧縮、フラグ解析 |
 
 ---
@@ -85,7 +88,7 @@
 curl -fsSL https://raw.githubusercontent.com/outsmartchad/agenticEvolve/main/scripts/install.sh | bash
 ```
 
-インストーラーがすべてを処理します——クローン、依存関係、PATH設定、対話式セットアップウィザードの実行。前提条件はPython 3とgitのみ。
+インストーラーがすべてを処理します — クローン、依存関係、PATH設定、対話式セットアップウィザードの実行。前提条件はPython 3とgitのみ。
 
 インストール後：
 
@@ -95,23 +98,31 @@ source ~/.zshrc    # シェルをリロード（または: source ~/.bashrc）
 
 > **必要：** [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）— インストーラーが存在を確認し、未インストールの場合はインストールコマンドを表示します。
 
-### 2. ゲートウェイを起動
+### 2. インタラクティブチャット（CLI REPL）
+
+```bash
+ae
+```
+
+これだけです。ストリーミング出力、Markdownレンダリング、ツール使用スピナー、Tabオートコンプリート対応の32コマンドを備えたRich TUIが起動します。`ae --resume <session_id>` で前回のセッションを再開できます。
+
+### 3. ゲートウェイを起動（Telegram/Discord/WhatsApp用）
 
 ```bash
 ae gateway start
 ```
 
-### 3. チャット
-
-Telegramでボットにメッセージを送る。それだけ。
+Telegramでボットにメッセージを送るか、WhatsAppグループやDiscordチャンネルでエージェントを活用しましょう。
 
 ### 便利なコマンド
 
 | コマンド | 機能 |
 |----------|------|
+| `ae` | インタラクティブチャットREPL（デフォルト） |
+| `ae --resume ID` | 前回のセッションを再開 |
 | `ae setup` | セットアップウィザードを再実行 |
 | `ae doctor` | 問題を診断 |
-| `ae gateway start` | ゲートウェイを起動 |
+| `ae gateway start` | メッセージングゲートウェイを起動 |
 | `ae gateway stop` | ゲートウェイを停止 |
 | `ae gateway install` | launchdサービスとしてインストール（ログイン時に自動起動） |
 | `ae status` | システム概要 |
@@ -129,50 +140,99 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 
 ## コマンド
 
+すべてのコマンドはCLI REPL（`ae`）とTelegramの両方で動作します。CLI REPLでは全コマンドのTabオートコンプリートと説明が利用可能です。
+
+### コア
+
 | コマンド | 機能 |
 |----------|------|
 | _(任意のメッセージ)_ | Claude Codeとチャット |
-| _(音声メッセージ)_ | 自動転写（whisper.cpp）+ 応答（音声モード時は音声も返信） |
-| `/evolve` | シグナルをスキャン、スキルを構築・自動インストール |
+| _(音声メッセージ)_ | 自動転写（whisper.cpp）+ 応答（Telegramのみ） |
+
+### パイプライン（LLM連携）
+
+| コマンド | 機能 |
+|----------|------|
+| `/evolve [--dry-run]` | シグナルをスキャン、スキルを構築・自動インストール |
 | `/absorb <url>` | 任意のリポジトリからパターンを吸収 |
-| `/learn <target>` | 深掘り分析と判定 |
-| `/speak <text>` | テキスト→音声変換（言語自動検出） |
+| `/learn <target>` | ADOPT/STEAL/SKIPの判定付き深掘り分析 |
+| `/produce [--ideas N]` | 全シグナルからビジネスアイデアをブレインストーミング |
+| `/reflect [--days N]` | 自己分析：パターン、回避行動、次のアクション |
+| `/digest [--days N]` | 朝のブリーフィング（セッション、シグナル、コスト） |
+| `/gc [--dry-run]` | ガベージコレクション（古いセッション、孤立データ） |
+| `/wechat [--hours N]` | WeChatグループチャットダイジェスト（ローカルDB読み取り） |
+| `/discord [--hours N]` | Discordチャンネルダイジェスト（保存済みメッセージから） |
+| `/whatsapp [--hours N]` | WhatsAppグループダイジェスト（保存済みメッセージから） |
+
+### 情報
+
+| コマンド | 機能 |
+|----------|------|
 | `/recall <query>` | クロスレイヤー検索（全6層メモリ） |
 | `/search <query>` | FTS5セッション履歴検索 |
-| `/do <instruction>` | 自然言語 → 構造化コマンド |
-| `/loop <cron> <cmd>` | 定期実行をスケジュール |
-| `/memory` | エージェントメモリ状態を表示 |
+| `/memory` | MEMORY.md + USER.md を表示 |
+| `/soul` | SOUL.md パーソナリティを表示 |
+| `/config` | config.yaml 設定を表示 |
 | `/skills` | インストール済みスキル一覧（26個） |
+| `/learnings [query]` | 過去の学習記録を一覧・検索 |
+| `/sessions [N]` | 最近のセッション一覧 |
 | `/cost` | 使用量とコスト |
-| `/subscribe` | Discord/WhatsApp/WeChatチャンネルをダイジェスト用にモニタリング |
-| `/serve` | エージェントが積極的に応答するチャンネル/連絡先を選択 |
-| `/wechat [--hours N]` | WeChatグループチャットダイジェスト（简体中文） |
-| `/discord [--hours N]` | Discordチャンネルダイジェスト（サブスクライブ済み） |
-| `/whatsapp` | WhatsAppダイジェスト（近日対応予定） |
-| `/produce [--ideas N]` | 全シグナルからビジネスアイデアをブレインストーミング |
-| `/digest` | 朝のブリーフィング |
-| `/lang [code]` | `/produce`、`/learn`、`/wechat` の持続的な出力言語を設定 |
+| `/status` | システム概要 |
+| `/heartbeat` | クイックヘルスチェック |
+
+### cron
+
+| コマンド | 機能 |
+|----------|------|
+| `/loop <interval> <prompt>` | 定期実行をスケジュール（例：`/loop 6h /evolve`） |
+| `/loops` | アクティブなcronジョブを一覧 |
+| `/unloop <id>` | cronジョブを削除 |
+| `/pause <id\|--all>` | cronジョブを一時停止 |
+| `/unpause <id\|--all>` | cronジョブを再開 |
+| `/notify <delay> <msg>` | ワンショット遅延通知 |
+
+### 管理
+
+| コマンド | 機能 |
+|----------|------|
+| `/model [name]` | モデルの表示または切り替え |
+| `/autonomy [level]` | 自律レベルの表示または設定（full/supervised/locked） |
+| `/new` | 新しいセッションを開始 |
+| `/queue` | 承認待ちスキルを表示 |
+| `/approve <name>` | キュー内のスキルを承認 |
+| `/reject <name>` | キュー内のスキルを拒否 |
+
+### Telegram専用
+
+| コマンド | 機能 |
+|----------|------|
+| `/speak <text>` | テキスト→音声変換（edge-tts、言語自動検出） |
+| `/do <instruction>` | 自然言語 → 構造化コマンド |
+| `/subscribe` | ダイジェスト用にモニタリングするチャンネルを選択 |
+| `/serve` | エージェントが応答するチャンネル/連絡先を選択 |
+| `/lang [code]` | 持続的な出力言語を設定 |
 | `/restart` | ゲートウェイをリモート再起動 |
 
-[全39コマンド →](docs/commands.md)
+[全コマンド →](docs/commands.md)
 
 ---
 
 ## アーキテクチャ
 
 ```
-ユーザー (Telegram/Discord/WhatsApp/音声) → ゲートウェイ (asyncio) → フックディスパッチャー → セッション + コスト制御
+ユーザー (CLI REPL / Telegram / Discord / WhatsApp / 音声)
+  → ゲートウェイ (asyncio) または CLI (スタンドアロン) → フックディスパッチャー → セッション + コスト制御
   → 自動リコール (6層) → claude -p → SQLite → Git同期
 ```
 
-カスタムエージェントループなし。Claude Codeが**そのまま**ランタイム——25+組み込みツール、MCPサーバー、スキル。ゲートウェイがその周囲にメモリ、ルーティング、リコール、cron、音声、ブラウザ、マルチプラットフォーム、セキュリティを追加。
+カスタムエージェントループなし。Claude Codeが**そのまま**ランタイム — 25+組み込みツール、MCPサーバー、スキル。ゲートウェイがその周囲にメモリ、ルーティング、リコール、cron、音声、ブラウザ、マルチプラットフォーム、セキュリティを追加する。CLI REPL（`ae`）はゲートウェイを完全にバイパスし、同じメモリ・リコール・セッション基盤で `claude -p` を直接呼び出す。
 
 ### 設計上の重要な決定
 - **ツールシステムを作らない** — Claude Code自体がツールを持つ。スキルとインフラを構築し、抽象化層は作らない。
 - **有界メモリ** — MEMORY.md（2200文字）+ USER.md（1375文字）+ SQLite FTS5。無制限な増加なし。
 - **クローズドループ** — `auto_approve_skills: true`。進化 → 構築 → レビュー → インストール → gitに同期。人手による承認なし。
 - **シャットダウン時ドレイン** — 処理中のリクエストは再起動前に完了。作業の損失なし。
-- **モジュラーコマンド** — 39のTelegramコマンドを9つのmixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）に分割。アダプターコアは630行。
+- **モジュラーコマンド** — 39のTelegramコマンドを9つのmixin（admin、pipelines、signals、cron、approval、search、media、misc、subscribe）に分割。32コマンドをCLI REPL用に再実装。アダプターコアは630行。
 - **二層リコール** — FTS5キーワード検索 + TF-IDFセマンティック検索。自動リコールが毎回のClaude呼び出し前に関連コンテキストを注入。
 - **直感パイプライン** — セッション間で観察された行動パターンがスコアリング・重複排除され、信頼度が十分に高い場合にMEMORY.mdに自動昇格。
 
@@ -182,8 +242,8 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 
 | 方向 | 技術 | レイテンシ | コスト |
 |------|------|-----------|--------|
-| **音声 → テキスト** | ローカルwhisper.cpp（ggml-small多言語モデル） | Apple Siliconで約500ms | 無料 |
-| **テキスト → 音声** | edge-tts（300+ニューラル音声） | 約1秒 | 無料 |
+| **音声 → テキスト** | ローカルwhisper.cpp（ggml-small多言語モデル） | Apple Siliconで~500ms | 無料 |
+| **テキスト → 音声** | edge-tts（300+ニューラル音声） | ~1秒 | 無料 |
 | **言語検出** | CJKヒューリスティック（嘅係唔 → 広東語、ひらがな → 日本語） | 即時 | 無料 |
 
 自動TTSモード：`off`（`/speak`のみ）、`always`（毎回の応答）、`inbound`（ユーザーが音声を送信した場合に音声で返信）。
@@ -198,7 +258,7 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | **Brave** | ユーザー指定 / CloudflareがABPをブロック | CDPポート9222、隔離プロファイル |
 | **Chrome** | ユーザー指定 / CloudflareがABPをブロック | CDPポート9223、隔離プロファイル |
 
-エージェントプロファイルは `~/.agenticEvolve/browser-profiles/` にサンドボックス化——ユーザーの実ブラウザデータには一切触れません。
+エージェントプロファイルは `~/.agenticEvolve/browser-profiles/` にサンドボックス化 — ユーザーの実ブラウザデータには一切触れない。
 
 ---
 
@@ -215,13 +275,13 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 
 ## スケジュールされたcronジョブ
 
-4つの自律ジョブが毎日実行——人手によるトリガー不要。
+4つの自律ジョブが毎日実行 — 人手によるトリガー不要。
 
 | ジョブ | スケジュール（HKT） | 内容 |
 |--------|-------------------|------|
 | **evolve-daily** | 6:00 AM | 11ソースからシグナルを収集：GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChatグループ、候補をスコアリング、最大3つの新スキルを構築、セキュリティレビュー、自動インストール、gitにプッシュ |
-| **daily-digest** | 8:00 AM | 朝のブリーフィング——トップシグナル、構築済みスキル、セッション数、コストサマリー。Telegramに配信 |
-| **wechat-digest** | 9:00 AM | 毎日のWeChatグループチャットダイジェスト——議論内容、言及されたツール、技術グループからの重要なインサイトを要約。Telegramに配信 |
+| **daily-digest** | 8:00 AM | 朝のブリーフィング — トップシグナル、構築済みスキル、セッション数、コストサマリー。Telegramに配信 |
+| **wechat-digest** | 9:00 AM | 毎日のWeChatグループチャットダイジェスト — 議論内容、言及されたツール、技術グループからの重要なインサイトを要約。Telegramに配信 |
 | **daily-ux-review** | 1:00 AM | その日の会話を読み、摩擦点を発見、トップ3のUX改善を特定、直接実装 |
 
 `/loop`、`/loops`、`/unloop`、`/pause`、`/unpause` で管理。設定ファイル：`cron/jobs.json`。
@@ -254,9 +314,9 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | browser-switch | マルチブラウザCDP切替（Brave/Chrome） |
 | brave-search | Brave API経由のWeb検索 |
 | firecrawl | Webスクレイピング、クロール、検索、構造化抽出 |
-| cloudflare-crawl | 無料Webクロール（Cloudflare Browser Rendering API） |
+| cloudflare-crawl | Cloudflare Browser Rendering API経由の無料Webクロール |
 | jshook-messenger | jshookmcp MCP経由のDiscord/WeChat/Telegram/Slack傍受 |
-| wechat-decrypt | ローカルWeChatデータベースを読み取り、メッセージ・連絡先・グループをエクスポート（macOS） |
+| wechat-decrypt | macOS上でローカルWeChatデータベースを読み取り、メッセージ・連絡先・グループをエクスポート |
 | session-search | FTS5セッション履歴検索 |
 | cron-manager | cronジョブ管理 |
 | skill-creator | Anthropic公式スキル作成 |
@@ -275,11 +335,36 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | next-ai-draw-io | 自然言語からアーキテクチャ図を生成 |
 | mcp-elicitation | タスク中のMCPダイアログを傍受し無人パイプラインを実現 |
 | skill-gap-scan | ローカルスキルとコミュニティカタログを比較し採用ギャップを発見 |
-| context-optimizer | `/context` ヒントに基づいて古いメモリファイルを自動アーカイブ |
+| context-optimizer | `/context` ヒントに基づいて古いメモリファイルを自動圧縮 |
 
 ---
 
 ## 最近の変更
+
+### v2.3 — CLI REPL + WhatsApp LID解決
+
+**インタラクティブCLI REPL（`ae`）**
+- `ae` でスタンドアロンのRich TUI REPLが起動 — ゲートウェイプロセス不要。ストリーミング出力、Markdownレンダリング、ツール使用スピナー、コストトラッキング搭載。
+- Tabオートコンプリートと説明付きの32スラッシュコマンド。全パイプラインコマンド（`/produce`、`/evolve`、`/learn`、`/absorb`、`/reflect`、`/digest`、`/gc`）、情報コマンド（`/memory`、`/soul`、`/config`、`/skills`、`/learnings`、`/recall`、`/search`、`/sessions`）、cron管理（`/loop`、`/loops`、`/unloop`、`/pause`、`/unpause`、`/notify`）、管理コマンド（`/model`、`/autonomy`、`/queue`、`/approve`、`/reject`）。
+- セッション永続化 — すべてのメッセージが自動タイトル付きでSQLiteに保存。`ae --resume <session_id>` で前回のセッションを再開。
+- 毎回の呼び出し前に全6メモリ層から自動リコール。コスト上限の強制。
+- prompt-toolkit入力、ファイルバック履歴、自動サジェスト。
+
+**WhatsApp LID JID解決**
+- Baileys v7がDMメッセージをLID JID（`@lid`）で配信し、電話番号JID（`@s.whatsapp.net`）ではない重大なバグを修正。ブリッジが起動時に `lid-mapping-*_reverse.json` ファイルを読み込み、受信メッセージ・送信メッセージ・履歴同期でLID→電話番号を解決するように変更。
+- 以前は、`85254083858` のようなサーブ対象の連絡先が、PythonがLID JIDを電話番号ベースのサーブターゲットとマッチングできなかったため、無言で破棄されていた。
+
+**WhatsApp DM連絡先のサーブ対応**
+- `/serve` が個別のWhatsApp連絡先（グループだけでなく）をサポート。`_serve_groups` に加えて `_serve_contacts` セットを追加。サーブ対象連絡先の `allowed_users` をバイパスするようDMルーティングを更新。
+
+**WhatsApp画像サポート**
+- 受信WhatsApp画像をBaileyの `downloadMediaMessage` でダウンロードし、`/tmp/` に保存、Claudeの Read ツールに渡してビジョン分析。画像付きメッセージは自動的にopusモデルにエスカレーション。
+
+**自動モデルエスカレーション**
+- 数学、コーディング、ロジック問題を含むメッセージを正規表現で自動検出し、デフォルトの `serve_model`（sonnet）ではなく `serve_reasoning_model`（opus）にルーティング。画像メッセージもエスカレーションをトリガー。
+
+**チャンネル固有ナレッジ**
+- `run.py` の `_CHANNEL_KNOWLEDGE` ディクショナリがチャンネル/グループIDをエキスパートナレッジプロンプトにマッピング。DiscordとWhatsAppのサーブチャンネルで、パーソナリティプロンプトの後に注入。degen-damm DiscordチャンネルでのDAMM v2エキスパティーズに使用。
 
 ### v2.2 — マルチプラットフォーム + サブスクライブ/サーブ
 
@@ -318,7 +403,7 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 | `test_agent.py` | 27 | stderr分類、履歴圧縮（3パスカスケード）、タイトル生成、ループ検出 |
 | `test_semantic.py` | 11 | コーパス構築（セッション、学習、直感）、検索関連性、キャッシュ、スコアフィルタリング |
 | `test_instincts.py` | 8 | コンテキストバグ回帰、自動昇格（昇格、重複排除、文字制限） |
-| `test_gateway.py` | 10 | cronパーサー（毎分/特定/ステップ/日跨ぎ）、セッションキー、コスト上限 |
+| `test_gateway.py` | 10 | cronパーサー（毎回/特定/ステップ/日跨ぎ）、セッションキー、コスト上限 |
 | `test_voice.py` | 57 | TTS設定、言語検出、音声フォーマット変換、STT転写、TTSディレクティブ |
 | `test_absorb.py` | 49 | コンストラクター、レポート、スキャンプロンプト、セキュリティプリスキャン、WeChat時間解析、ドライラン、AgentShield |
 | `test_telegram.py` | 13 | フラグ解析（bool/値/エイリアス/キャスト）、ユーザー許可リスト |

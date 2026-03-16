@@ -346,6 +346,17 @@ SLASH_COMMANDS = [
     ("/reject", "Reject a queued skill"),
     # Admin
     ("/autonomy", "Show or set autonomy level"),
+    # Platform digests
+    ("/wechat", "WeChat group chat digest"),
+    ("/discord", "Discord channel digest (subscribed)"),
+    ("/whatsapp", "WhatsApp group digest"),
+    # Telegram-only
+    ("/subscribe", "Select channels to monitor (Telegram only)"),
+    ("/serve", "Select channels for agent to respond (Telegram only)"),
+    ("/speak", "Text-to-speech (Telegram only)"),
+    ("/do", "Natural language -> command (Telegram only)"),
+    ("/lang", "Set output language (Telegram only)"),
+    ("/restart", "Restart gateway (Telegram only)"),
 ]
 
 
@@ -473,6 +484,20 @@ def handle_command(cmd: str, state: SessionState) -> bool:
     # ── Admin ──
     elif name in ("/autonomy",):
         _cmd_autonomy(state, arg)
+
+    # ── Platform Digests ──
+    elif name in ("/wechat",):
+        _cmd_wechat(state, arg)
+    elif name in ("/discord",):
+        _cmd_discord(state, arg)
+    elif name in ("/whatsapp",):
+        _cmd_whatsapp(state, arg)
+
+    # ── Telegram-only (show message) ──
+    elif name in ("/subscribe", "/serve"):
+        console.print(f"[yellow]{name} uses Telegram inline keyboards and is only available via Telegram.[/yellow]")
+    elif name in ("/speak", "/do", "/lang", "/restart"):
+        console.print(f"[yellow]{name} is only available via Telegram.[/yellow]")
 
     else:
         console.print(f"[yellow]Unknown command: {name}[/yellow]")
@@ -1242,6 +1267,253 @@ def _cmd_gc(arg: str):
     report = run_gc(dry_run=flags["--dry-run"])
     text = format_gc_report(report)
     console.print(Markdown(text))
+
+
+# ══════════════════════════════════════════════════════════════════
+#  PLATFORM DIGEST COMMANDS
+# ══════════════════════════════════════════════════════════════════
+
+def _cmd_wechat(state: SessionState, arg: str):
+    """WeChat group chat digest — reads local decrypted DBs."""
+    raw_args = arg.split() if arg else []
+    flags = _parse_flags(raw_args, {
+        "--hours": {"type": "value", "cast": int, "default": 24},
+        "--model": {"type": "value"},
+    })
+    hours = max(1, min(flags["--hours"], 168))
+    model = flags["--model"] or state.model
+
+    console.print(f"[dim]Reading WeChat groups (last {hours}h)...[/dim]")
+
+    tools_dir = Path.home() / ".agenticEvolve" / "tools" / "wechat-decrypt"
+    decrypted_dir = tools_dir / "decrypted"
+
+    if not decrypted_dir.exists():
+        console.print("[yellow]No decrypted WeChat data found.[/yellow]")
+        console.print("[dim]Run: cd ~/.agenticEvolve/tools/wechat-decrypt && sudo ./find_keys && python3 decrypt_db.py[/dim]")
+        return
+
+    # Load messages via collector
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "wechat_collector",
+            str(Path.home() / ".agenticEvolve" / "collectors" / "wechat.py")
+        )
+        wechat_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(wechat_mod)
+        signals = wechat_mod.extract_group_messages(decrypted_dir, hours=hours)
+    except Exception as e:
+        console.print(f"[red]Failed to read WeChat messages: {e}[/red]")
+        return
+
+    if not signals:
+        console.print(f"[dim]No WeChat group messages in the last {hours} hours.[/dim]")
+        return
+
+    # Build conversation text
+    chat_lines = []
+    total_msgs = 0
+    for s in signals:
+        meta = s.get("metadata", {})
+        chat_lines.append(f"## {meta.get('group_name', 'Unknown')} "
+                          f"({meta.get('message_count', 0)} msgs, "
+                          f"{meta.get('unique_senders', 0)} senders)")
+        chat_lines.append(s.get("content", ""))
+        chat_lines.append("")
+        total_msgs += meta.get("message_count", 0)
+
+    chat_text = "\n".join(chat_lines)
+    if len(chat_text) > 30000:
+        chat_text = chat_text[:30000] + "\n\n... (truncated)"
+
+    console.print(f"[dim]Analyzing {total_msgs} messages across {len(signals)} groups...[/dim]")
+
+    prompt = (
+        f"You are Vincent's personal AI assistant analyzing his WeChat group chats.\n\n"
+        f"Here are the last {hours} hours of group conversations ({total_msgs} messages "
+        f"across {len(signals)} groups):\n\n"
+        f"{chat_text}\n\n"
+        f"Create a concise, actionable digest. Summarize EACH GROUP SEPARATELY.\n\n"
+        f"For EACH group:\n"
+        f"## [Group Name] (N messages, N senders)\n"
+        f"**关键要点** (3-5 bullet points)\n"
+        f"**提到的工具 & 仓库** (list with URLs)\n"
+        f"**技术洞察** (useful tips, patterns)\n"
+        f"**热议话题** (what people are talking about)\n\n"
+        f"After all groups:\n"
+        f"## Vincent 的 Action Items\n"
+        f"(Combined, prioritized)\n\n"
+        f"Be concise. Skip noise. Respond in 简体中文. Use Markdown."
+    )
+
+    result = _invoke_claude_streaming(
+        prompt, on_progress=_cli_progress, model=model,
+        session_context=f"[WeChat digest: {hours}h, {len(signals)} groups]"
+    )
+
+    text = result.get("text", "No analysis generated.")
+    cost = result.get("cost", 0.0)
+    console.print()
+    console.print(Markdown(f"**WeChat Digest — last {hours}h** | {total_msgs} msgs, {len(signals)} groups\n\n{text}"))
+    console.print(f"\n[dim]${cost:.4f}[/dim]")
+    if cost > 0:
+        log_cost(cost, platform="cli", session_id=state.session_id, pipeline="wechat")
+
+
+def _cmd_discord(state: SessionState, arg: str):
+    """Discord channel digest — reads from stored platform_messages."""
+    raw_args = arg.split() if arg else []
+    flags = _parse_flags(raw_args, {
+        "--hours": {"type": "value", "cast": int, "default": 24},
+        "--model": {"type": "value"},
+    })
+    hours = max(1, min(flags["--hours"], 168))
+    model = flags["--model"] or state.model
+
+    from gateway.session_db import get_platform_messages, get_subscriptions
+    # Use a default user_id for CLI (Vincent's Telegram ID)
+    subs = get_subscriptions("934847281", mode="subscribe", platform="discord")
+    if not subs:
+        console.print("[yellow]No Discord channels subscribed.[/yellow]")
+        console.print("[dim]Use /subscribe in Telegram to select channels first.[/dim]")
+        return
+
+    channel_ids = [s["target_id"] for s in subs]
+    channel_names = {s["target_id"]: s.get("target_name", s["target_id"]) for s in subs}
+
+    messages = get_platform_messages("discord", channel_ids, hours=hours)
+    if not messages:
+        console.print(f"[dim]No Discord messages in the last {hours} hours.[/dim]")
+        return
+
+    # Group by channel
+    from collections import defaultdict
+    by_channel = defaultdict(list)
+    for m in messages:
+        by_channel[m["chat_id"]].append(m)
+
+    chat_lines = []
+    total_msgs = len(messages)
+    for cid, msgs in by_channel.items():
+        name = channel_names.get(cid, cid)
+        chat_lines.append(f"## #{name} ({len(msgs)} messages)")
+        for m in msgs:
+            ts = m["timestamp"][:16]
+            sender = m.get("sender_name") or m["user_id"]
+            chat_lines.append(f"[{ts}] {sender}: {m['content']}")
+        chat_lines.append("")
+
+    chat_text = "\n".join(chat_lines)
+    if len(chat_text) > 30000:
+        chat_text = chat_text[:30000] + "\n\n... (truncated)"
+
+    console.print(f"[dim]Analyzing {total_msgs} messages across {len(by_channel)} channels...[/dim]")
+
+    prompt = (
+        f"You are analyzing Discord messages.\n\n"
+        f"Last {hours} hours ({total_msgs} messages, {len(by_channel)} channels):\n\n"
+        f"{chat_text}\n\n"
+        f"Concise digest. Each channel separately:\n"
+        f"## #[Channel] (N msgs)\n"
+        f"**Key Takeaways** (3-5 bullets)\n"
+        f"**Tools & Repos** (with URLs)\n"
+        f"**Notable Discussions**\n\n"
+        f"Then: ## Action Items (combined, prioritized)\n"
+        f"Use Markdown."
+    )
+
+    result = _invoke_claude_streaming(
+        prompt, on_progress=_cli_progress, model=model,
+        session_context=f"[Discord digest: {hours}h, {len(by_channel)} channels]"
+    )
+
+    text = result.get("text", "No analysis generated.")
+    cost = result.get("cost", 0.0)
+    console.print()
+    console.print(Markdown(f"**Discord Digest — last {hours}h** | {total_msgs} msgs, {len(by_channel)} channels\n\n{text}"))
+    console.print(f"\n[dim]${cost:.4f}[/dim]")
+    if cost > 0:
+        log_cost(cost, platform="cli", session_id=state.session_id, pipeline="discord")
+
+
+def _cmd_whatsapp(state: SessionState, arg: str):
+    """WhatsApp group digest — reads from stored platform_messages."""
+    raw_args = arg.split() if arg else []
+    flags = _parse_flags(raw_args, {
+        "--hours": {"type": "value", "cast": int, "default": 24},
+        "--model": {"type": "value"},
+    })
+    hours = max(1, min(flags["--hours"], 168))
+    model = flags["--model"] or state.model
+
+    from gateway.session_db import get_platform_messages, get_subscriptions, get_serve_targets
+    # Combine subscribed + served WhatsApp groups
+    subs = get_subscriptions("934847281", mode="subscribe", platform="whatsapp")
+    serves = get_serve_targets("whatsapp")
+    all_ids = {s["target_id"] for s in subs} | {t["target_id"] for t in serves}
+    all_names = {}
+    for s in subs:
+        all_names[s["target_id"]] = s.get("target_name", s["target_id"])
+    for t in serves:
+        all_names[t["target_id"]] = t.get("target_name", t["target_id"])
+
+    if not all_ids:
+        console.print("[yellow]No WhatsApp groups subscribed or served.[/yellow]")
+        console.print("[dim]Use /subscribe or /serve in Telegram to select groups first.[/dim]")
+        return
+
+    messages = get_platform_messages("whatsapp", list(all_ids), hours=hours)
+    if not messages:
+        console.print(f"[dim]No WhatsApp messages in the last {hours} hours.[/dim]")
+        return
+
+    from collections import defaultdict
+    by_chat = defaultdict(list)
+    for m in messages:
+        by_chat[m["chat_id"]].append(m)
+
+    chat_lines = []
+    for cid, msgs in by_chat.items():
+        name = all_names.get(cid, cid)
+        chat_lines.append(f"## {name} ({len(msgs)} messages)")
+        for m in msgs:
+            ts = m["timestamp"][:16]
+            sender = m.get("sender_name") or m["user_id"].split("@")[0]
+            chat_lines.append(f"[{ts}] {sender}: {m['content']}")
+        chat_lines.append("")
+
+    chat_text = "\n".join(chat_lines)
+    if len(chat_text) > 30000:
+        chat_text = chat_text[:30000] + "\n\n... (truncated)"
+
+    total_msgs = len(messages)
+    console.print(f"[dim]Analyzing {total_msgs} messages across {len(by_chat)} groups...[/dim]")
+
+    prompt = (
+        f"You are analyzing WhatsApp group chat messages.\n\n"
+        f"Last {hours} hours ({total_msgs} messages, {len(by_chat)} groups):\n\n"
+        f"{chat_text}\n\n"
+        f"Concise digest. Each group separately:\n"
+        f"## [Group] (N msgs)\n"
+        f"**Key Topics** (3-5 bullets)\n"
+        f"**Notable Links/Resources**\n"
+        f"**Action Items**\n\n"
+        f"Use Markdown."
+    )
+
+    result = _invoke_claude_streaming(
+        prompt, on_progress=_cli_progress, model=model,
+        session_context=f"[WhatsApp digest: {hours}h, {len(by_chat)} groups]"
+    )
+
+    text = result.get("text", "No analysis generated.")
+    cost = result.get("cost", 0.0)
+    console.print()
+    console.print(Markdown(f"**WhatsApp Digest — last {hours}h** | {total_msgs} msgs, {len(by_chat)} groups\n\n{text}"))
+    console.print(f"\n[dim]${cost:.4f}[/dim]")
+    if cost > 0:
+        log_cost(cost, platform="cli", session_id=state.session_id, pipeline="whatsapp")
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -160,6 +160,9 @@ All commands work in both the CLI REPL (`ae`) and Telegram. The CLI REPL support
 | `/reflect [--days N]` | Self-analysis: patterns, avoidance, next actions |
 | `/digest [--days N]` | Morning briefing (sessions, signals, cost) |
 | `/gc [--dry-run]` | Garbage collection (stale sessions, orphans) |
+| `/wechat [--hours N]` | WeChat group chat digest (reads local DBs) |
+| `/discord [--hours N]` | Discord channel digest (from stored messages) |
+| `/whatsapp [--hours N]` | WhatsApp group digest (from stored messages) |
 
 ### Info
 
@@ -207,9 +210,6 @@ All commands work in both the CLI REPL (`ae`) and Telegram. The CLI REPL support
 | `/do <instruction>` | Natural language → structured command |
 | `/subscribe` | Select channels to monitor for digests |
 | `/serve` | Select channels/contacts where the agent responds |
-| `/wechat [--hours N]` | WeChat group chat digest |
-| `/discord [--hours N]` | Discord channel digest |
-| `/whatsapp` | WhatsApp digest |
 | `/lang [code]` | Set persistent output language |
 | `/restart` | Restart gateway remotely |
 
