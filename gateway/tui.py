@@ -2443,21 +2443,39 @@ class AEApp(App):
                 self.call_from_thread(self._add_system_message, f"[red]Voice list failed: {e}[/red]")
             return
 
-        # Generate TTS — use asyncio.run() in worker thread (safe since no existing loop here)
+        # Generate TTS via edge-tts CLI to avoid asyncio event loop conflicts
         self.call_from_thread(self._add_system_message, "[dim]Generating speech...[/dim]")
         try:
-            from gateway.voice import text_to_speech
-            audio_path = _asyncio.run(text_to_speech(arg, output_format="mp3"))
+            from gateway.voice import TMP_AUDIO, DEFAULT_TTS_VOICE, MAX_TTS_CHARS, _ensure_dirs
+            _ensure_dirs()
 
-            if not audio_path or not audio_path.exists() or audio_path.stat().st_size == 0:
-                self.call_from_thread(self._add_system_message, "[red]TTS produced no audio.[/red]")
+            text = arg
+            if len(text) > MAX_TTS_CHARS:
+                text = text[:MAX_TTS_CHARS] + "..."
+
+            timestamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            mp3_path = TMP_AUDIO / f"tts_{timestamp}.mp3"
+
+            # Use edge-tts CLI directly (no asyncio needed)
+            proc = subprocess.run(
+                ["edge-tts", "--voice", DEFAULT_TTS_VOICE, "--text", text, "--write-media", str(mp3_path)],
+                capture_output=True, text=True, timeout=30,
+            )
+
+            if proc.returncode != 0:
+                err = proc.stderr.strip()[:200] if proc.stderr else "unknown"
+                self.call_from_thread(self._add_system_message, f"[red]TTS failed: {err}[/red]")
+                return
+
+            if not mp3_path.exists() or mp3_path.stat().st_size == 0:
+                self.call_from_thread(self._add_system_message, "[red]TTS produced empty file.[/red]")
                 return
 
             self.call_from_thread(
                 self._add_system_message,
-                f"[green]Playing audio ({audio_path.stat().st_size // 1024}KB)...[/green]"
+                f"[green]Playing audio ({mp3_path.stat().st_size // 1024}KB)...[/green]"
             )
-            subprocess.run(["afplay", str(audio_path)], timeout=120)
+            subprocess.run(["afplay", str(mp3_path)], timeout=120)
             self.call_from_thread(self._add_system_message, "[dim]Playback complete.[/dim]")
 
         except Exception as e:
