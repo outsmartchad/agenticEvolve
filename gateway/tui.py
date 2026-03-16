@@ -2443,28 +2443,14 @@ class AEApp(App):
                 self.call_from_thread(self._add_system_message, f"[red]Voice list failed: {e}[/red]")
             return
 
-        # Generate TTS — use subprocess to avoid asyncio event loop conflicts in worker thread
+        # Generate TTS — use asyncio.run() in worker thread (safe since no existing loop here)
         self.call_from_thread(self._add_system_message, "[dim]Generating speech...[/dim]")
         try:
-            proc = subprocess.run(
-                [
-                    sys.executable, "-c",
-                    "import asyncio; from gateway.voice import text_to_speech; "
-                    "p = asyncio.run(text_to_speech('''{}''', output_format='mp3')); "
-                    "print(p if p else '')".format(arg.replace("'", "\\'"))
-                ],
-                capture_output=True, text=True, timeout=30,
-                cwd=str(EXODIR),
-            )
-            audio_path_str = proc.stdout.strip()
-            if proc.returncode != 0 or not audio_path_str:
-                err = proc.stderr.strip()[:200] if proc.stderr else "unknown error"
-                self.call_from_thread(self._add_system_message, f"[red]TTS produced no audio: {err}[/red]")
-                return
+            from gateway.voice import text_to_speech
+            audio_path = _asyncio.run(text_to_speech(arg, output_format="mp3"))
 
-            audio_path = Path(audio_path_str)
-            if not audio_path.exists() or audio_path.stat().st_size == 0:
-                self.call_from_thread(self._add_system_message, "[red]TTS produced empty file.[/red]")
+            if not audio_path or not audio_path.exists() or audio_path.stat().st_size == 0:
+                self.call_from_thread(self._add_system_message, "[red]TTS produced no audio.[/red]")
                 return
 
             self.call_from_thread(
