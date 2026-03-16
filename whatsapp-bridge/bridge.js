@@ -105,7 +105,7 @@ async function startBridge() {
 
   // ── Incoming messages ───────────────────────────────────────
 
-  sock.ev.on("messages.upsert", ({ messages, type: upsertType }) => {
+  sock.ev.on("messages.upsert", async ({ messages, type: upsertType }) => {
     if (upsertType !== "notify") return;
 
     for (const msg of messages) {
