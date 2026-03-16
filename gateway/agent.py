@@ -205,7 +205,8 @@ def _classify_stderr(stderr: str) -> InvokeFailReason:
 
 
 def build_system_prompt(config: dict | None = None,
-                        context_mode: str | None = None) -> str:
+                        context_mode: str | None = None,
+                        user_id: str | None = None) -> str:
     """Assemble system prompt from SOUL.md + MEMORY.md + USER.md + autonomy rules.
 
     Args:
@@ -266,6 +267,34 @@ def build_system_prompt(config: dict | None = None,
             log.debug(f"Loaded context overlay: {context_mode}")
         else:
             log.debug(f"Context overlay '{context_mode}' not found at {overlay_path}, skipping")
+
+    # Language preference injection — applies to all platforms (TUI, Telegram, etc.)
+    # Soft preference: match the language the user is writing in. The stored /lang
+    # pref is a *default* — if the current message is in English, respond in English.
+    if user_id:
+        try:
+            from .session_db import get_user_pref
+            lang_code = get_user_pref(user_id, "lang")
+            if lang_code and lang_code != "en":
+                _LANG_NAMES = {
+                    "zh": "Simplified Chinese (简体中文)", "en": "English",
+                    "ja": "Japanese (日本語)", "ko": "Korean (한국어)",
+                    "es": "Spanish (Español)", "fr": "French (Français)",
+                    "de": "German (Deutsch)", "ru": "Russian (Русский)",
+                    "pt": "Portuguese (Português)", "ar": "Arabic (العربية)",
+                    "hi": "Hindi (हिन्दी)", "it": "Italian (Italiano)",
+                    "th": "Thai (ไทย)", "vi": "Vietnamese (Tiếng Việt)",
+                    "zh-tw": "Traditional Chinese (繁體中文)",
+                    "yue": "Cantonese (廣東話)",
+                }
+                lang_name = _LANG_NAMES.get(lang_code, lang_code)
+                parts.append(
+                    f"Language preference: the user prefers {lang_name} by default. "
+                    f"Match the language the user writes in — if they write in English, "
+                    f"reply in English. If they write in {lang_name}, reply in {lang_name}."
+                )
+        except Exception:
+            pass
 
     return "\n\n".join(parts)
 
@@ -423,7 +452,8 @@ def invoke_claude(message: str, model: str = "sonnet",
                    allowed_tools: list[str] | None = None,
                    config: dict | None = None,
                    use_workspace: bool = False,
-                   max_seconds: int = 600) -> dict:
+                   max_seconds: int = 600,
+                   user_id: str | None = None) -> dict:
     """
     Invoke Claude Code with a message and return the response.
 
@@ -441,7 +471,7 @@ def invoke_claude(message: str, model: str = "sonnet",
 
     Returns dict with keys: text, cost, success
     """
-    system_prompt = build_system_prompt(config)
+    system_prompt = build_system_prompt(config, user_id=user_id)
 
     # Resolve autonomy level if no explicit allowed_tools given
     if allowed_tools is None and config:

@@ -88,7 +88,7 @@ class ApprovalMixin:
         ok, msg = reject_skill(name, reason)
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-    # ── /scan-skills — AgentShield retrospective scan ─────────────
+    # ── /scanskills — AgentShield retrospective scan ─────────────
 
     async def _handle_scan_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Run AgentShield on all installed skills and report findings."""

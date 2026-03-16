@@ -416,6 +416,18 @@ class TelegramAdapter(
         def start_reporter():
             state["done"] = False
             state["start_time"] = time.time()
+
+            async def _send_initial():
+                """Send the first status message immediately so user sees feedback right away."""
+                try:
+                    msg = await self.app.bot.send_message(
+                        chat_id=int(chat_id), text="starting..."
+                    )
+                    state["msg_id"] = msg.message_id
+                except Exception:
+                    pass
+
+            asyncio.ensure_future(_send_initial())
             state["reporter_task"] = asyncio.ensure_future(_reporter_loop())
 
         def stop_reporter():
@@ -486,6 +498,32 @@ class TelegramAdapter(
                 return
             # Social/media links or URLs with context → fall through to Claude chat
 
+        # Detect repeated greetings — if user sent a greeting within the last 5 messages,
+        # skip Claude and return a direct engagement hook instead of another flat ack.
+        _GREETINGS = {"hi", "hey", "hello", "yo", "sup", "hiya", "howdy"}
+        is_greeting = text.strip().lower() in _GREETINGS
+        if is_greeting:
+            try:
+                import sqlite3 as _sqlite3
+                _db_path = Path.home() / ".agenticEvolve" / "memory" / "sessions.db"
+                if _db_path.exists():
+                    with _sqlite3.connect(str(_db_path)) as _conn:
+                        rows = _conn.execute(
+                            "SELECT role, content FROM messages "
+                            "ORDER BY timestamp DESC LIMIT 8"
+                        ).fetchall()
+                    prior_user_greetings = [
+                        r for r in rows
+                        if r[0] == "user"
+                        and r[1].strip().lower() in _GREETINGS
+                        and r[1].strip().lower() != text.strip().lower()
+                    ]
+                    if prior_user_greetings:
+                        await update.message.reply_text("What are you building today?")
+                        return
+            except Exception:
+                pass  # fall through to Claude on any DB error
+
         # General chat via Claude (use /do for intent parsing)
         typing_active = True
         async def keep_typing():
@@ -554,7 +592,7 @@ class TelegramAdapter(
             "queue": self._handle_queue,
             "approve": self._handle_approve,
             "reject": self._handle_reject,
-            "scan-skills": self._handle_scan_skills,
+            "scanskills": self._handle_scan_skills,
             "learn": self._handle_learn,
             "gc": self._handle_gc,
             "absorb": self._handle_absorb,

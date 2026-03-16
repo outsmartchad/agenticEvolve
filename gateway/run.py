@@ -347,7 +347,7 @@ class GatewayRunner:
 
     async def _tracked_invoke(self, session_id: str, text: str, model: str,
                                history: list, session_context: str,
-                               cfg: dict) -> dict:
+                               cfg: dict, user_id: str | None = None) -> dict:
         """Invoke Claude in executor and track the future in _inflight for drain-on-shutdown."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -355,7 +355,7 @@ class GatewayRunner:
             lambda: invoke_claude(
                 text, model=model, history=history,
                 session_context=session_context,
-                config=cfg
+                config=cfg, user_id=user_id
             )
         )
 
@@ -528,7 +528,8 @@ class GatewayRunner:
             # Track in-flight futures for drain-on-shutdown
             fut = asyncio.ensure_future(
                 self._tracked_invoke(session_id, invoke_text, model,
-                                     history, session_context, cfg)
+                                     history, session_context, cfg,
+                                     user_id=user_id)
             )
             self._inflight.add(fut)
             fut.add_done_callback(self._inflight.discard)

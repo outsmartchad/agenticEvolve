@@ -159,6 +159,10 @@ class DiscordClientAdapter(BasePlatformAdapter):
                     log.warning(f"Discord rate limited, waiting {retry}s")
                     await asyncio.sleep(retry)
                     return await self._api_get(path)
+                elif resp.status in (401, 403):
+                    log.error(f"Discord API {path}: {resp.status} — auth failed, stopping poll")
+                    self._auth_failed = True
+                    return None
                 else:
                     log.error(f"Discord API {path}: {resp.status}")
                     return None
@@ -198,8 +202,14 @@ class DiscordClientAdapter(BasePlatformAdapter):
                 self._last_msg_id[channel_id] = msgs[0]["id"]
 
         while True:
+            if getattr(self, "_auth_failed", False):
+                log.error("Discord auth failed — stopping poll loop")
+                return
             try:
                 for channel_id in self.watch_channels:
+                    if getattr(self, "_auth_failed", False):
+                        log.error("Discord auth failed mid-poll — stopping")
+                        return
                     after = self._last_msg_id.get(channel_id, "0")
                     msgs = await self._api_get(
                         f"/channels/{channel_id}/messages?after={after}&limit=50"

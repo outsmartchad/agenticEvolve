@@ -869,9 +869,21 @@ def _discover_targets(user_id: str, mode: str) -> dict[str, list[dict]]:
     except Exception:
         pass
 
-    # ── 4. Discord: local DB only — no REST API calls (account limited) ──
-    # Discord targets come from steps 1 & 2 (subscriptions + platform_messages).
-    # No network calls to Discord servers.
+    # ── 4. Discord cache — read channel IDs from Chromium disk cache ──
+    # Discord desktop app caches API responses locally. We parse those
+    # to discover channels the user has visited (zero network calls).
+    try:
+        _cache_reader_dir = str(EXODIR.parent / "tools" / "discord-local")
+        import importlib, sys as _sys
+        if _cache_reader_dir not in _sys.path:
+            _sys.path.insert(0, _cache_reader_dir)
+        _rc = importlib.import_module("read_cache")
+        for ch_id in _rc.get_cached_channel_ids():
+            if mode == "serve":
+                continue  # Discord serve is disabled
+            _add("discord", ch_id, f"Channel {ch_id}", "channel")
+    except Exception:
+        pass
 
     # ── Sort each platform: subscribed first, then by name ──
     for platform in result:
