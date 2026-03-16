@@ -13,7 +13,7 @@
 
 ---
 
-Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. Multi-platform (Telegram + Discord + WhatsApp). 39 Telegram commands — your entire dev machine in your pocket.
+Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-layer memory + cross-layer auto-recall. Closed-loop skill synthesis. Voice I/O. Browser automation. Built-in cron. 2-layer security. Multi-platform (Telegram + Discord + WhatsApp). Interactive CLI REPL with Rich TUI. 39 Telegram commands + 32 CLI commands — your entire dev machine in your pocket.
 
 ---
 
@@ -61,8 +61,9 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 
 | Capability | Description |
 |------------|-------------|
+| **CLI REPL** | `ae` — Interactive Rich TUI with streaming output, markdown rendering, tool use spinners, 32 commands with Tab autocomplete, session persistence, auto-recall. No gateway required |
 | **Multi-Platform** | Telegram (bot API) + Discord (desktop CDP + REST) + WhatsApp (Baileys v7 bridge). `/subscribe` to monitor channels for digests, `/serve` to make the agent respond in any group or DM |
-| **Build** | Full Claude Code over Telegram — terminal, file I/O, web search, MCP, 26 skills |
+| **Build** | Full Claude Code over Telegram or CLI — terminal, file I/O, web search, MCP, 26 skills |
 | **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans 11 sources: GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChat groups, synthesizes skills |
 | **Absorb** | `/absorb <url>` — clones repo, maps architecture, diffs patterns, implements improvements into your system |
 | **Learn** | `/learn <target>` — deep-dive extraction with ADOPT / ADAPT / SKIP verdicts |
@@ -97,23 +98,31 @@ source ~/.zshrc    # reload shell (or: source ~/.bashrc)
 
 > **Requires:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) — the installer checks for it and shows the install command if missing.
 
-### 2. Start the Gateway
+### 2. Interactive Chat (CLI REPL)
+
+```bash
+ae
+```
+
+That's it. You get a Rich TUI with streaming output, markdown rendering, tool use spinners, and all 32 commands with Tab autocomplete. Resume a previous session with `ae --resume <session_id>`.
+
+### 3. Start the Gateway (for Telegram/Discord/WhatsApp)
 
 ```bash
 ae gateway start
 ```
 
-### 3. Chat
-
-Message your bot on Telegram. That's it.
+Message your bot on Telegram, or let the agent serve your WhatsApp groups and Discord channels.
 
 ### Useful Commands
 
 | Command | What it does |
 |---------|-------------|
+| `ae` | Interactive chat REPL (default) |
+| `ae --resume ID` | Resume a previous session |
 | `ae setup` | Re-run the setup wizard |
 | `ae doctor` | Diagnose issues |
-| `ae gateway start` | Start the gateway |
+| `ae gateway start` | Start the messaging gateway |
 | `ae gateway stop` | Stop the gateway |
 | `ae gateway install` | Install as launchd service (auto-start on login) |
 | `ae status` | System overview |
@@ -131,50 +140,99 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 
 ## Commands
 
+All commands work in both the CLI REPL (`ae`) and Telegram. The CLI REPL supports Tab autocomplete with descriptions for all commands.
+
+### Core
+
 | Command | Function |
 |---------|----------|
 | _(any message)_ | Chat with Claude Code |
-| _(voice message)_ | Auto-transcribe (whisper.cpp) + reply (+ voice if mode=inbound) |
-| `/evolve` | Scan signals, build and auto-install skills |
+| _(voice message)_ | Auto-transcribe (whisper.cpp) + reply (Telegram only) |
+
+### Pipelines (LLM-backed)
+
+| Command | Function |
+|---------|----------|
+| `/evolve [--dry-run]` | Scan signals, build and auto-install skills |
 | `/absorb <url>` | Absorb patterns from any repo |
-| `/learn <target>` | Deep-dive with verdicts |
-| `/speak <text>` | Text-to-speech (auto-detects language) |
+| `/learn <target>` | Deep-dive with ADOPT/STEAL/SKIP verdicts |
+| `/produce [--ideas N]` | Brainstorm business ideas from all signals |
+| `/reflect [--days N]` | Self-analysis: patterns, avoidance, next actions |
+| `/digest [--days N]` | Morning briefing (sessions, signals, cost) |
+| `/gc [--dry-run]` | Garbage collection (stale sessions, orphans) |
+
+### Info
+
+| Command | Function |
+|---------|----------|
 | `/recall <query>` | Cross-layer search (all 6 memory layers) |
 | `/search <query>` | FTS5 search past sessions |
-| `/do <instruction>` | Natural language → structured command |
-| `/loop <cron> <cmd>` | Schedule recurring execution |
-| `/memory` | View agent memory state |
+| `/memory` | View MEMORY.md + USER.md |
+| `/soul` | View SOUL.md personality |
+| `/config` | View config.yaml settings |
 | `/skills` | List installed skills (26) |
+| `/learnings [query]` | List or search past learnings |
+| `/sessions [N]` | List recent sessions |
 | `/cost` | Usage and spend |
-| `/subscribe` | Select Discord/WhatsApp/WeChat channels to monitor for digests |
-| `/serve` | Select channels/contacts where the agent actively responds |
-| `/wechat [--hours N]` | WeChat group chat digest (简体中文) |
-| `/discord [--hours N]` | Discord channel digest (subscribed channels) |
-| `/whatsapp` | WhatsApp digest (coming soon) |
-| `/produce [--ideas N]` | Brainstorm business ideas from all signals |
-| `/digest` | Morning briefing |
-| `/lang [code]` | Set persistent output language for `/produce`, `/learn`, `/wechat` |
+| `/status` | System overview |
+| `/heartbeat` | Quick health check |
+
+### Cron
+
+| Command | Function |
+|---------|----------|
+| `/loop <interval> <prompt>` | Schedule recurring execution (e.g. `/loop 6h /evolve`) |
+| `/loops` | List active cron jobs |
+| `/unloop <id>` | Remove a cron job |
+| `/pause <id\|--all>` | Pause a cron job |
+| `/unpause <id\|--all>` | Resume a cron job |
+| `/notify <delay> <msg>` | One-shot delayed notification |
+
+### Admin
+
+| Command | Function |
+|---------|----------|
+| `/model [name]` | Show or switch model |
+| `/autonomy [level]` | Show or set autonomy level (full/supervised/locked) |
+| `/new` | Start a new session |
+| `/queue` | Show skills pending approval |
+| `/approve <name>` | Approve a queued skill |
+| `/reject <name>` | Reject a queued skill |
+
+### Telegram-only
+
+| Command | Function |
+|---------|----------|
+| `/speak <text>` | Text-to-speech (edge-tts, auto-detects language) |
+| `/do <instruction>` | Natural language → structured command |
+| `/subscribe` | Select channels to monitor for digests |
+| `/serve` | Select channels/contacts where the agent responds |
+| `/wechat [--hours N]` | WeChat group chat digest |
+| `/discord [--hours N]` | Discord channel digest |
+| `/whatsapp` | WhatsApp digest |
+| `/lang [code]` | Set persistent output language |
 | `/restart` | Restart gateway remotely |
 
-[All 39 commands →](docs/commands.md)
+[All commands →](docs/commands.md)
 
 ---
 
 ## Architecture
 
 ```
-User (Telegram/Discord/WhatsApp/Voice) → Gateway (asyncio) → Hook Dispatcher → Session + Cost Gate
+User (CLI REPL / Telegram / Discord / WhatsApp / Voice)
+  → Gateway (asyncio) or CLI (standalone) → Hook Dispatcher → Session + Cost Gate
   → Auto-Recall (6 layers) → claude -p → SQLite → Git Sync
 ```
 
-No custom agent loop. Claude Code **is** the runtime — 25+ built-in tools, MCP servers, skills. The gateway adds memory, routing, recall, cron, voice, browser, multi-platform, and safety around it.
+No custom agent loop. Claude Code **is** the runtime — 25+ built-in tools, MCP servers, skills. The gateway adds memory, routing, recall, cron, voice, browser, multi-platform, and safety around it. The CLI REPL (`ae`) bypasses the gateway entirely, calling `claude -p` directly with the same memory, recall, and session infrastructure.
 
 ### Key Design Decisions
 - **No tool/toolset system** — Claude Code already has tools. We build skills and infrastructure, not abstractions.
 - **Bounded memory** — MEMORY.md (2200 chars) + USER.md (1375 chars) + SQLite FTS5. No unbounded growth.
 - **Closed-loop** — `auto_approve_skills: true`. Evolve → build → review → install → sync to git. No human gate.
 - **Drain-on-shutdown** — In-flight requests complete before restart. No lost work.
-- **Modular commands** — 39 Telegram commands split into 9 mixins (admin, pipelines, signals, cron, approval, search, media, misc, subscribe). Adapter core is 630 lines.
+- **Modular commands** — 39 Telegram commands split into 9 mixins (admin, pipelines, signals, cron, approval, search, media, misc, subscribe). 32 commands re-implemented for CLI REPL. Adapter core is 630 lines.
 - **Dual-layer recall** — FTS5 keyword search + TF-IDF semantic search. Auto-recall injects relevant context before every Claude invocation.
 - **Instinct pipeline** — Behavioural patterns observed across sessions are scored, deduplicated, and auto-promoted to MEMORY.md when confidence is high enough.
 
@@ -282,6 +340,31 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 ---
 
 ## Recent Changes
+
+### v2.3 — CLI REPL + WhatsApp LID Resolution
+
+**Interactive CLI REPL (`ae`)**
+- `ae` launches a standalone Rich TUI REPL — no gateway process required. Streaming output with markdown rendering, tool use spinners, and cost tracking.
+- 32 slash commands with Tab autocomplete and descriptions. All pipeline commands (`/produce`, `/evolve`, `/learn`, `/absorb`, `/reflect`, `/digest`, `/gc`), info commands (`/memory`, `/soul`, `/config`, `/skills`, `/learnings`, `/recall`, `/search`, `/sessions`), cron management (`/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`, `/notify`), and admin (`/model`, `/autonomy`, `/queue`, `/approve`, `/reject`).
+- Session persistence — all messages saved to SQLite with auto-titles. Resume previous sessions with `ae --resume <session_id>`.
+- Auto-recall from all 6 memory layers before every invocation. Cost cap enforcement.
+- prompt-toolkit input with file-backed history and auto-suggest.
+
+**WhatsApp LID JID Resolution**
+- Fixed a critical bug where Baileys v7 delivers DM messages under LID JIDs (`@lid`) instead of phone JIDs (`@s.whatsapp.net`). The bridge now loads `lid-mapping-*_reverse.json` files on startup and resolves LID→phone for incoming messages, outbound sends, and history sync.
+- Previously, served contacts like `85254083858` were silently dropped because Python couldn't match the LID JID against phone-based serve targets.
+
+**WhatsApp Serve for DM Contacts**
+- `/serve` now supports individual WhatsApp contacts (not just groups). Added `_serve_contacts` set alongside `_serve_groups`. DM routing updated to bypass `allowed_users` for served contacts.
+
+**WhatsApp Image Support**
+- Incoming WhatsApp images are downloaded via Baileys `downloadMediaMessage`, saved to `/tmp/`, and passed to Claude's Read tool for vision analysis. Messages with images auto-escalate to opus model.
+
+**Auto-Model Escalation**
+- Messages containing math, coding, or logic questions are auto-detected via regex and routed to `serve_reasoning_model` (opus) instead of the default `serve_model` (sonnet). Image messages also trigger escalation.
+
+**Channel-Specific Knowledge**
+- `_CHANNEL_KNOWLEDGE` dict in `run.py` maps channel/group IDs to expert knowledge prompts. Injected after personality prompt for both Discord and WhatsApp served channels. Used for DAMM v2 expertise in degen-damm Discord channel.
 
 ### v2.2 — Multi-Platform + Subscribe/Serve
 

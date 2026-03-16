@@ -485,30 +485,71 @@ def handle_command(cmd: str, state: SessionState) -> bool:
 # ══════════════════════════════════════════════════════════════════
 
 def _cmd_help():
-    help_text = """
-**Session**
-`/help` `/new` `/quit`
+    table = Table(
+        show_header=False, box=None, padding=(0, 2, 0, 0),
+        expand=True,
+    )
+    table.add_column("Command", style="cyan", no_wrap=True, min_width=22)
+    table.add_column("Description", style="dim")
 
-**Info**
-`/cost` `/model [name]` `/status` `/memory` `/soul` `/config`
-`/sessions [N]` `/search <q>` `/recall <q>` `/skills` `/learnings [query]` `/heartbeat`
+    # Session
+    table.add_row("[bold white]SESSION[/bold white]", "")
+    table.add_row("  /new", "Start a new conversation")
+    table.add_row("  /quit", "Exit (also: Ctrl+D)")
+    table.add_row("")
 
-**Pipelines** (LLM-backed)
-`/produce [--ideas N]` `/evolve [--dry-run]` `/learn <target>` `/absorb <target>`
-`/reflect [--days N]` `/digest [--days N]` `/gc [--dry-run]`
+    # Pipelines
+    table.add_row("[bold white]PIPELINES[/bold white]", "[dim italic]LLM-backed, takes 2-15 min[/dim italic]")
+    table.add_row("  /produce [--ideas N]", "Brainstorm biz ideas from today's signals")
+    table.add_row("  /evolve [--dry-run]", "Collect signals -> build -> install skills")
+    table.add_row("  /learn <target>", "Deep-dive a repo, URL, or tech")
+    table.add_row("  /absorb <target>", "Scan a repo and implement improvements")
+    table.add_row("  /reflect [--days N]", "Self-analysis: patterns, gaps, next moves")
+    table.add_row("  /digest [--days N]", "Morning briefing: sessions, signals, cost")
+    table.add_row("  /gc [--dry-run]", "Clean stale sessions and orphan skills")
+    table.add_row("")
 
-**Cron**
-`/loop <interval> <prompt>` `/loops` `/unloop <id>` `/pause <id|--all>` `/unpause <id|--all>` `/notify <delay> <msg>`
+    # Info
+    table.add_row("[bold white]INFO[/bold white]", "")
+    table.add_row("  /cost", "Spend breakdown (session / day / week)")
+    table.add_row("  /model [name]", "Show or switch model")
+    table.add_row("  /status", "System overview")
+    table.add_row("  /memory", "Show MEMORY.md + USER.md")
+    table.add_row("  /soul", "Show personality (SOUL.md)")
+    table.add_row("  /config", "Show config.yaml")
+    table.add_row("  /sessions [N]", "List recent sessions")
+    table.add_row("  /search <query>", "FTS5 search past conversations")
+    table.add_row("  /recall <query>", "Search all 6 memory layers")
+    table.add_row("  /skills", "List installed skills")
+    table.add_row("  /learnings [query]", "List or search past learnings")
+    table.add_row("  /heartbeat", "Quick health check")
+    table.add_row("")
 
-**Approval**
-`/queue` `/approve <name>` `/reject <name> [reason]`
+    # Cron
+    table.add_row("[bold white]CRON[/bold white]", "")
+    table.add_row("  /loop <interval> <prompt>", "Create recurring job (e.g. 6h)")
+    table.add_row("  /loops", "List all cron jobs")
+    table.add_row("  /unloop <id>", "Delete a cron job")
+    table.add_row("  /pause <id|--all>", "Pause a job")
+    table.add_row("  /unpause <id|--all>", "Resume a job")
+    table.add_row("  /notify <delay> <msg>", "One-shot reminder")
+    table.add_row("")
 
-**Admin**
-`/autonomy [level]`
+    # Approval
+    table.add_row("[bold white]APPROVAL[/bold white]", "")
+    table.add_row("  /queue", "Skills pending review")
+    table.add_row("  /approve <name>", "Install a queued skill")
+    table.add_row("  /reject <name> [reason]", "Reject a queued skill")
+    table.add_row("")
 
-Tips: Ctrl+C to interrupt, Ctrl+D to exit, Tab to autocomplete commands.
-"""
-    console.print(Markdown(help_text))
+    # Admin
+    table.add_row("[bold white]ADMIN[/bold white]", "")
+    table.add_row("  /autonomy [level]", "Show or set (full/supervised/locked)")
+
+    console.print()
+    console.print(Panel(table, title="[bold]Commands[/bold]", border_style="blue", padding=(1, 2)))
+    console.print("[dim]  Tab to autocomplete | Ctrl+C to interrupt | Ctrl+D to exit[/dim]")
+    console.print()
 
 
 def _cmd_new(state: SessionState):
