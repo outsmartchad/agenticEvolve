@@ -25,6 +25,8 @@ def _make_adapter(allowed_users=None, token="fake-token"):
     a.allowed_users = set(str(u) for u in (allowed_users or []))
     a.client = None
     a._ready = asyncio.Event()
+    a._breaker = None
+    a._connect_task = None
     return a
 
 

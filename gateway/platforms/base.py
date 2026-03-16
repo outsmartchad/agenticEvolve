@@ -71,7 +71,11 @@ async def retry_with_backoff(
     delay = base_delay
     while True:
         if breaker and breaker.is_open():
-            log.warning(f"[{name}] circuit breaker open, backing off")
+            attempt += 1
+            if attempt >= max_attempts:
+                log.error(f"[{name}] giving up after {attempt} attempts (circuit breaker open)")
+                return
+            log.warning(f"[{name}] circuit breaker open, backing off ({attempt}/{max_attempts})")
             await asyncio.sleep(breaker.recovery_secs)
             continue
 

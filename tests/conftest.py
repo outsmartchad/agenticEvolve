@@ -172,10 +172,12 @@ def adapter(mock_gateway, tmp_path, monkeypatch):
     import gateway.commands.search as search_mod
     import gateway.commands.media as media_mod
     import gateway.commands.misc as misc_mod
+    import gateway.commands.cron_core as cron_core_mod
 
     for mod in [admin_mod, cron_mod, signals_mod, pipelines_mod,
-                approval_mod, search_mod, media_mod, misc_mod]:
-        monkeypatch.setattr(mod, "EXODIR", exo)
+                approval_mod, search_mod, media_mod, misc_mod, cron_core_mod]:
+        if hasattr(mod, "EXODIR"):
+            monkeypatch.setattr(mod, "EXODIR", exo)
         if hasattr(mod, "CRON_DIR"):
             monkeypatch.setattr(mod, "CRON_DIR", cron_dir)
         if hasattr(mod, "CRON_JOBS_FILE"):

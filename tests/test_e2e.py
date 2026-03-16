@@ -85,15 +85,21 @@ def test_telegram_message_routes_to_claude(tmp_path, monkeypatch):
     runner._session_last_active = {}
     runner._session_msg_count = {}
     runner._locks = {}
-    runner._cost_strikes = 0
-    runner._cost_backoff_until = 0.0
+    runner._cost_cap_strike = 0
+    runner._cost_cap_backoff_until = None
     runner._pending_images = {}
+    runner._jobs_cache = []
+    runner._jobs_mtime = 0.0
+    runner._draining = False
+    runner._inflight = set()
 
-    result = runner.on_message(
-        message="What is 3+3? Reply with just the number.",
-        platform="telegram",
-        user_id="1",
-        session_id=None,
+    result = asyncio.get_event_loop().run_until_complete(
+        runner.handle_message(
+            platform="telegram",
+            chat_id="1",
+            user_id="1",
+            text="What is 3+3? Reply with just the number.",
+        )
     )
 
     assert isinstance(result, str), f"on_message should return str, got {type(result)}"

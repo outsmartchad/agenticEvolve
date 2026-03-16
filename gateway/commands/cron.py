@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .cron_core import CRON_DIR, CRON_JOBS_FILE, load_cron_jobs, save_cron_jobs, parse_interval
+from .cron_core import CRON_DIR, CRON_JOBS_FILE, load_cron_jobs, save_cron_jobs
 
 log = logging.getLogger(__name__)
 

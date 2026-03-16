@@ -29,7 +29,6 @@ mkdir -p "$SIGNALS/$TODAY"
 bash ~/.agenticEvolve/collectors/github.sh
 bash ~/.agenticEvolve/collectors/hackernews.sh
 bash ~/.agenticEvolve/collectors/x-search.sh
-[ -f ~/.agenticEvolve/collectors/discord.sh ] && bash ~/.agenticEvolve/collectors/discord.sh || true
 ```
 
 Count total: `ls ~/.agenticEvolve/signals/$TODAY/*.json | xargs cat | jq -s 'flatten | length'`

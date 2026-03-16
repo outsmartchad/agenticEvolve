@@ -124,8 +124,8 @@ class EvolveOrchestrator:
                 result="ok" if result.get("success") else "fail",
                 metadata={"model": model, "cost": cost},
             )
-        except Exception:
-            pass
+        except Exception as _ae:
+            log.debug(f"Audit log failed: {_ae}")
 
         return result
 
@@ -677,8 +677,8 @@ class EvolveOrchestrator:
                 result="ok",
                 metadata={"mode": mode, "model": self.model},
             )
-        except Exception:
-            pass
+        except Exception as _ae:
+            log.debug(f"Audit log failed: {_ae}")
 
         # Stage 1
         collect_result = self.stage_collect()
@@ -747,8 +747,8 @@ class EvolveOrchestrator:
                 result="ok",
                 metadata={"total_cost": self._cost_total},
             )
-        except Exception:
-            pass
+        except Exception as _ae:
+            log.debug(f"Audit log failed: {_ae}")
 
         self._report("*Pipeline complete.*")
         return summary, self._cost_total
@@ -847,8 +847,8 @@ def approve_skill(name: str) -> tuple[bool, str]:
             result="ok",
             metadata={"skill": name},
         )
-    except Exception:
-        pass
+    except Exception as _ae:
+        log.debug(f"Audit log failed: {_ae}")
 
     return True, f"Skill `{name}` installed to `~/.claude/skills/{name}/`"
 
@@ -886,8 +886,8 @@ def reject_skill(name: str, reason: str = "") -> tuple[bool, str]:
             result="ok",
             metadata={"skill": name, "reason": reason},
         )
-    except Exception:
-        pass
+    except Exception as _ae:
+        log.debug(f"Audit log failed: {_ae}")
 
     return True, f"Skill `{name}` rejected and removed." + (f" Reason: {reason}" if reason else "")
 

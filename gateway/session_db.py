@@ -208,21 +208,23 @@ def log_audit(
         metadata: Arbitrary JSON-serialisable dict for extra context.
     """
     conn = _connect()
-    conn.execute(
-        "INSERT INTO audit (trace_id, timestamp, stage, action, user_id, result, metadata) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            trace_id,
-            datetime.now(timezone.utc).isoformat(),
-            stage,
-            action,
-            user_id,
-            result,
-            json.dumps(metadata) if metadata else None,
-        ),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO audit (trace_id, timestamp, stage, action, user_id, result, metadata) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                trace_id,
+                datetime.now(timezone.utc).isoformat(),
+                stage,
+                action,
+                user_id,
+                result,
+                json.dumps(metadata) if metadata else None,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def signal_url_seen(url: str, ttl_days: int = 7) -> bool:
@@ -232,28 +234,29 @@ def signal_url_seen(url: str, ttl_days: int = 7) -> bool:
     """
     from datetime import timedelta
     conn = _connect()
-    now = datetime.now(timezone.utc)
-    expires = (now + timedelta(days=ttl_days)).isoformat()
+    try:
+        now = datetime.now(timezone.utc)
+        expires = (now + timedelta(days=ttl_days)).isoformat()
 
-    # Purge expired entries (cheap, indexed)
-    conn.execute("DELETE FROM signal_urls WHERE expires_at <= ?", (now.isoformat(),))
+        # Purge expired entries (cheap, indexed)
+        conn.execute("DELETE FROM signal_urls WHERE expires_at <= ?", (now.isoformat(),))
 
-    row = conn.execute(
-        "SELECT url FROM signal_urls WHERE url = ?", (url,)
-    ).fetchone()
+        row = conn.execute(
+            "SELECT url FROM signal_urls WHERE url = ?", (url,)
+        ).fetchone()
 
-    if row:
+        if row:
+            conn.commit()
+            return True
+
+        conn.execute(
+            "INSERT INTO signal_urls (url, first_seen, expires_at) VALUES (?, ?, ?)",
+            (url, now.isoformat(), expires),
+        )
         conn.commit()
+        return False
+    finally:
         conn.close()
-        return True
-
-    conn.execute(
-        "INSERT INTO signal_urls (url, first_seen, expires_at) VALUES (?, ?, ?)",
-        (url, now.isoformat(), expires),
-    )
-    conn.commit()
-    conn.close()
-    return False
 
 
 def get_user_pref(user_id: str, key: str, default: str = None) -> str | None:

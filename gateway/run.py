@@ -233,6 +233,7 @@ class GatewayRunner:
         self._jobs_cache: list = []          # cached jobs.json contents
         self._jobs_mtime: float = 0.0       # mtime of last successful read
         self._cost_cap_backoff_until: Optional[datetime] = None  # hard backoff end time
+        self._cost_cap_strike: int = 0
 
     # ── Channel context for served channels ───────────────────────
 
@@ -803,14 +804,14 @@ class GatewayRunner:
         import zoneinfo
 
         cron_expr = job.get("cron", "")
-        tz_name = job.get("timezone", "UTC")
+        tz_name = job.get("timezone") or "UTC"
 
         if not cron_expr or len(cron_expr.split()) != 5:
             return after + timedelta(hours=24)
 
         try:
             tz = zoneinfo.ZoneInfo(tz_name)
-        except (zoneinfo.ZoneInfoNotFoundError, KeyError):
+        except (zoneinfo.ZoneInfoNotFoundError, KeyError, ValueError):
             tz = timezone.utc
 
         try:
