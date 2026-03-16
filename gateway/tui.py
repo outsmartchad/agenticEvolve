@@ -715,10 +715,12 @@ class AEApp(App):
 
     #messages-scroll {
         height: 1fr;
+        scrollbar-gutter: stable;
     }
 
     #messages {
         padding: 0 0;
+        height: auto;
     }
 
     #input-area {
