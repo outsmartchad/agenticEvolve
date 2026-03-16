@@ -618,7 +618,7 @@ class HelpScreen(ModalScreen[None]):
     HelpScreen {
         align: center middle;
     }
-    HelpScreen > Vertical {
+    HelpScreen > VerticalScroll {
         width: 80;
         max-height: 80%;
         background: $surface;
@@ -640,7 +640,7 @@ class HelpScreen(ModalScreen[None]):
     BINDINGS = [Binding("escape", "dismiss(None)", "Close")]
 
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with VerticalScroll():
             yield Static("agenticEvolve — Help", classes="help-title")
 
             yield Static("KEYBINDINGS", classes="help-section")
