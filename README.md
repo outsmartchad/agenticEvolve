@@ -62,9 +62,9 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | Capability | Description |
 |------------|-------------|
 | **CLI REPL** | `ae` — Interactive Rich TUI with streaming output, markdown rendering, tool use spinners, 32 commands with Tab autocomplete, session persistence, auto-recall. No gateway required |
-| **Multi-Platform** | Telegram (bot API) + Discord (desktop CDP + REST) + WhatsApp (Baileys v7 bridge). `/subscribe` to monitor channels for digests, `/serve` to make the agent respond in any group or DM |
+| **Multi-Platform** | Telegram (bot API) + Discord (desktop CDP + local cache) + WhatsApp (Baileys v7 bridge). `/subscribe` to monitor channels for digests, `/serve` to make the agent respond in any group or DM |
 | **Build** | Full Claude Code over Telegram or CLI — terminal, file I/O, web search, MCP, 26 skills |
-| **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans 11 sources: GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChat groups, synthesizes skills |
+| **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans 12 sources: GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChat groups + Discord cache, synthesizes skills |
 | **Absorb** | `/absorb <url>` — clones repo, maps architecture, diffs patterns, implements improvements into your system |
 | **Learn** | `/learn <target>` — deep-dive extraction with ADOPT / ADAPT / SKIP verdicts |
 | **Voice** | Send voice messages → local whisper.cpp transcription (~500ms). `/speak` → edge-tts with 300+ voices. Auto-detects Cantonese/Mandarin/Japanese/Korean |
@@ -76,7 +76,7 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | **Semantic Recall** | TF-IDF cosine similarity search layer augments FTS5 keyword search. 5000-feature vectorizer with bigrams. Corpus rebuilt from sessions, learnings, instincts, memory files. Cached at `~/.agenticEvolve/cache/` |
 | **Instinct Engine** | Behavioural pattern observations scored and routed to instincts table. High-confidence instincts (0.8+ across 2+ projects or 5+ sightings) auto-promote to MEMORY.md |
 | **Resilience** | Drain-on-shutdown (30s wait for in-flight requests). Typed failure classification (auth/billing/rate-limit). 3-pass context compaction. Hot config reload. Loop detection (warn@3 identical turns, terminate@5). Memory queue read-through (debounced atomic writes, no stale reads). Parallel BUILD stage (ThreadPoolExecutor, 3 isolated workspaces) |
-| **Testing** | 379 automated tests (379 pass, 1 xfail). Covers: 81 command handler integration tests (all 35+ handlers), session DB, FTS5 search, security scanner, signal dedup, semantic search, instinct promotion, cron parser, cost cap, loop detector, context compaction, flag parsing |
+| **Testing** | 423 automated tests (423 pass, 1 xfail). Covers: 81 command handler integration tests (all 35+ handlers), session DB, FTS5 search, security scanner, signal dedup, semantic search, instinct promotion, cron parser, cost cap, loop detector, context compaction, flag parsing |
 
 ---
 
@@ -288,7 +288,7 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 
 ---
 
-## Signal Sources (11)
+## Signal Sources (12)
 
 | Source | Collector | API | What it captures |
 |--------|-----------|-----|-----------------|
@@ -303,6 +303,7 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 | HuggingFace | `huggingface.py` | HF API | Trending models and spaces |
 | BestOfJS | `bestofjs.py` | Static JSON API | Trending JavaScript/TypeScript projects by daily star growth |
 | WeChat | `wechat.py` | Local DB | Group chat messages (reads local data) |
+| Discord | `discord.py` | Chromium cache | Cached API responses from desktop app (zero network calls) |
 
 ---
 
@@ -340,6 +341,34 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 ---
 
 ## Recent Changes
+
+### v2.4 — TUI Commands + Discord Local Cache + Multi-Platform /lang
+
+**TUI Slash Commands**
+- 6 new commands in the Textual TUI: `/lang`, `/do`, `/restart`, `/speak`, `/subscribe`, `/serve`. Previously Telegram-only, now fully functional in the CLI.
+- Browsable `/subscribe` and `/serve` modal with click-to-toggle targets. Discovers channels from DB subscriptions, platform_messages history, WhatsApp auth files, and Discord Chromium cache.
+- `/speak` uses `edge-tts` CLI directly (avoids asyncio conflicts in Textual worker threads).
+- `Ctrl+C` copies last assistant response to clipboard via `pbcopy`.
+- HelpScreen uses `VerticalScroll` with reordered categories.
+
+**Discord Local Cache Reader**
+- Built `tools/discord-local/read_cache.py` — reads Discord messages from the desktop app's Chromium HTTP response cache. Parses gzip-compressed JSON from `~/Library/Application Support/discord/Cache/Cache_Data/`. Zero network calls.
+- 5,835 messages across 353 channels recovered from cache, dating back to 2022.
+- Added `collectors/discord.py` signal collector for the `/evolve` pipeline, matching the WeChat collector pattern.
+- Discord is now a 12th signal source for `/evolve`.
+
+**Discord Account Limited — Full Local-Only Mode**
+- Discord account got limited from CDP-based message sending. All REST API writes disabled. Serve mode disabled.
+- Read-only subscribe polling still works but now stops gracefully on 401 auth errors instead of spam-retrying every 2 seconds (was flooding the event loop with 2,600+ errors).
+- `/subscribe` target discovery for Discord now reads from local Chromium cache instead of REST API.
+
+**`/lang` Works Across All Platforms**
+- Language preference injection moved from TUI-only to `build_system_prompt()` in `agent.py`. Now works for Telegram, CLI, and any future platform.
+- `user_id` parameter threaded through `invoke_claude()` → `build_system_prompt()` → language lookup from `user_prefs` DB.
+
+**Bug Fixes**
+- Fixed `/scan-skills` → `/scanskills` — hyphens are invalid in Telegram bot command names, was crashing Telegram adapter startup entirely.
+- Fixed Discord poll loop spam — 401 errors now trigger `_auth_failed` flag and stop the poll instead of retrying infinitely.
 
 ### v2.3 — CLI REPL + WhatsApp LID Resolution
 

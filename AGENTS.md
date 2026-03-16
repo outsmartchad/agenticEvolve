@@ -39,7 +39,7 @@ When invoked via `claude -p`, the system prompt determines which "role" the agen
 | Platform | Adapter | Mode | Notes |
 |----------|---------|------|-------|
 | Telegram | `gateway/platforms/telegram.py` | Bot API | Primary control plane. All commands, inline keyboards |
-| Discord | `gateway/platforms/discord_client.py` | CDP + REST | Hooks desktop app via `--remote-debugging-port=9224`. Token extracted from network requests |
+| Discord | `gateway/platforms/discord_client.py` | CDP + local cache | Hooks desktop app via `--remote-debugging-port=9224`. Token via CDP. **Account limited** — send/serve disabled, REST reads return 401. Messages read from Chromium disk cache (`tools/discord-local/read_cache.py`) |
 | WhatsApp | `gateway/platforms/whatsapp.py` + `whatsapp-bridge/bridge.js` | Baileys v7 | Node.js bridge over stdin/stdout. QR delivery to Telegram. LID resolution |
 | WeChat | Read-only via `collectors/wechat.py` | Decrypted local DBs | No live bridge. Subscribe for digests only |
 
@@ -76,3 +76,17 @@ When invoked via `claude -p`, the system prompt determines which "role" the agen
 - Only whitelisted user IDs can interact with the bot (config.yaml)
 - Memory has hard character limits to prevent unbounded growth
 - Single gateway instance enforced — kill existing before restart
+
+## Local Data Readers (Zero Network Calls)
+
+| Platform | Tool | Source | Notes |
+|----------|------|--------|-------|
+| WeChat | `tools/wechat-decrypt/` | Decrypted SQLCipher DBs | `find_keys.c` (memory scan) → `decrypt_db.py` (AES-256-CBC) → `export_messages.py`. Gold standard — full local history |
+| Discord | `tools/discord-local/read_cache.py` | Chromium disk cache | Parses `~/Library/Application Support/discord/Cache/Cache_Data/`. 5800+ messages across 353 channels. Only has messages from channels user scrolled through |
+| Discord | `collectors/discord.py` | Same cache | Signal collector for `/evolve` pipeline, groups messages by channel |
+
+### Discord Status (Account Limited)
+- REST API reads/writes return 401/403. CDP sending blocked. Only local file reads are safe.
+- Poll loop stops on auth failure (`_auth_failed` flag). Serve mode disabled (`and False` guard in `run.py`).
+- `/subscribe` target discovery uses Chromium cache scan instead of REST API.
+- Token still extractable via CDP (for future use if account is un-limited).

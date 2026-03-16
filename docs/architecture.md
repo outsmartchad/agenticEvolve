@@ -40,9 +40,9 @@ The cron scheduler runs inside the gateway process, ticking every 60s to execute
 │   ├── session_db.py           # SQLite + FTS5 (sessions, learnings, costs)
 │   └── platforms/
 │       ├── base.py             # Platform adapter interface
-│       ├── telegram.py         # Telegram (~2,300 lines, 29 commands)
-│       ├── discord.py          # Discord (written, untested)
-│       └── whatsapp.py         # WhatsApp (written, untested)
+│       ├── telegram.py         # Telegram (~2,300 lines, 39 commands)
+│       ├── discord_client.py   # Discord (CDP + local cache, serve disabled)
+│       └── whatsapp.py         # WhatsApp (Baileys v7 bridge, live)
 │
 ├── memory/
 │   ├── MEMORY.md               # Agent's notes (2200 char limit)
@@ -51,7 +51,11 @@ The cron scheduler runs inside the gateway process, ticking every 60s to execute
 │
 ├── cron/jobs.json              # Scheduled jobs
 ├── skills-queue/               # Skills pending human approval
-├── collectors/                 # Signal collectors (github.sh, hackernews.sh, x-search.sh)
+├── collectors/                 # Signal collectors (github.sh, hackernews.sh, x-search.sh, discord.py, wechat.py)
+├── tools/
+│   ├── discord-local/          # Chromium disk cache reader for Discord messages
+│   │   └── read_cache.py       # Parses gzip-compressed API responses from cache
+│   └── wechat-decrypt/         # WeChat SQLCipher DB decryption pipeline
 ├── whatsapp-bridge/bridge.js   # Node.js WhatsApp bridge
 └── logs/                       # gateway.log, cost.log
 ```
@@ -75,8 +79,9 @@ The cron scheduler runs inside the gateway process, ticking every 60s to execute
 
 ## Platform Support
 
-| Platform | Status | Library |
-|----------|--------|---------|
-| Telegram | Working (29 commands) | python-telegram-bot |
-| Discord | Written, untested | discord.py |
-| WhatsApp | Written, untested | @whiskeysockets/baileys |
+| Platform | Status | Library | Data Source |
+|----------|--------|---------|-------------|
+| Telegram | Working (39 commands) | python-telegram-bot | Bot API (live) |
+| Discord | Limited (read-only, serve disabled) | CDP + local cache | Chromium disk cache (zero API calls) |
+| WhatsApp | Working (serve + subscribe) | Baileys v7 (Node.js bridge) | Live bridge over stdin/stdout |
+| WeChat | Read-only (digests) | Local SQLCipher DBs | Decrypted local databases |

@@ -1,6 +1,6 @@
-# Telegram Commands
+# Commands
 
-29 commands available. Regular text messages are routed to Claude Code as chat with full session continuity.
+39 Telegram commands + 32 CLI REPL commands. Regular text messages are routed to Claude Code as chat with full session continuity. Most commands work in both Telegram and the CLI TUI (`ae`).
 
 ## Core
 
@@ -65,3 +65,32 @@
 | Command | Description |
 |---------|-------------|
 | `/gc [--dry-run]` | Run garbage collection |
+| `/scanskills` | AgentShield security scan of all installed skills |
+
+## Signals & Digests
+
+| Command | Description |
+|---------|-------------|
+| `/evolve [--dry-run]` | Scan 12 signal sources, build and auto-install skills |
+| `/produce [--ideas N]` | Brainstorm business ideas from trending signals |
+| `/reflect [--days N]` | Self-analysis: patterns, avoidance, next actions |
+| `/digest [--days N]` | Morning briefing (sessions, signals, cost) |
+| `/wechat [--hours N]` | WeChat group chat digest (reads local decrypted DBs) |
+| `/discord [--hours N]` | Discord channel digest (from Chromium cache + stored messages) |
+| `/whatsapp [--hours N]` | WhatsApp group digest (from stored messages) |
+
+## Subscribe & Serve
+
+| Command | Description |
+|---------|-------------|
+| `/subscribe` | Browsable modal to select channels/groups to monitor for digests. Sources: DB subscriptions, platform_messages, WhatsApp auth, Discord Chromium cache |
+| `/serve` | Select channels/contacts where the agent actively responds. Discord serve currently disabled (account limited) |
+
+## Utilities (Telegram + TUI)
+
+| Command | Description |
+|---------|-------------|
+| `/speak <text>` | Text-to-speech (edge-tts, auto-detects language) |
+| `/do <instruction> [--preview]` | Natural language → structured command parser |
+| `/lang [code]` | Set persistent output language (zh, ja, ko, es, fr, de, ru, etc.). Works across all platforms |
+| `/restart` | Restart gateway remotely |
