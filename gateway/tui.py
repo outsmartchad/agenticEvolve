@@ -770,6 +770,279 @@ class ModelScreen(ModalScreen[str]):
             self.dismiss(model)
 
 
+# ── Subscribe / Serve Screen ───────────────────────────────────
+
+def _discover_targets(user_id: str, mode: str) -> dict[str, list[dict]]:
+    """Discover available targets from DB + Discord REST API.
+
+    Returns {platform: [{id, name, type, subscribed}]}.
+    """
+    # Get current subscriptions for comparison
+    subs = get_subscriptions(user_id, mode=mode)
+    sub_keys = {(s["platform"], s["target_id"]) for s in subs}
+
+    result: dict[str, list[dict]] = {}
+
+    # ── Discord: fetch guilds + channels via REST using cached token ──
+    if mode == "subscribe":  # Discord serve is disabled
+        try:
+            token_file = EXODIR / ".discord-token"
+            if token_file.exists():
+                token = token_file.read_text().strip()
+                import urllib.request
+                headers = {"Authorization": token}
+
+                # Get guilds
+                req = urllib.request.Request("https://discord.com/api/v10/users/@me/guilds", headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    guilds = json.loads(resp.read())
+
+                discord_targets = []
+                for g in guilds[:10]:  # Limit to 10 guilds
+                    # Get channels for each guild
+                    req2 = urllib.request.Request(
+                        f"https://discord.com/api/v10/guilds/{g['id']}/channels", headers=headers
+                    )
+                    try:
+                        with urllib.request.urlopen(req2, timeout=10) as resp2:
+                            channels = json.loads(resp2.read())
+                        # Text channels only (type 0 = text, 5 = announcement)
+                        for ch in channels:
+                            if ch.get("type") in (0, 5):
+                                cat = ""
+                                # Find category name
+                                if ch.get("parent_id"):
+                                    for c2 in channels:
+                                        if c2["id"] == ch["parent_id"] and c2.get("type") == 4:
+                                            cat = c2["name"]
+                                            break
+                                discord_targets.append({
+                                    "id": ch["id"],
+                                    "name": f"{g['name']} / {cat + ' / ' if cat else ''}{ch['name']}",
+                                    "type": "channel",
+                                    "subscribed": ("discord", ch["id"]) in sub_keys,
+                                })
+                    except Exception:
+                        continue
+                if discord_targets:
+                    result["discord"] = discord_targets
+        except Exception:
+            pass
+
+    # ── WhatsApp: from platform_messages + subscriptions DB ──
+    wa_targets = []
+    try:
+        conn = __import__("gateway.session_db", fromlist=["_connect"])._connect()
+        rows = conn.execute("""
+            SELECT chat_id, MAX(sender_name) as sample_name, COUNT(*) as cnt
+            FROM platform_messages WHERE platform='whatsapp'
+            GROUP BY chat_id ORDER BY cnt DESC
+        """).fetchall()
+        conn.close()
+
+        for r in rows:
+            cid = r["chat_id"]
+            # Find a better name from subscriptions if available
+            name = None
+            for s in subs:
+                if s["target_id"] == cid:
+                    name = s["target_name"]
+                    break
+            if not name:
+                if cid.endswith("@g.us"):
+                    name = r["sample_name"] or cid.split("@")[0]
+                    name = f"Group: {name}"
+                else:
+                    name = cid.split("@")[0]
+            is_group = cid.endswith("@g.us")
+            wa_targets.append({
+                "id": cid,
+                "name": name,
+                "type": "group" if is_group else "contact",
+                "subscribed": ("whatsapp", cid) in sub_keys,
+            })
+
+        # Also add subscribed targets not in platform_messages
+        for s in subs:
+            if s["platform"] == "whatsapp" and not any(t["id"] == s["target_id"] for t in wa_targets):
+                wa_targets.append({
+                    "id": s["target_id"],
+                    "name": s["target_name"],
+                    "type": s["target_type"],
+                    "subscribed": True,
+                })
+    except Exception:
+        pass
+    if wa_targets:
+        result["whatsapp"] = wa_targets
+
+    # ── WeChat: from subscriptions only (read-only, no live bridge) ──
+    if mode == "subscribe":
+        wc_targets = []
+        for s in subs:
+            if s["platform"] == "wechat":
+                wc_targets.append({
+                    "id": s["target_id"],
+                    "name": s["target_name"],
+                    "type": s["target_type"],
+                    "subscribed": True,
+                })
+        if wc_targets:
+            result["wechat"] = wc_targets
+
+    return result
+
+
+class SubscribeScreen(ModalScreen[None]):
+    """Browsable modal for managing subscribe/serve targets."""
+
+    DEFAULT_CSS = """
+    SubscribeScreen {
+        align: center middle;
+    }
+    SubscribeScreen > VerticalScroll {
+        width: 90;
+        max-height: 85%;
+        background: $surface;
+        border: thick $primary;
+        padding: 1 2;
+    }
+    SubscribeScreen .sub-title {
+        text-style: bold;
+        color: $primary;
+        text-align: center;
+        margin-bottom: 1;
+    }
+    SubscribeScreen .sub-platform {
+        text-style: bold;
+        color: $secondary;
+        margin-top: 1;
+    }
+    SubscribeScreen .sub-item {
+        padding: 0 1;
+        height: 1;
+    }
+    SubscribeScreen .sub-item:hover {
+        background: $primary-background;
+        text-style: bold;
+    }
+    SubscribeScreen .sub-active {
+        color: $success;
+    }
+    SubscribeScreen .sub-inactive {
+        color: $text-muted;
+    }
+    SubscribeScreen .sub-loading {
+        color: $text-muted;
+        text-align: center;
+        margin: 2;
+    }
+    """
+    BINDINGS = [Binding("escape", "dismiss(None)", "Close")]
+
+    def __init__(self, mode: str = "subscribe", **kwargs):
+        super().__init__(**kwargs)
+        self._mode = mode
+        self._user_id = "934847281"
+        self._targets: dict[str, list[dict]] = {}
+
+    def compose(self) -> ComposeResult:
+        label = "Subscribe — Digest Channels" if self._mode == "subscribe" else "Serve — Agent Responds"
+        with VerticalScroll():
+            yield Static(label, classes="sub-title")
+            yield Static("Loading targets...", classes="sub-loading", id="sub-loading")
+            yield Static(
+                "\n[dim]Click to toggle  |  Escape to close[/dim]",
+                id="sub-footer",
+            )
+
+    def on_mount(self) -> None:
+        self._load_targets()
+
+    @work(thread=True)
+    def _load_targets(self) -> None:
+        targets = _discover_targets(self._user_id, self._mode)
+        self._targets = targets
+        self.call_from_thread(self._render_targets)
+
+    def _render_targets(self) -> None:
+        # Remove loading indicator
+        try:
+            self.query_one("#sub-loading").remove()
+        except Exception:
+            pass
+
+        container = self.query_one(VerticalScroll)
+        footer = self.query_one("#sub-footer")
+
+        if not self._targets:
+            container.mount(
+                Static("[dim]No targets found. Make sure the gateway is running.[/dim]"),
+                before=footer,
+            )
+            return
+
+        for platform, items in self._targets.items():
+            plat_label = platform.title()
+            if self._mode == "serve" and platform == "discord":
+                continue  # Discord serve disabled
+            container.mount(
+                Static(f"{plat_label} ({len(items)} channels)", classes="sub-platform"),
+                before=footer,
+            )
+            for item in items:
+                check = "[green]✓[/green]" if item["subscribed"] else "[dim]○[/dim]"
+                css_class = "sub-item sub-active" if item["subscribed"] else "sub-item sub-inactive"
+                widget = Static(
+                    f"  {check}  {item['name']}  [dim]({item['type']})[/dim]",
+                    classes=css_class,
+                )
+                widget._sub_platform = platform
+                widget._sub_target = item
+                container.mount(widget, before=footer)
+
+    def on_click(self, event) -> None:
+        """Handle clicks on target items to toggle subscription."""
+        # Walk up from click target to find a widget with _sub_target
+        widget = event.widget if hasattr(event, "widget") else None
+        if widget is None:
+            return
+        # Check the widget and its ancestors
+        while widget is not None:
+            if hasattr(widget, "_sub_target"):
+                break
+            widget = widget.parent
+        if widget is None or not hasattr(widget, "_sub_target"):
+            return
+
+        target = widget._sub_target
+        platform = widget._sub_platform
+
+        # Discord serve is disabled
+        if self._mode == "serve" and platform == "discord":
+            return
+
+        if target["subscribed"]:
+            # Unsubscribe
+            remove_subscription(self._user_id, platform, target["id"], self._mode)
+            target["subscribed"] = False
+            widget.update(
+                f"  [dim]○[/dim]  {target['name']}  [dim]({target['type']})[/dim]"
+            )
+            widget.set_classes("sub-item sub-inactive")
+        else:
+            # Subscribe
+            add_subscription(
+                self._user_id, platform, target["id"],
+                target["name"], target["type"], self._mode,
+            )
+            target["subscribed"] = True
+            widget.update(
+                f"  [green]✓[/green]  {target['name']}  [dim]({target['type']})[/dim]"
+            )
+            widget.set_classes("sub-item sub-active")
+
+
 # ── Main App ────────────────────────────────────────────────────
 
 class AEApp(App):
@@ -2484,113 +2757,16 @@ class AEApp(App):
     # ── /subscribe — manage digest subscriptions ────────────────
 
     def _cmd_subscribe(self, arg: str) -> None:
-        """View or manage digest subscriptions."""
-        user_id = "934847281"
-        self._cmd_subscription_common(arg, user_id, mode="subscribe")
+        """Open browsable subscribe modal."""
+        self.push_screen(SubscribeScreen(mode="subscribe"))
 
     # ── /serve — manage serve targets ───────────────────────────
 
     def _cmd_serve(self, arg: str) -> None:
-        """View or manage serve targets."""
-        user_id = "934847281"
-        self._cmd_subscription_common(arg, user_id, mode="serve")
+        """Open browsable serve modal."""
+        self.push_screen(SubscribeScreen(mode="serve"))
 
-    def _cmd_subscription_common(self, arg: str, user_id: str, mode: str) -> None:
-        """Shared logic for /subscribe and /serve."""
-        label = "Subscriptions" if mode == "subscribe" else "Serve targets"
-        verb = "subscribe" if mode == "subscribe" else "serve"
 
-        parts = arg.strip().split() if arg.strip() else []
-
-        # Discord serve DISABLED — account got limited from CDP sending
-        if mode == "serve" and len(parts) >= 2 and parts[1].lower() == "discord":
-            if parts[0] == "add":
-                self._add_system_message(
-                    "[red]Discord serve is DISABLED — account got limited from CDP sending. "
-                    "Read-only /subscribe for digests still works.[/red]"
-                )
-                return
-
-        # /subscribe add <platform> <target_id> [name]
-        if len(parts) >= 3 and parts[0] == "add":
-            platform = parts[1].lower()
-            target_id = parts[2]
-            target_name = " ".join(parts[3:]) if len(parts) > 3 else target_id
-            is_new = add_subscription(user_id, platform, target_id, target_name, "channel", mode)
-            if is_new:
-                self._add_system_message(
-                    f"[green]Added {verb}: {platform} — {target_name}[/green]"
-                )
-                # Hot-reload serve targets if in serve mode
-                if mode == "serve":
-                    self._reload_serve_targets(platform)
-            else:
-                self._add_system_message(f"[yellow]Already {verb}d: {platform} — {target_name}[/yellow]")
-            return
-
-        # /subscribe remove <platform> <target_id>
-        if len(parts) >= 3 and parts[0] in ("remove", "rm", "delete"):
-            platform = parts[1].lower()
-            target_id = parts[2]
-            removed = remove_subscription(user_id, platform, target_id, mode)
-            if removed:
-                self._add_system_message(f"[green]Removed {verb}: {platform} — {target_id}[/green]")
-                if mode == "serve":
-                    self._reload_serve_targets(platform)
-            else:
-                self._add_system_message(f"[yellow]Not found: {platform} — {target_id}[/yellow]")
-            return
-
-        # /subscribe clear [platform]
-        if parts and parts[0] == "clear":
-            platform = parts[1].lower() if len(parts) > 1 else None
-            subs = get_subscriptions(user_id, mode=mode, platform=platform)
-            count = 0
-            for s in subs:
-                remove_subscription(user_id, s["platform"], s["target_id"], mode)
-                count += 1
-            self._add_system_message(f"[green]Cleared {count} {verb} target(s).[/green]")
-            if mode == "serve":
-                for p in {s["platform"] for s in subs}:
-                    self._reload_serve_targets(p)
-            return
-
-        # Default: show current subscriptions
-        subs = get_subscriptions(user_id, mode=mode)
-        if not subs:
-            self.post_message(CommandOutput(
-                f"**{label}**\n\nNo {verb} targets configured.\n\n"
-                f"**Add:** `/{verb} add <platform> <target_id> [name]`\n"
-                f"**Remove:** `/{verb} remove <platform> <target_id>`\n"
-                f"**Clear:** `/{verb} clear [platform]`",
-                is_markdown=True,
-            ))
-            return
-
-        lines = [f"**{label}**\n"]
-        by_platform: dict[str, list] = {}
-        for s in subs:
-            by_platform.setdefault(s["platform"], []).append(s)
-        for platform, items in sorted(by_platform.items()):
-            lines.append(f"**{platform.title()}:**")
-            for s in items:
-                lines.append(f"  - {s['target_name']} (`{s['target_id']}`, {s['target_type']})")
-        lines.append(f"\n**Add:** `/{verb} add <platform> <target_id> [name]`")
-        lines.append(f"**Remove:** `/{verb} remove <platform> <target_id>`")
-        self.post_message(CommandOutput("\n".join(lines), is_markdown=True))
-
-    def _reload_serve_targets(self, platform: str) -> None:
-        """Attempt to hot-reload serve targets for a platform adapter."""
-        try:
-            from gateway.run import GatewayRunner
-            # If a running gateway instance exists, update its serve targets
-            # This is best-effort — may not work if gateway is separate process
-            import importlib
-            mod = importlib.import_module(f"gateway.platforms.{platform}")
-            if hasattr(mod, "_update_serve_targets"):
-                mod._update_serve_targets(platform)
-        except Exception:
-            pass  # Best-effort: gateway may be a separate process
 
 
 # ── Entry Point ─────────────────────────────────────────────────
