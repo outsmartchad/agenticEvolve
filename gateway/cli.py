@@ -257,13 +257,19 @@ def invoke_streaming(message: str, state: SessionState) -> dict:
                         live = None
 
                 elif msg_type == "result":
+                    # Result object contains the final text + cost.
+                    # Text was already printed from assistant blocks — only extract cost.
                     result_text = obj.get("result", "")
-                    if result_text:
+                    if result_text and not text_parts:
+                        # Only print if we somehow missed assistant blocks
                         text_parts.append(result_text)
                         if live:
                             live.stop()
                             live = None
                         console.print(Markdown(result_text))
+                    elif result_text:
+                        # Update final text for session storage (result is authoritative)
+                        text_parts[-1] = result_text
                     cost = obj.get("total_cost_usd", 0)
 
             except json.JSONDecodeError:
