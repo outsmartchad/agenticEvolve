@@ -936,6 +936,12 @@ class AEApp(App):
         config = self._state.config
         system_prompt = build_system_prompt(config)
 
+        # Inject language preference into system prompt
+        lang = get_user_pref("934847281", "lang")
+        if lang and lang != "en":
+            lang_name = LANG_NAMES.get(lang, lang)
+            system_prompt = (system_prompt or "") + f"\n\nIMPORTANT: Write your ENTIRE response in {lang_name}."
+
         allowed_tools = None
         try:
             from gateway.autonomy import resolve_tools
