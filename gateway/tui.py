@@ -1087,11 +1087,13 @@ class AEApp(App):
         self._scroll_to_bottom()
 
     def _scroll_to_bottom(self) -> None:
-        try:
-            scroll = self.query_one("#messages-scroll", VerticalScroll)
-            scroll.scroll_end(animate=False)
-        except NoMatches:
-            pass
+        def _do_scroll() -> None:
+            try:
+                scroll = self.query_one("#messages-scroll", VerticalScroll)
+                scroll.scroll_end(animate=False)
+            except NoMatches:
+                pass
+        self.call_after_refresh(_do_scroll)
 
     def _check_cost_cap(self) -> str | None:
         config = self._state.config
