@@ -647,8 +647,9 @@ class HelpScreen(ModalScreen[None]):
             yield Static(
                 "  Ctrl+N    New session       Ctrl+P    Switch session\n"
                 "  Ctrl+O    Switch model      Ctrl+Q    Quit\n"
-                "  Tab       Accept suggestion  Escape    Cancel / close\n"
-                "  Enter     Send message       PgUp/Dn  Scroll messages"
+                "  Ctrl+C    Copy last reply    Escape    Cancel / close\n"
+                "  Tab       Accept suggestion  PgUp/Dn  Scroll messages\n"
+                "  Enter     Send message"
             )
 
             _categories = {
@@ -826,6 +827,7 @@ class AEApp(App):
         Binding("ctrl+n", "new_session", "New Session", show=True),
         Binding("ctrl+p", "switch_session", "Sessions", show=True),
         Binding("ctrl+o", "switch_model", "Model", show=True),
+        Binding("ctrl+c", "copy_last", "Copy", show=True),
         Binding("escape", "cancel_stream", "Cancel", show=False),
     ]
 
@@ -1197,6 +1199,25 @@ class AEApp(App):
         return None
 
     # ── Actions ─────────────────────────────────────────────────
+
+    def action_copy_last(self) -> None:
+        """Copy the last assistant response to system clipboard."""
+        # Find last assistant message in history
+        for msg in reversed(self._state.history):
+            if msg["role"] == "assistant":
+                text = msg["content"]
+                try:
+                    subprocess.run(
+                        ["pbcopy"], input=text.encode(), check=True,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                    self._add_system_message(
+                        f"[green]Copied last response to clipboard ({len(text)} chars)[/green]"
+                    )
+                except Exception:
+                    self._add_system_message("[red]Failed to copy to clipboard.[/red]")
+                return
+        self._add_system_message("[yellow]No assistant response to copy.[/yellow]")
 
     def action_quit_app(self) -> None:
         self._state.end()
