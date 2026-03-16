@@ -869,50 +869,9 @@ def _discover_targets(user_id: str, mode: str) -> dict[str, list[dict]]:
     except Exception:
         pass
 
-    # ── 4. Discord: fetch guilds + channels via REST (reads still work) ──
-    # Only sending is disabled. Reading channels/guilds is fine.
-    if mode == "subscribe":  # Discord serve is disabled, but subscribe is fine
-        try:
-            token_file = EXODIR / ".discord-token"
-            if token_file.exists():
-                token = token_file.read_text().strip()
-                import urllib.request
-                headers = {"Authorization": token}
-
-                req = urllib.request.Request(
-                    "https://discord.com/api/v10/users/@me/guilds", headers=headers
-                )
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    guilds = json.loads(resp.read())
-
-                for g in guilds[:10]:
-                    try:
-                        req2 = urllib.request.Request(
-                            f"https://discord.com/api/v10/guilds/{g['id']}/channels",
-                            headers=headers,
-                        )
-                        with urllib.request.urlopen(req2, timeout=10) as resp2:
-                            channels = json.loads(resp2.read())
-                        # Category name lookup
-                        cat_names = {
-                            c["id"]: c["name"]
-                            for c in channels
-                            if c.get("type") == 4
-                        }
-                        for ch in channels:
-                            if ch.get("type") in (0, 5):  # text, announcement
-                                cat = cat_names.get(ch.get("parent_id", ""), "")
-                                prefix = f"{cat} / " if cat else ""
-                                _add(
-                                    "discord",
-                                    ch["id"],
-                                    f"{g['name']} / {prefix}{ch['name']}",
-                                    "channel",
-                                )
-                    except Exception:
-                        continue
-        except Exception:
-            pass  # REST may fail — fall back to DB targets from steps 1 & 2
+    # ── 4. Discord: local DB only — no REST API calls (account limited) ──
+    # Discord targets come from steps 1 & 2 (subscriptions + platform_messages).
+    # No network calls to Discord servers.
 
     # ── Sort each platform: subscribed first, then by name ──
     for platform in result:
