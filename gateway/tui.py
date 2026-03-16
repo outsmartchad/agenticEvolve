@@ -653,17 +653,17 @@ class HelpScreen(ModalScreen[None]):
 
             _categories = {
                 "Session": ["/help", "/new", "/quit"],
+                "Utilities": ["/lang", "/do", "/speak"],
+                "Subscriptions": ["/subscribe", "/serve"],
                 "Info": ["/cost", "/model", "/status", "/memory", "/soul",
                          "/config", "/sessions", "/search", "/recall",
                          "/skills", "/learnings", "/heartbeat"],
                 "Pipelines": ["/produce", "/evolve", "/decompose", "/learn",
                               "/absorb", "/reflect", "/digest", "/gc"],
+                "Platform Digests": ["/wechat", "/discord", "/whatsapp"],
                 "Cron": ["/loop", "/loops", "/unloop", "/pause", "/unpause", "/notify"],
                 "Approval": ["/queue", "/approve", "/reject"],
                 "Admin": ["/autonomy", "/restart"],
-                "Platform Digests": ["/wechat", "/discord", "/whatsapp"],
-                "Subscriptions": ["/subscribe", "/serve"],
-                "Utilities": ["/lang", "/do", "/speak"],
             }
             _cmd_map = {cmd: desc for cmd, desc in SLASH_COMMANDS}
 
