@@ -6,7 +6,7 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-39-blue?style=for-the-badge" alt="39 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-44-blue?style=for-the-badge" alt="44 Commands"></a>
 </p>
 
 **[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)** | **[日本語](README.ja.md)**
@@ -341,6 +341,34 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 ---
 
 ## Recent Changes
+
+### v2.5 — Security + Intelligence + Plugin System
+
+**Phase 1: Security + Cost Protection**
+- Environment variable sanitization — strips 30+ secret patterns from `claude -p` to prevent prompt leaking credentials.
+- Per-user sliding-window rate limiting (5/min, 30/hr configurable).
+- `[NO_REPLY]` token — agent can skip irrelevant group messages without responding.
+- Message debouncing — batches rapid messages (2.5s window, 8s max wait) for served channels.
+- `@agent <prompt>` trigger — works for anyone in groups + DMs, with reply-to context and browser MCP.
+- Docker sandbox for served chats — isolated Python execution (`--network=none`, `--cap-drop=ALL`, 512MB memory).
+
+**Phase 2: UX + Efficiency**
+- Telegram streaming — edit-in-place with 1.5s throttled edits and "..." placeholder.
+- Context window management — token estimation, auto-compaction at 60%/85% thresholds.
+- Identity linking — `/link` and `/whoami` commands for cross-platform user resolution.
+
+**Phase 3: Intelligence**
+- 19-hook plugin system with priority ordering, merge functions, and `has_hooks()` O(1) check. Hook points: `message_received`, `before_invoke`, `llm_output`, `before_model_resolve`, `before_tool_call`, `after_tool_call`, `session_start`, `session_end`, `gateway_start`, `gateway_stop`, `background_task_*`, `before_pipeline_stage`, `after_pipeline_stage`, `subagent_spawned`, `subagent_ended`, `message_sending`, `message_sent`.
+- Plugin loader — discovers and loads from `~/.agenticEvolve/plugins/`. Each plugin exports `register(hooks, config)`.
+- BackgroundTaskManager — detached long-running tasks with progress tracking. `/tasks` and `/cancel` commands.
+- SubagentOrchestrator — generalized multi-Claude execution: `run_parallel`, `run_pipeline`, `run_dag` (dependency graph).
+
+**Phase 4: Polish**
+- Gateway exec mode — host execution with 3-tier security (deny/allowlist/full) and configurable approval (off/on-miss/always). 60+ safe bins auto-approved, 13 denylist patterns block dangerous commands (rm -rf, curl|sh, fork bombs, base64 eval).
+- Config validation — semantic checks before applying reloaded config. `/reload` command with validation + `config_reload` hook.
+- `/allowlist` command to manage exec allowlist (add/rm/clear/list).
+- `/hooks` command to inspect registered hook listeners.
+- 556 tests total (all passing).
 
 ### v2.4 — TUI Commands + Discord Local Cache + WhatsApp File Support
 

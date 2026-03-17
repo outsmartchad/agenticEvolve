@@ -6,7 +6,7 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-39-blue?style=for-the-badge" alt="39 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-44-blue?style=for-the-badge" alt="44 Commands"></a>
 </p>
 
 **[English](README.md)** | **[简体中文](README.zh.md)** | **[日本語](README.ja.md)**
@@ -340,6 +340,33 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 ---
 
 ## 最近更新
+
+### v2.5 — 安全 + 智能 + 外掛系統
+
+**第一階段：安全 + 成本保護**
+- 環境變數消毒 — 從 `claude -p` 中剝離 30+ 種密鑰模式，防止提示詞洩露憑證。
+- 每用戶滑動視窗速率限制（5次/分鐘, 30次/小時，可配置）。
+- `[NO_REPLY]` 令牌 — 智能體可以跳過群組中不相關的訊息。
+- 訊息去抖 — 對服務頻道的快速訊息進行批次處理（2.5秒視窗, 8秒最大等待）。
+- `@agent <prompt>` 觸發器 — 適用於群組+私訊中的任何人，支援引用回覆上下文和瀏覽器 MCP。
+- Docker 沙箱 — 服務聊天的隔離 Python 執行環境（`--network=none`, `--cap-drop=ALL`, 512MB 記憶體）。
+
+**第二階段：使用者體驗 + 效率**
+- Telegram 串流傳輸 — 就地編輯，1.5秒節流更新和 "..." 佔位符。
+- 上下文視窗管理 — 令牌估算，60%/85% 閾值自動壓縮。
+- 身份連結 — `/link` 和 `/whoami` 指令，跨平台使用者身份關聯。
+
+**第三階段：智能**
+- 19 個鉤子點的外掛系統，支援優先級排序、合併函式和 O(1) `has_hooks()` 檢查。
+- 外掛載入器 — 從 `~/.agenticEvolve/plugins/` 發現並載入。每個外掛匯出 `register(hooks, config)`。
+- 背景任務管理器 — 分離的長時間執行任務，帶進度追蹤。`/tasks` 和 `/cancel` 指令。
+- 子智能體編排器 — 通用多 Claude 執行：`run_parallel`、`run_pipeline`、`run_dag`（依賴圖）。
+
+**第四階段：完善**
+- 閘道執行模式 — 主機執行，3 級安全（deny/allowlist/full），可配置審批（off/on-miss/always）。60+ 安全二進位自動批准，13 個拒絕清單模式阻擋危險指令。
+- 配置驗證 — 套用前進行語意檢查。`/reload` 指令，帶驗證 + `config_reload` 鉤子。
+- `/allowlist` 指令管理執行允許清單。`/hooks` 指令檢視已註冊鉤子。
+- 總計 556 個測試（全部通過）。
 
 ### v2.3 — CLI REPL + WhatsApp LID 解析
 

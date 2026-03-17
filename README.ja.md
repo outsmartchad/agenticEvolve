@@ -6,7 +6,7 @@
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-39-blue?style=for-the-badge" alt="39 Commands"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-44-blue?style=for-the-badge" alt="44 Commands"></a>
 </p>
 
 **[English](README.md)** | **[简体中文](README.zh.md)** | **[繁體中文](README.zh-TW.md)**
@@ -340,6 +340,33 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 ---
 
 ## 最近の変更
+
+### v2.5 — セキュリティ + インテリジェンス + プラグインシステム
+
+**フェーズ1：セキュリティ + コスト保護**
+- 環境変数サニタイズ — `claude -p` から30以上のシークレットパターンを除去し、プロンプトによる認証情報漏洩を防止。
+- ユーザーごとのスライディングウィンドウレート制限（5回/分、30回/時間、設定可能）。
+- `[NO_REPLY]` トークン — エージェントがグループ内の無関係なメッセージをスキップ可能。
+- メッセージデバウンス — サーブチャンネルの高速メッセージをバッチ処理（2.5秒ウィンドウ、8秒最大待機）。
+- `@agent <prompt>` トリガー — グループ+DMで誰でも利用可能、引用返信コンテキストとブラウザMCP対応。
+- Dockerサンドボックス — サーブチャットの分離されたPython実行環境（`--network=none`、`--cap-drop=ALL`、512MBメモリ）。
+
+**フェーズ2：UX + 効率**
+- Telegramストリーミング — インプレース編集、1.5秒スロットル更新と「...」プレースホルダー。
+- コンテキストウィンドウ管理 — トークン推定、60%/85%閾値での自動圧縮。
+- ID連携 — `/link` と `/whoami` コマンドでクロスプラットフォームのユーザーID解決。
+
+**フェーズ3：インテリジェンス**
+- 19フックポイントのプラグインシステム。優先度順序、マージ関数、O(1) `has_hooks()` チェック対応。
+- プラグインローダー — `~/.agenticEvolve/plugins/` から検出・ロード。各プラグインは `register(hooks, config)` をエクスポート。
+- バックグラウンドタスクマネージャー — 分離された長時間実行タスク、進捗追跡付き。`/tasks` と `/cancel` コマンド。
+- サブエージェントオーケストレーター — 汎用マルチClaude実行：`run_parallel`、`run_pipeline`、`run_dag`（依存関係グラフ）。
+
+**フェーズ4：ポリッシュ**
+- ゲートウェイ実行モード — ホスト実行、3段階セキュリティ（deny/allowlist/full）、設定可能な承認（off/on-miss/always）。60以上の安全バイナリ自動承認、13の拒否リストパターンで危険なコマンドをブロック。
+- 設定検証 — 適用前のセマンティックチェック。`/reload` コマンド（検証 + `config_reload` フック付き）。
+- `/allowlist` コマンドで実行許可リスト管理。`/hooks` コマンドで登録済みフックリスナーを確認。
+- テスト合計556件（すべてパス）。
 
 ### v2.3 — CLI REPL + WhatsApp LID解決
 
