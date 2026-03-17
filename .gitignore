@@ -40,3 +40,5 @@ sessions/
 *.key
 config.yaml
 __pycache__/
+dashboard/node_modules/
+dashboard/.next/

@@ -512,7 +512,7 @@ class GatewayRunner:
                         from .sandbox import build_sandbox_prompt
                         session_context += build_sandbox_prompt(_sandbox_container, _sandbox_output_dir)
                     # Channel-specific knowledge injection
-                    channel_kb = _CHANNEL_KNOWLEDGE.get(str(chat_id))
+                    channel_kb = load_channel_knowledge().get(str(chat_id))
                     if channel_kb:
                         session_context += f"\n\n{channel_kb}"
 
@@ -1032,6 +1032,17 @@ class GatewayRunner:
             )
             log.info(f"Watchdog: started (chat_id={watchdog_chat_id})")
 
+        # Start dashboard web server if enabled
+        self._dashboard = None
+        dashboard_cfg = self.config.get("dashboard", {})
+        if dashboard_cfg.get("enabled", False):
+            try:
+                from .dashboard_api import DashboardServer
+                self._dashboard = DashboardServer(self, self.config)
+                await self._dashboard.start()
+            except Exception as _dash_err:
+                log.error(f"Dashboard server failed to start: {_dash_err}")
+
         await self._shutdown_event.wait()
 
     async def stop(self):
@@ -1042,6 +1053,13 @@ class GatewayRunner:
             await hooks.fire_void("gateway_stop")
         except Exception:
             pass
+
+        # Shut down dashboard server
+        if hasattr(self, '_dashboard') and self._dashboard:
+            try:
+                await self._dashboard.stop()
+            except Exception:
+                pass
 
         # Shut down background task manager
         try:
