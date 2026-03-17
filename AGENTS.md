@@ -39,8 +39,8 @@ When invoked via `claude -p`, the system prompt determines which "role" the agen
 | Platform | Adapter | Mode | Notes |
 |----------|---------|------|-------|
 | Telegram | `gateway/platforms/telegram.py` | Bot API | Primary control plane. All commands, inline keyboards |
-| Discord | `gateway/platforms/discord_client.py` | CDP + local cache | Hooks desktop app via `--remote-debugging-port=9224`. Token via CDP. **Account limited** — send/serve disabled, REST reads return 401. Messages read from Chromium disk cache (`tools/discord-local/read_cache.py`) |
-| WhatsApp | `gateway/platforms/whatsapp.py` + `whatsapp-bridge/bridge.js` | Baileys v7 | Node.js bridge over stdin/stdout. QR delivery to Telegram. LID resolution |
+| Discord | `gateway/platforms/discord_client.py` | Local cache only | **Fully disabled** — no CDP, no REST API, no token extraction. Data only from Chromium disk cache (`tools/discord-local/read_cache.py`) |
+| WhatsApp | `gateway/platforms/whatsapp.py` + `whatsapp-bridge/bridge.js` | Baileys v7 | Node.js bridge over stdin/stdout. QR delivery to Telegram. LID resolution. Supports images, documents (PDF/TXT/CSV), and audio/voice messages |
 | WeChat | Read-only via `collectors/wechat.py` | Decrypted local DBs | No live bridge. Subscribe for digests only |
 
 ### Subscribe vs Serve
@@ -85,8 +85,8 @@ When invoked via `claude -p`, the system prompt determines which "role" the agen
 | Discord | `tools/discord-local/read_cache.py` | Chromium disk cache | Parses `~/Library/Application Support/discord/Cache/Cache_Data/`. 5800+ messages across 353 channels. Only has messages from channels user scrolled through |
 | Discord | `collectors/discord.py` | Same cache | Signal collector for `/evolve` pipeline, groups messages by channel |
 
-### Discord Status (Account Limited)
-- REST API reads/writes return 401/403. CDP sending blocked. Only local file reads are safe.
-- Poll loop stops on auth failure (`_auth_failed` flag). Serve mode disabled (`and False` guard in `run.py`).
-- `/subscribe` target discovery uses Chromium cache scan instead of REST API.
-- Token still extractable via CDP (for future use if account is un-limited).
+### Discord Status (Fully Disabled)
+- Adapter `start()` is a complete no-op — zero network calls to Discord servers.
+- No CDP connections, no REST API, no token extraction (second community guidelines warning received).
+- Data only from local Chromium disk cache. `/subscribe` target discovery uses cache scan.
+- To re-enable: restore the `start()` method in `discord_client.py`.

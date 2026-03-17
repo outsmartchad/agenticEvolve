@@ -357,11 +357,11 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 **WhatsApp DM連絡先のサーブ対応**
 - `/serve` が個別のWhatsApp連絡先（グループだけでなく）をサポート。`_serve_groups` に加えて `_serve_contacts` セットを追加。サーブ対象連絡先の `allowed_users` をバイパスするようDMルーティングを更新。
 
-**WhatsApp画像サポート**
-- 受信WhatsApp画像をBaileyの `downloadMediaMessage` でダウンロードし、`/tmp/` に保存、Claudeの Read ツールに渡してビジョン分析。画像付きメッセージは自動的にopusモデルにエスカレーション。
+**WhatsAppメディアサポート**
+- 受信WhatsApp画像、ドキュメント（PDF、TXT、CSVなど）、音声メッセージをBaileysの `downloadMediaMessage` でダウンロードし、`/tmp/` に保存、Claude Codeに渡して分析。メディア付きメッセージは自動的にopusモデルにエスカレーション。
 
 **自動モデルエスカレーション**
-- 数学、コーディング、ロジック問題を含むメッセージを正規表現で自動検出し、デフォルトの `serve_model`（sonnet）ではなく `serve_reasoning_model`（opus）にルーティング。画像メッセージもエスカレーションをトリガー。
+- 数学、コーディング、ロジック問題を含むメッセージを正規表現で自動検出し、デフォルトの `serve_model`（sonnet）ではなく `serve_reasoning_model`（opus）にルーティング。画像・ファイルメッセージもエスカレーションをトリガー。
 
 **チャンネル固有ナレッジ**
 - `run.py` の `_CHANNEL_KNOWLEDGE` ディクショナリがチャンネル/グループIDをエキスパートナレッジプロンプトにマッピング。DiscordとWhatsAppのサーブチャンネルで、パーソナリティプロンプトの後に注入。degen-damm DiscordチャンネルでのDAMM v2エキスパティーズに使用。

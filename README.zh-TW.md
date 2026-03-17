@@ -357,11 +357,11 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 **WhatsApp 私訊聯絡人服務**
 - `/serve` 現在支援個別 WhatsApp 聯絡人（不僅限群組）。新增 `_serve_contacts` 集合，與 `_serve_groups` 並列。私訊路由更新為對已服務聯絡人繞過 `allowed_users` 檢查。
 
-**WhatsApp 圖片支援**
-- 收到的 WhatsApp 圖片透過 Baileys `downloadMediaMessage` 下載，儲存至 `/tmp/`，並傳遞給 Claude 的 Read 工具進行視覺分析。包含圖片的訊息自動升級到 opus 模型。
+**WhatsApp 媒體支援**
+- 收到的 WhatsApp 圖片、文件（PDF、TXT、CSV 等）和語音訊息透過 Baileys `downloadMediaMessage` 下載，儲存至 `/tmp/`，並傳遞給 Claude Code 進行分析。包含媒體的訊息自動升級到 opus 模型。
 
 **自動模型升級**
-- 包含數學、程式設計或邏輯問題的訊息會透過正規表示式自動偵測，並路由到 `serve_reasoning_model`（opus）而非預設的 `serve_model`（sonnet）。圖片訊息同樣觸發升級。
+- 包含數學、程式設計或邏輯問題的訊息會透過正規表示式自動偵測，並路由到 `serve_reasoning_model`（opus）而非預設的 `serve_model`（sonnet）。圖片和文件訊息同樣觸發升級。
 
 **頻道專屬知識**
 - `run.py` 中的 `_CHANNEL_KNOWLEDGE` 字典將頻道/群組 ID 映射到專家知識提示。在人格提示之後注入，適用於 Discord 和 WhatsApp 服務頻道。用於 degen-damm Discord 頻道的 DAMM v2 專業知識。

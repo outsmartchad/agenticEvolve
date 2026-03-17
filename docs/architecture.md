@@ -82,6 +82,6 @@ The cron scheduler runs inside the gateway process, ticking every 60s to execute
 | Platform | Status | Library | Data Source |
 |----------|--------|---------|-------------|
 | Telegram | Working (39 commands) | python-telegram-bot | Bot API (live) |
-| Discord | Limited (read-only, serve disabled) | CDP + local cache | Chromium disk cache (zero API calls) |
+| Discord | Fully disabled (local cache only) | None (no network) | Chromium disk cache (zero API calls) |
 | WhatsApp | Working (serve + subscribe) | Baileys v7 (Node.js bridge) | Live bridge over stdin/stdout |
 | WeChat | Read-only (digests) | Local SQLCipher DBs | Decrypted local databases |

@@ -62,7 +62,7 @@ Persistent agent runtime built on `claude -p` with a Python asyncio gateway. 6-l
 | Capability | Description |
 |------------|-------------|
 | **CLI REPL** | `ae` — Interactive Rich TUI with streaming output, markdown rendering, tool use spinners, 32 commands with Tab autocomplete, session persistence, auto-recall. No gateway required |
-| **Multi-Platform** | Telegram (bot API) + Discord (desktop CDP + local cache) + WhatsApp (Baileys v7 bridge). `/subscribe` to monitor channels for digests, `/serve` to make the agent respond in any group or DM |
+| **Multi-Platform** | Telegram (bot API) + Discord (local cache only) + WhatsApp (Baileys v7 bridge). `/subscribe` to monitor channels for digests, `/serve` to make the agent respond in any group or DM. WhatsApp supports images, PDFs, text files, and voice messages |
 | **Build** | Full Claude Code over Telegram or CLI — terminal, file I/O, web search, MCP, 26 skills |
 | **Evolve** | 5-stage pipeline: COLLECT → ANALYZE → BUILD → REVIEW → AUTO-INSTALL. Scans 12 sources: GitHub Trending + HN + X/Twitter + Reddit + Product Hunt + Lobste.rs + ArXiv + HuggingFace + BestOfJS + WeChat groups + Discord cache, synthesizes skills |
 | **Absorb** | `/absorb <url>` — clones repo, maps architecture, diffs patterns, implements improvements into your system |
@@ -342,7 +342,22 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 
 ## Recent Changes
 
-### v2.4 — TUI Commands + Discord Local Cache + Multi-Platform /lang
+### v2.4 — TUI Commands + Discord Local Cache + WhatsApp File Support
+
+**WhatsApp File & Document Support**
+- Users can now send PDF, TXT, CSV, JSON, and other text-based files via WhatsApp. The bridge downloads the file via Baileys `downloadMediaMessage`, saves to `/tmp/agenticEvolve-wa-files/`, and passes the path to Claude Code's Read tool for analysis.
+- Also supports audio/voice messages (saved to `/tmp/agenticEvolve-wa-audio/`).
+- Supported file types: `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.html`, `.pdf`, `.py`, `.js`, `.ts`, `.java`, `.c`, `.cpp`, `.go`, `.rs`, `.rb`, `.sh`, `.sql`, `.log`, and any plaintext format. Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`.
+- Files and images auto-escalate to opus model for better analysis.
+
+**WhatsApp Self-Reply Fix**
+- Fixed bot replying to its own messages in DMs and served groups (was causing infinite response loops, 18+ replies to one message).
+- Bridge.js now checks sender JID against `sock.user.id` — `fromMe` flag is unreliable on Baileys linked devices.
+- Python adds 3-second cooldown per chat after sending a reply, plus message ID deduplication.
+
+**Discord Fully Disabled (Zero Network Calls)**
+- Discord adapter `start()` is now a complete no-op — no CDP connections, no REST API calls, no token extraction. Account received second community guidelines warning.
+- Discord data is read ONLY from local Chromium disk cache (`tools/discord-local/read_cache.py`). Zero network calls to Discord servers.
 
 **TUI Slash Commands**
 - 6 new commands in the Textual TUI: `/lang`, `/do`, `/restart`, `/speak`, `/subscribe`, `/serve`. Previously Telegram-only, now fully functional in the CLI.
@@ -356,11 +371,6 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 - 5,835 messages across 353 channels recovered from cache, dating back to 2022.
 - Added `collectors/discord.py` signal collector for the `/evolve` pipeline, matching the WeChat collector pattern.
 - Discord is now a 12th signal source for `/evolve`.
-
-**Discord Account Limited — Full Local-Only Mode**
-- Discord account got limited from CDP-based message sending. All REST API writes disabled. Serve mode disabled.
-- Read-only subscribe polling still works but now stops gracefully on 401 auth errors instead of spam-retrying every 2 seconds (was flooding the event loop with 2,600+ errors).
-- `/subscribe` target discovery for Discord now reads from local Chromium cache instead of REST API.
 
 **`/lang` Works Across All Platforms**
 - Language preference injection moved from TUI-only to `build_system_prompt()` in `agent.py`. Now works for Telegram, CLI, and any future platform.
@@ -386,11 +396,11 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 **WhatsApp Serve for DM Contacts**
 - `/serve` now supports individual WhatsApp contacts (not just groups). Added `_serve_contacts` set alongside `_serve_groups`. DM routing updated to bypass `allowed_users` for served contacts.
 
-**WhatsApp Image Support**
-- Incoming WhatsApp images are downloaded via Baileys `downloadMediaMessage`, saved to `/tmp/`, and passed to Claude's Read tool for vision analysis. Messages with images auto-escalate to opus model.
+**WhatsApp Media Support**
+- Incoming WhatsApp images, documents (PDF, TXT, CSV, etc.), and audio messages are downloaded via Baileys `downloadMediaMessage`, saved to `/tmp/`, and passed to Claude Code for analysis. Messages with media auto-escalate to opus model.
 
 **Auto-Model Escalation**
-- Messages containing math, coding, or logic questions are auto-detected via regex and routed to `serve_reasoning_model` (opus) instead of the default `serve_model` (sonnet). Image messages also trigger escalation.
+- Messages containing math, coding, or logic questions are auto-detected via regex and routed to `serve_reasoning_model` (opus) instead of the default `serve_model` (sonnet). Image and file messages also trigger escalation.
 
 **Channel-Specific Knowledge**
 - `_CHANNEL_KNOWLEDGE` dict in `run.py` maps channel/group IDs to expert knowledge prompts. Injected after personality prompt for both Discord and WhatsApp served channels. Used for DAMM v2 expertise in degen-damm Discord channel.
