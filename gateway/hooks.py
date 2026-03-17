@@ -17,7 +17,7 @@ Usage (profile gating):
 Usage (async event system):
     from gateway.hooks import hooks
 
-    hooks.register("before_invoke", my_fn, modifying=True)
+    hooks.register("before_invoke", my_fn, modifying=True, priority=10)
     prompt = await hooks.fire_modifying("before_invoke", prompt)
     await hooks.fire_void("llm_output", session_id=sid, text=text, cost=cost)
 """
@@ -119,6 +119,15 @@ def is_hook_enabled(hook_id: str) -> bool:
 
 # ── Async event system ────────────────────────────────────────────────────────
 
+class _HookEntry:
+    """A registered hook listener with priority."""
+    __slots__ = ("fn", "priority")
+
+    def __init__(self, fn: Callable, priority: int = 0):
+        self.fn = fn
+        self.priority = priority
+
+
 class HookRunner:
     """Async event dispatcher for gateway lifecycle hook points.
 
@@ -126,24 +135,58 @@ class HookRunner:
       void      — fire-and-forget, all listeners gathered concurrently.
       modifying — sequential pipeline, each listener can mutate the payload.
 
+    Priority: higher values fire first (default 0). Within same priority,
+    insertion order is preserved. Inspired by OpenClaw's 25-hook typed system.
+
     All defined hook points are listed in HOOK_POINTS. Registering a name
     not in that list is allowed but logs a warning.
     """
 
     HOOK_POINTS = [
-        "message_received",  # (platform, chat_id, text) → None
-        "before_invoke",     # (session_id, prompt) → prompt
-        "llm_output",        # (session_id, text, cost) → None
-        "tool_call",         # (session_id, tool_name, args) → None
-        "session_start",     # (session_id, platform) → None
-        "session_end",       # (session_id, summary) → None
+        # ── Message lifecycle ─────────────────────
+        "message_received",         # void (platform, chat_id, text, user_id)
+        "before_invoke",            # modifying (prompt -> prompt)
+        "llm_output",               # void (session_id, text, cost)
+
+        # ── Model selection ───────────────────────
+        "before_model_resolve",     # modifying (model -> model override)
+
+        # ── Tool execution ────────────────────────
+        "before_tool_call",         # modifying (tool_name, params -> params or None to block)
+        "after_tool_call",          # void (session_id, tool_name, params, result)
+
+        # ── Session lifecycle ─────────────────────
+        "session_start",            # void (session_id, platform, chat_id, user_id)
+        "session_end",              # void (session_id, summary)
+
+        # ── Gateway lifecycle ─────────────────────
+        "gateway_start",            # void (adapters, config)
+        "gateway_stop",             # void ()
+
+        # ── Background tasks ──────────────────────
+        "background_task_submit",   # void (task_id, session_key, description)
+        "background_task_complete", # void (task_id, result)
+        "background_task_failed",   # void (task_id, error)
+
+        # ── Pipeline (evolve/absorb/decompose) ────
+        "before_pipeline_stage",    # modifying (stage, prompt -> prompt)
+        "after_pipeline_stage",     # void (pipeline, stage, result, cost)
+
+        # ── Subagent orchestration ────────────────
+        "subagent_spawned",         # void (task_id, model, stage)
+        "subagent_ended",           # void (task_id, outcome, cost)
+
+        # ── Message sending ───────────────────────
+        "message_sending",          # modifying (text -> text)  — before platform delivery
+        "message_sent",             # void (platform, chat_id, text)
     ]
 
     def __init__(self) -> None:
-        self._void: dict[str, list[Callable]] = {}
-        self._modifying: dict[str, list[Callable]] = {}
+        self._void: dict[str, list[_HookEntry]] = {}
+        self._modifying: dict[str, list[_HookEntry]] = {}
 
-    def register(self, name: str, fn: Callable, modifying: bool = False) -> None:
+    def register(self, name: str, fn: Callable, modifying: bool = False,
+                 priority: int = 0) -> None:
         """Register a listener for a named hook point.
 
         Args:
@@ -152,41 +195,83 @@ class HookRunner:
                 receive the payload as a single positional arg and must return
                 the (possibly mutated) payload.
             modifying: If True, registers as a sequential mutating hook.
+            priority: Higher values fire first (default 0).
         """
         if name not in self.HOOK_POINTS:
             log.warning(f"HookRunner.register: unknown hook point '{name}'")
+        entry = _HookEntry(fn, priority)
         if modifying:
-            self._modifying.setdefault(name, []).append(fn)
+            self._modifying.setdefault(name, []).append(entry)
+            # Re-sort by descending priority
+            self._modifying[name].sort(key=lambda e: -e.priority)
         else:
-            self._void.setdefault(name, []).append(fn)
+            self._void.setdefault(name, []).append(entry)
+            self._void[name].sort(key=lambda e: -e.priority)
+
+    def unregister(self, name: str, fn: Callable) -> bool:
+        """Remove a listener. Returns True if found and removed."""
+        for registry in (self._void, self._modifying):
+            entries = registry.get(name, [])
+            for i, entry in enumerate(entries):
+                if entry.fn is fn:
+                    entries.pop(i)
+                    return True
+        return False
+
+    def has_hooks(self, name: str) -> bool:
+        """O(1) check whether any listeners are registered for a hook point."""
+        return bool(self._void.get(name)) or bool(self._modifying.get(name))
 
     async def fire_void(self, name: str, **kwargs) -> None:
         """Fire all void listeners concurrently. Exceptions are logged, not raised."""
-        listeners = self._void.get(name, [])
-        if not listeners:
+        entries = self._void.get(name, [])
+        if not entries:
             return
         results = await asyncio.gather(
-            *(fn(**kwargs) for fn in listeners), return_exceptions=True
+            *(e.fn(**kwargs) for e in entries), return_exceptions=True
         )
         for i, r in enumerate(results):
             if isinstance(r, Exception):
                 log.warning(f"Hook '{name}' listener[{i}] raised: {r}")
 
-    async def fire_modifying(self, name: str, payload):
+    async def fire_modifying(self, name: str, payload, merge_fn: Callable | None = None):
         """Run all modifying listeners sequentially, threading the payload.
 
         Each listener receives the current payload and must return a new payload.
         If a listener raises, the exception is logged and that step is skipped.
 
+        Args:
+            name: Hook point name.
+            payload: The value to thread through listeners.
+            merge_fn: Optional function(old_payload, new_payload) -> merged_payload.
+                      If not provided, the listener's return value replaces payload directly.
+
         Returns:
             The final mutated payload.
         """
-        for fn in self._modifying.get(name, []):
+        for entry in self._modifying.get(name, []):
             try:
-                payload = await fn(payload)
+                result = await entry.fn(payload)
+                if merge_fn is not None:
+                    payload = merge_fn(payload, result)
+                else:
+                    payload = result
             except Exception as e:
                 log.warning(f"Hook '{name}' modifying listener raised (skipped): {e}")
         return payload
+
+    def listener_count(self, name: str) -> int:
+        """Return total listener count (void + modifying) for a hook point."""
+        return len(self._void.get(name, [])) + len(self._modifying.get(name, []))
+
+    def registered_hooks(self) -> dict[str, int]:
+        """Return a dict of hook_name -> listener_count for all hooks with listeners."""
+        result = {}
+        for name in set(list(self._void.keys()) + list(self._modifying.keys())):
+            count = self.listener_count(name)
+            if count > 0:
+                result[name] = count
+        return result
 
 
 # Module-level singleton — import and use directly.

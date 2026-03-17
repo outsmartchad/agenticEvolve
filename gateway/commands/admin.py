@@ -92,6 +92,10 @@ class AdminMixin:
             "Identity\n"
             "/link <platform> <platform_user_id> [display_name] — Link cross-platform identity\n"
             "/whoami — Show linked identities for your account\n\n"
+            "Background Tasks\n"
+            "/tasks — List running/recent background tasks\n"
+            "/cancel <task_id> — Cancel a running task\n"
+            "/hooks — Show registered hook listeners\n\n"
             "Maintenance\n"
             "/gc [--dry-run] — Garbage collection\n\n"
             "Settings\n"
@@ -561,6 +565,76 @@ class AdminMixin:
             for l in linked:
                 name = f" ({l['name']})" if l.get("name") else ""
                 lines.append(f"  {l['platform']}: {l['user_id']}{name}")
+            await update.message.reply_text("\n".join(lines))
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
+
+    # ── Background tasks (Phase 3) ────────────────────────────────
+
+    async def _handle_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List background tasks: /tasks"""
+        if not self._is_allowed(update):
+            return await self._deny(update)
+
+        try:
+            mgr = self._gateway._background_mgr
+            tasks = mgr.list_tasks(include_completed=True)
+            if not tasks:
+                await update.message.reply_text("No background tasks.")
+                return
+            lines = ["Background tasks:\n"]
+            for t in tasks[:15]:
+                lines.append(t.to_summary())
+            active = mgr.active_count()
+            lines.append(f"\nActive: {active}/{mgr._executor._max_workers}")
+            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
+
+    async def _handle_cancel_task(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Cancel a background task: /cancel <task_id>"""
+        if not self._is_allowed(update):
+            return await self._deny(update)
+
+        if not context.args:
+            await update.message.reply_text("Usage: /cancel <task_id>")
+            return
+
+        task_id = context.args[0]
+        try:
+            mgr = self._gateway._background_mgr
+            # Try prefix match
+            matching = [t for t in mgr.list_tasks()
+                        if t.id.startswith(task_id)]
+            if not matching:
+                await update.message.reply_text(f"No task found matching '{task_id}'")
+                return
+            cancelled = await mgr.cancel(matching[0].id)
+            if cancelled:
+                await update.message.reply_text(
+                    f"Cancelled task {matching[0].id[:8]}: {matching[0].description}")
+            else:
+                await update.message.reply_text(
+                    f"Task {matching[0].id[:8]} is not cancellable (status: {matching[0].status})")
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
+
+    async def _handle_hooks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show registered hooks: /hooks"""
+        if not self._is_allowed(update):
+            return await self._deny(update)
+
+        try:
+            from ..hooks import hooks
+            registered = hooks.registered_hooks()
+            if not registered:
+                await update.message.reply_text("No hook listeners registered.")
+                return
+            lines = ["Registered hooks:\n"]
+            for name, count in sorted(registered.items()):
+                lines.append(f"  {name}: {count} listener(s)")
+            lines.append(f"\nTotal: {sum(registered.values())} listeners "
+                        f"across {len(registered)} hook points")
             await update.message.reply_text("\n".join(lines))
         except Exception as e:
             await update.message.reply_text(f"Error: {e}")

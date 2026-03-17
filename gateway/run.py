@@ -22,6 +22,8 @@ from croniter import croniter
 from .config import load_config, config_changed, reload_config
 from .agent import invoke_claude, get_today_cost, generate_title, consolidate_session
 from .hooks import hooks
+from .plugin_loader import load_all_plugins
+from .background import BackgroundTaskManager
 from .session_db import (
     create_session, generate_session_id, add_message,
     end_session, list_sessions, get_session_messages, set_title
@@ -233,6 +235,8 @@ class GatewayRunner:
         self._inflight: set[asyncio.Future] = set()
         self._pending_images: dict[str, list[bytes]] = {}  # session_key -> screenshot bytes
         self._rate_limiter = None  # initialized after config load in start()
+        self._background_mgr = BackgroundTaskManager()  # Phase 3: background tasks
+        self._plugins: list = []  # loaded plugins
         self._jobs_cache: list = []          # cached jobs.json contents
         self._jobs_mtime: float = 0.0       # mtime of last successful read
         self._cost_cap_backoff_until: Optional[datetime] = None  # hard backoff end time
@@ -293,6 +297,17 @@ class GatewayRunner:
         self._session_last_active[key] = now
         self._session_msg_count[key] = 0
         log.info(f"New session: {sid} ({platform}:{chat_id})")
+
+        # Fire session_start hook (void)
+        try:
+            asyncio.get_running_loop().call_soon(
+                lambda: asyncio.ensure_future(
+                    hooks.fire_void("session_start",
+                                    session_id=sid, platform=platform,
+                                    chat_id=chat_id, user_id=user_id)))
+        except Exception:
+            pass
+
         return sid
 
     def _get_lock(self, session_key: str) -> asyncio.Lock:
@@ -432,7 +447,8 @@ class GatewayRunner:
 
             # Fire message_received hook (void — non-blocking)
             await hooks.fire_void("message_received",
-                                  platform=platform, chat_id=chat_id, text=text)
+                                  platform=platform, chat_id=chat_id,
+                                  text=text, user_id=user_id)
 
             # Persist user message
             add_message(session_id, "user", text)
@@ -624,6 +640,10 @@ class GatewayRunner:
             else:
                 model = self.config.get("model", "sonnet")
 
+            # Allow hooks to override model selection
+            if hooks.has_hooks("before_model_resolve"):
+                model = await hooks.fire_modifying("before_model_resolve", model)
+
             # Allow before_invoke hooks to mutate the prompt
             invoke_text = await hooks.fire_modifying("before_invoke", text)
 
@@ -763,6 +783,12 @@ class GatewayRunner:
                     if sid:
                         end_session(sid)
                         log.info(f"Cleaned up idle session: {sid}")
+                        # Fire session_end hook
+                        try:
+                            await hooks.fire_void("session_end",
+                                                  session_id=sid, summary="idle_timeout")
+                        except Exception:
+                            pass
                         # Fire silent consolidation in background thread
                         loop = asyncio.get_running_loop()
                         loop.run_in_executor(None, consolidate_session, sid)
@@ -1049,6 +1075,12 @@ class GatewayRunner:
         except Exception as _rl_err:
             log.warning(f"Rate limiter init failed: {_rl_err}")
 
+        # Load plugins (must be after config, before adapters)
+        try:
+            self._plugins = load_all_plugins(hooks, self.config)
+        except Exception as _plug_err:
+            log.warning(f"Plugin loader failed: {_plug_err}")
+
         self._create_adapters()
 
         if not self.adapters:
@@ -1064,6 +1096,13 @@ class GatewayRunner:
 
         started = [a.name for a in self.adapters]
         log.info(f"Gateway running: {', '.join(started)}")
+
+        # Fire gateway_start hook
+        try:
+            await hooks.fire_void("gateway_start",
+                                  adapters=started, config=self.config)
+        except Exception:
+            pass
 
         PID_FILE.write_text(str(os.getpid()))
         import time
@@ -1088,6 +1127,18 @@ class GatewayRunner:
     async def stop(self):
         log.info("Gateway shutting down...")
 
+        # Fire gateway_stop hook
+        try:
+            await hooks.fire_void("gateway_stop")
+        except Exception:
+            pass
+
+        # Shut down background task manager
+        try:
+            await self._background_mgr.shutdown()
+        except Exception:
+            pass
+
         # Drain in-flight requests before cancelling background tasks
         self._draining = True
         if self._inflight:
@@ -1106,6 +1157,11 @@ class GatewayRunner:
 
         for key, sid in self._active_sessions.items():
             end_session(sid)
+            try:
+                await hooks.fire_void("session_end",
+                                      session_id=sid, summary="gateway_shutdown")
+            except Exception:
+                pass
             consolidate_session(sid)
         self._active_sessions.clear()
 
