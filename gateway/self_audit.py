@@ -246,7 +246,7 @@ def _check_sandbox(report: AuditReport, config: dict):
 
 def _check_session_db(report: AuditReport):
     """Check session database integrity."""
-    db_path = EXODIR / "sessions.db"
+    db_path = EXODIR / "memory" / "sessions.db"
     if not db_path.exists():
         report.add(Finding("db.missing", Severity.INFO, "Session DB not found", "Will be created on first run"))
         return

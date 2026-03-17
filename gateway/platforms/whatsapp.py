@@ -31,6 +31,9 @@ class WhatsAppAdapter(BasePlatformAdapter):
             window_seconds=config.get("debounce_seconds", 2.5),
             max_wait=config.get("debounce_max_wait", 8.0),
         )
+        self._seen_content: dict[str, float] = {}
+        self._last_reply_ts: dict[str, float] = {}
+        self._pending_responses: dict[str, asyncio.Future] = {}
         self.process = None
         self._reader_task = None
         self._breaker = CircuitBreaker("whatsapp", fail_threshold=5, recovery_secs=60)
@@ -149,8 +152,6 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     import time as _time2
                     _content_key = _hashlib.md5(f"{chat_id}:{user_id}:{text[:200]}".encode()).hexdigest()
                     _now2 = _time2.monotonic()
-                    if not hasattr(self, "_seen_content"):
-                        self._seen_content: dict[str, float] = {}
                     _last_seen = self._seen_content.get(_content_key, 0)
                     if _now2 - _last_seen < 5.0:
                         log.debug(f"WhatsApp dedup (content): skipping duplicate in {chat_id} ({_now2 - _last_seen:.1f}s)")
@@ -248,8 +249,6 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     # very recently, this is likely our own message echoed back.
                     import time as _time
                     _now = _time.monotonic()
-                    if not hasattr(self, "_last_reply_ts"):
-                        self._last_reply_ts: dict[str, float] = {}
                     _last = self._last_reply_ts.get(chat_id, 0)
                     if _now - _last < 3.0 and not _is_agent_invoke:
                         log.debug(f"WhatsApp self-reply guard: skipping msg in {chat_id} ({_now - _last:.1f}s after last reply)")
@@ -401,7 +400,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 elif msg.get("type") == "history_messages":
                     # Route history fetch response to pending future
                     req_id = msg.get("request_id", "")
-                    if hasattr(self, "_pending_responses") and req_id in self._pending_responses:
+                    if req_id in self._pending_responses:
                         fut = self._pending_responses.pop(req_id)
                         if not fut.done():
                             fut.set_result(msg)
@@ -409,7 +408,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 elif msg.get("type") in ("groups", "contacts"):
                     # Route response to pending _send_command future
                     resp_type = msg["type"]
-                    if hasattr(self, "_pending_responses") and resp_type in self._pending_responses:
+                    if resp_type in self._pending_responses:
                         fut = self._pending_responses.pop(resp_type)
                         if not fut.done():
                             fut.set_result(msg)
@@ -503,8 +502,6 @@ class WhatsAppAdapter(BasePlatformAdapter):
         await self.process.stdin.drain()
         # Wait for response (bridge emits it on stdout, read_loop stores it)
         # We use a simple future pattern
-        if not hasattr(self, "_pending_responses"):
-            self._pending_responses: dict[str, asyncio.Future] = {}
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         resp_type = cmd["type"].replace("list_", "")  # list_groups -> groups
         self._pending_responses[resp_type] = fut
@@ -551,8 +548,6 @@ class WhatsAppAdapter(BasePlatformAdapter):
         await self.process.stdin.drain()
 
         # Wait for response keyed by request_id
-        if not hasattr(self, "_pending_responses"):
-            self._pending_responses: dict[str, asyncio.Future] = {}
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_responses[request_id] = fut
 

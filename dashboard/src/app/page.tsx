@@ -26,6 +26,7 @@ import {
   TrendingUp,
   Activity,
   Clock,
+  GitCommit,
 } from "lucide-react";
 import { fetchAPI } from "@/lib/api";
 
@@ -58,6 +59,13 @@ interface MetricEvent {
   message?: string;
 }
 
+interface GitCommitEntry {
+  hash: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
 const statusColor: Record<string, string> = {
   ready: "bg-green-500/15 text-green-500 border-green-500/30",
   active: "bg-blue-500/15 text-blue-500 border-blue-500/30",
@@ -84,11 +92,17 @@ function relativeTime(ts: string): string {
   return `${days}d ago`;
 }
 
+function truncate(str: string, max: number): string {
+  return str.length > max ? str.slice(0, max) + "..." : str;
+}
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<StatusData | null>(null);
   const [modules, setModules] = useState<ModuleEntry[]>([]);
   const [events, setEvents] = useState<MetricEvent[]>([]);
+  const [commits, setCommits] = useState<GitCommitEntry[]>([]);
+  const [commitsError, setCommitsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
@@ -110,11 +124,22 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const loadCommits = useCallback(async () => {
+    try {
+      const data = await fetchAPI("/api/git/log");
+      setCommits((data.commits ?? []).slice(0, 8));
+      setCommitsError(null);
+    } catch {
+      setCommitsError("Git log not available");
+    }
+  }, []);
+
   useEffect(() => {
     loadData();
+    loadCommits();
     const interval = setInterval(loadData, 10_000);
     return () => clearInterval(interval);
-  }, [loadData]);
+  }, [loadData, loadCommits]);
 
   if (loading) {
     return (
@@ -293,40 +318,81 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        {/* ---- Right column: Activity Feed ---- */}
-        <Card className="h-fit">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <Activity className="h-4 w-4" /> Recent Activity
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {events.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No recent events</p>
-            ) : (
-              <div className="space-y-4">
-                {events.map((a, i) => (
-                  <div key={i}>
-                    <div className="flex items-start gap-2">
-                      <Clock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
-                      <div>
-                        <p className="text-sm">
-                          {a.message || a.type || "Event"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {a.timestamp ? relativeTime(a.timestamp) : "just now"}
-                        </p>
+        {/* ---- Right column: Activity Feed + Recent Commits ---- */}
+        <div className="space-y-6">
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <Activity className="h-4 w-4" /> Recent Activity
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {events.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No recent events</p>
+              ) : (
+                <div className="space-y-4">
+                  {events.map((a, i) => (
+                    <div key={i}>
+                      <div className="flex items-start gap-2">
+                        <Clock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm">
+                            {a.message || a.type || "Event"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {a.timestamp ? relativeTime(a.timestamp) : "just now"}
+                          </p>
+                        </div>
                       </div>
+                      {i < events.length - 1 && (
+                        <Separator className="mt-3" />
+                      )}
                     </div>
-                    {i < events.length - 1 && (
-                      <Separator className="mt-3" />
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Recent Commits */}
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <GitCommit className="h-4 w-4" /> Recent Commits
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {commitsError ? (
+                <p className="text-sm text-muted-foreground">{commitsError}</p>
+              ) : commits.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No commits found</p>
+              ) : (
+                <div className="space-y-3">
+                  {commits.map((c, i) => (
+                    <div key={c.hash + i}>
+                      <div className="flex items-start gap-2">
+                        <code className="mt-0.5 shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-mono text-muted-foreground">
+                          {c.hash.slice(0, 7)}
+                        </code>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm">
+                            {truncate(c.message, 60)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {c.date ? relativeTime(c.date) : ""}
+                          </p>
+                        </div>
+                      </div>
+                      {i < commits.length - 1 && (
+                        <Separator className="mt-2" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

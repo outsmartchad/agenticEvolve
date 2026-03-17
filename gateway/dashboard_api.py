@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+import subprocess
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -96,9 +97,7 @@ async def cors_middleware(request: web.Request, handler):
     allowed_origins = {"http://localhost:3000", "http://127.0.0.1:3000"}
     if origin in allowed_origins:
         resp.headers["Access-Control-Allow-Origin"] = origin
-    else:
-        # Allow same-origin requests (no Origin header)
-        resp.headers["Access-Control-Allow-Origin"] = "*"
+    # else: no Origin header or unknown origin — do not set CORS header
 
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
@@ -172,6 +171,8 @@ class DashboardServer:
         self.app.router.add_post("/api/config", self._handle_config_post)
         self.app.router.add_get("/api/metrics", self._handle_metrics)
         self.app.router.add_get("/api/modules", self._handle_modules)
+        self.app.router.add_get("/api/git/log", self._handle_git_log)
+        self.app.router.add_post("/api/chat", self._handle_chat)
         self.app.router.add_get("/ws", self._handle_ws)
 
         # Static files + SPA fallback (must be last)
@@ -400,6 +401,76 @@ class DashboardServer:
                 modules.append({"name": name, "status": f"error: {e}"})
         return _json_response({"modules": modules})
 
+    # ── Git log ───────────────────────────────────────────────
+
+    async def _handle_git_log(self, request: web.Request) -> web.Response:
+        try:
+            project_dir = Path(__file__).parent.parent
+            result = subprocess.run(
+                ["git", "log", "--oneline", "-20",
+                 "--format={\"hash\":\"%H\",\"short\":\"%h\",\"message\":\"%s\",\"author\":\"%an\",\"date\":\"%ci\"}"],
+                capture_output=True, text=True, timeout=10,
+                cwd=str(project_dir),
+            )
+            if result.returncode != 0:
+                return _error_response(
+                    f"git log failed: {result.stderr.strip()}", status=500)
+
+            commits = []
+            for line in result.stdout.strip().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    commits.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+            return _json_response({"commits": commits})
+        except FileNotFoundError:
+            return _error_response("git not installed", status=500)
+        except subprocess.TimeoutExpired:
+            return _error_response("git log timed out", status=500)
+        except Exception as e:
+            log.error(f"Git log endpoint error: {e}")
+            return _error_response(str(e), status=500)
+
+    # ── Chat ─────────────────────────────────────────────────
+
+    async def _handle_chat(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            message = body.get("message", "").strip()
+            if not message:
+                return _error_response("message is required")
+
+            response_text = await self.runner.handle_message(
+                "dashboard", "web", "web_user", message)
+
+            cost = 0.0
+            # Try to get cost from the latest session
+            try:
+                from .session_db import _connect
+                conn = _connect()
+                row = conn.execute(
+                    "SELECT cost FROM costs WHERE platform='dashboard' "
+                    "ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                conn.close()
+                if row:
+                    cost = float(row["cost"] or 0)
+            except Exception:
+                pass
+
+            return _json_response({
+                "response": response_text or "",
+                "cost": round(cost, 4),
+            })
+        except json.JSONDecodeError:
+            return _error_response("Invalid JSON body")
+        except Exception as e:
+            log.error(f"Chat endpoint error: {e}")
+            return _error_response(str(e), status=500)
+
     # ── WebSocket ────────────────────────────────────────────
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
@@ -499,7 +570,7 @@ class DashboardServer:
 
     # ── Lifecycle ────────────────────────────────────────────
 
-    async def start(self, host: str = "0.0.0.0", port: int = 7777):
+    async def start(self, host: str = "127.0.0.1", port: int = 7777):
         dashboard_cfg = self.config.get("dashboard", {})
         host = dashboard_cfg.get("host", host)
         port = dashboard_cfg.get("port", port)
@@ -518,6 +589,14 @@ class DashboardServer:
             gw_logger.addHandler(self._log_handler)
         except Exception as e:
             log.warning(f"Dashboard: failed to register log handler: {e}")
+
+        # Warn if no auth token is configured
+        auth_token = dashboard_cfg.get("auth_token", "")
+        if not auth_token:
+            log.warning(
+                "Dashboard running without auth token — "
+                "set dashboard.auth_token in config.yaml for production use"
+            )
 
         self._app_runner = web.AppRunner(self.app, access_log=None)
         await self._app_runner.setup()

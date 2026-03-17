@@ -19,6 +19,20 @@ import {
 } from "@/components/ui/table";
 import { DollarSign, TrendingUp, Calendar } from "lucide-react";
 import { fetchAPI } from "@/lib/api";
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,6 +43,8 @@ interface DailyUsage {
   cost: number;
   sessions: number;
   messages: number;
+  tokens_in?: number;
+  tokens_out?: number;
 }
 
 interface CostCard {
@@ -100,6 +116,15 @@ export default function UsagePage() {
     { label: "Total (14 days)", value: `$${totalCost.toFixed(2)}`, icon: Calendar },
   ];
 
+  // Format date labels for charts (e.g. "03/15")
+  const chartData = daily.map((d) => ({
+    ...d,
+    label: d.date.slice(5).replace("-", "/"),
+  }));
+
+  const axisStyle = { fontSize: 11, fill: "#a1a1aa" };
+  const gridStroke = "#3f3f46";
+
   return (
     <div className="space-y-6">
       <h1 className="text-lg font-semibold">Usage &amp; Cost</h1>
@@ -121,17 +146,65 @@ export default function UsagePage() {
         ))}
       </div>
 
-      {/* Chart placeholder */}
+      {/* Bar chart: Daily Cost + Line overlay: Sessions */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">
-            Daily Cost (Last 14 Days)
+            Daily Cost &amp; Sessions (Last 14 Days)
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex h-48 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
-            Chart placeholder — install recharts to render
-          </div>
+          {chartData.length === 0 ? (
+            <div className="flex h-48 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
+              No usage data available
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                <XAxis dataKey="label" tick={axisStyle} />
+                <YAxis yAxisId="cost" tick={axisStyle} tickFormatter={(v: number) => `$${v}`} />
+                <YAxis yAxisId="sessions" orientation="right" tick={axisStyle} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: 8, color: "#fff" }}
+                  labelStyle={{ color: "#a1a1aa" }}
+                />
+                <Legend wrapperStyle={{ color: "#fff", fontSize: 12 }} />
+                <Bar yAxisId="cost" dataKey="cost" name="Cost ($)" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="sessions" type="monotone" dataKey="sessions" name="Sessions" stroke="#a855f7" strokeWidth={2} dot={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Area chart: Daily Message Volume */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">
+            Daily Message Volume
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {chartData.length === 0 ? (
+            <div className="flex h-48 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
+              No usage data available
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                <XAxis dataKey="label" tick={axisStyle} />
+                <YAxis tick={axisStyle} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "#18181b", border: "1px solid #3f3f46", borderRadius: 8, color: "#fff" }}
+                  labelStyle={{ color: "#a1a1aa" }}
+                />
+                <Legend wrapperStyle={{ color: "#fff", fontSize: 12 }} />
+                <Area type="monotone" dataKey="messages" name="Messages" stroke="#22c55e" fill="#22c55e" fillOpacity={0.15} strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </CardContent>
       </Card>
 
@@ -149,13 +222,15 @@ export default function UsagePage() {
                 <TableHead>Date</TableHead>
                 <TableHead className="text-right">Sessions</TableHead>
                 <TableHead className="text-right">Messages</TableHead>
+                <TableHead className="text-right">Tokens In</TableHead>
+                <TableHead className="text-right">Tokens Out</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {daily.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
                     No usage data available
                   </TableCell>
                 </TableRow>
@@ -165,6 +240,12 @@ export default function UsagePage() {
                     <TableCell className="text-sm">{d.date}</TableCell>
                     <TableCell className="text-right">{d.sessions}</TableCell>
                     <TableCell className="text-right">{d.messages}</TableCell>
+                    <TableCell className="text-right">
+                      {d.tokens_in != null ? d.tokens_in.toLocaleString() : "-"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {d.tokens_out != null ? d.tokens_out.toLocaleString() : "-"}
+                    </TableCell>
                     <TableCell className="text-right font-medium">
                       ${d.cost.toFixed(2)}
                     </TableCell>

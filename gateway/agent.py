@@ -681,6 +681,8 @@ def invoke_claude(message: str, model: str = "sonnet",
                 # Also collect base64 screenshot images from browser_screenshot tool results.
                 text_parts = []
                 cost = 0
+                input_tokens = 0
+                output_tokens = 0
                 images: list[bytes] = []
                 for line in output.split("\n"):
                     line = line.strip()
@@ -707,9 +709,21 @@ def invoke_claude(message: str, model: str = "sonnet",
                                                 images.append(_b64.b64decode(src["data"]))
                         elif obj.get("type") == "result":
                             result_text = obj.get("result", "")
-                            if result_text:
+                            if isinstance(result_text, dict):
+                                # result can be a dict with text and usage
+                                if result_text.get("text"):
+                                    text_parts.append(result_text["text"])
+                                usage = result_text.get("usage", {})
+                                input_tokens = usage.get("input_tokens", 0)
+                                output_tokens = usage.get("output_tokens", 0)
+                            elif result_text:
                                 text_parts.append(result_text)
                             cost = obj.get("total_cost_usd", 0)
+                            # Also check top-level usage if result wasn't a dict
+                            if not isinstance(result_text, dict):
+                                _usage = obj.get("usage", {})
+                                input_tokens = _usage.get("input_tokens", 0)
+                                output_tokens = _usage.get("output_tokens", 0)
                     except json.JSONDecodeError:
                         continue
 
@@ -720,7 +734,8 @@ def invoke_claude(message: str, model: str = "sonnet",
                     return {"text": "Claude responded but I couldn't parse the output. Try again.", "cost": cost, "success": False, "images": images}
 
                 final_text = text_parts[-1]
-                return {"text": final_text, "cost": cost, "success": True, "images": images}
+                return {"text": final_text, "cost": cost, "success": True, "images": images,
+                        "input_tokens": input_tokens, "output_tokens": output_tokens}
 
             except subprocess.TimeoutExpired:
                 log.warning(f"invoke_claude timed out after {max_seconds}s — killing subprocess")
@@ -849,6 +864,8 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
 
         text_parts = []
         cost = 0
+        input_tokens = 0
+        output_tokens = 0
         tool_count = 0
         last_progress_tool = ""
         timed_out = False
@@ -949,9 +966,19 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
 
                     elif msg_type == "result":
                         result_text = obj.get("result", "")
-                        if result_text:
+                        if isinstance(result_text, dict):
+                            if result_text.get("text"):
+                                text_parts.append(result_text["text"])
+                            usage = result_text.get("usage", {})
+                            input_tokens = usage.get("input_tokens", 0)
+                            output_tokens = usage.get("output_tokens", 0)
+                        elif result_text:
                             text_parts.append(result_text)
                         cost = obj.get("total_cost_usd", 0)
+                        if not isinstance(result_text, dict):
+                            _usage = obj.get("usage", {})
+                            input_tokens = _usage.get("input_tokens", input_tokens)
+                            output_tokens = _usage.get("output_tokens", output_tokens)
 
                 except json.JSONDecodeError:
                     continue
@@ -965,29 +992,36 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         if loop_detected:
             log.warning(f"invoke_claude_streaming: loop guard terminated subprocess for {_sk}")
             partial = text_parts[-1] if text_parts else "Loop detected — agent was stuck repeating tool calls."
-            return {"text": partial, "cost": cost, "success": False, "loop_detected": True}
+            return {"text": partial, "cost": cost, "success": False, "loop_detected": True,
+                    "input_tokens": input_tokens, "output_tokens": output_tokens}
 
         if timed_out:
             log.warning(f"invoke_claude_streaming timed out after {max_seconds}s")
             partial = text_parts[-1] if text_parts else "Timed out with no output."
-            return {"text": partial, "cost": cost, "success": False, "timed_out": True}
+            return {"text": partial, "cost": cost, "success": False, "timed_out": True,
+                    "input_tokens": input_tokens, "output_tokens": output_tokens}
 
         proc.wait(timeout=30)
 
         if not text_parts:
-            return {"text": "Claude ran but produced no text output.", "cost": cost, "success": False}
+            return {"text": "Claude ran but produced no text output.", "cost": cost, "success": False,
+                    "input_tokens": input_tokens, "output_tokens": output_tokens}
 
         final_text = text_parts[-1]
-        return {"text": final_text, "cost": cost, "success": True}
+        return {"text": final_text, "cost": cost, "success": True,
+                "input_tokens": input_tokens, "output_tokens": output_tokens}
 
     except subprocess.TimeoutExpired:
         proc.kill()
-        return {"text": "Request timed out.", "cost": 0, "success": False}
+        return {"text": "Request timed out.", "cost": 0, "success": False,
+                "input_tokens": 0, "output_tokens": 0}
     except FileNotFoundError:
-        return {"text": "Claude CLI not found.", "cost": 0, "success": False}
+        return {"text": "Claude CLI not found.", "cost": 0, "success": False,
+                "input_tokens": 0, "output_tokens": 0}
     except Exception as e:
         log.error(f"Streaming invocation error: {e}")
-        return {"text": f"Error: {e}", "cost": 0, "success": False}
+        return {"text": f"Error: {e}", "cost": 0, "success": False,
+                "input_tokens": 0, "output_tokens": 0}
     finally:
         if _workspace and _workspace.exists():
             try:

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   MessageSquare,
+  MessageCircle,
   BarChart3,
   Settings,
   ScrollText,
@@ -26,6 +27,7 @@ const navSections = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Sessions", href: "/sessions", icon: MessageSquare },
       { name: "Usage", href: "/usage", icon: BarChart3 },
+      { name: "Chat", href: "/chat", icon: MessageCircle },
     ],
   },
   {

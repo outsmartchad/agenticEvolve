@@ -1,9 +1,13 @@
 """SQLite session persistence with FTS5 full-text search."""
+import fcntl
 import sqlite3
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+_mem_log = logging.getLogger("agenticEvolve.session_db")
 
 DB_PATH = Path.home() / ".agenticEvolve" / "memory" / "sessions.db"
 
@@ -834,6 +838,37 @@ def get_promotable_instincts(min_conf: float = 0.8,
     return results
 
 
+def _locked_read_modify_write(path: Path, modifier) -> bool:
+    """Read-modify-write a file under an exclusive file lock.
+
+    Args:
+        path: File to modify.
+        modifier: Callable(str) -> str|None. Receives current content, returns
+                  new content to write, or None to skip writing.
+
+    Returns:
+        True if file was written, False on skip or error.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "r+") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                existing = f.read()
+                new_content = modifier(existing)
+                if new_content is None:
+                    return False
+                f.seek(0)
+                f.write(new_content)
+                f.truncate()
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        return True
+    except Exception as e:
+        _mem_log.error(f"Failed locked read-modify-write on {path}: {e}")
+        return False
+
+
 def score_and_route_observation(pattern: str, context: str = "",
                                 project_id: str = "") -> str:
     """Score an observation by importance and route to the right store.
@@ -897,16 +932,18 @@ def score_and_route_observation(pattern: str, context: str = "",
     else:  # 4 or 5
         upsert_instinct(pattern, context=context, project_id=project_id,
                         confidence_delta=0.1)
-        # Append high-importance observations to MEMORY.md
+        # Append high-importance observations to MEMORY.md (file-locked)
         mem_path = Path.home() / ".agenticEvolve" / "memory" / "MEMORY.md"
         if mem_path.exists():
-            existing = mem_path.read_text()
-            marker = "<!-- auto-instincts -->"
             entry = f"\n§\n{pattern}"
-            if marker in existing:
-                mem_path.write_text(existing.replace(marker, entry + "\n" + marker))
-            else:
-                mem_path.write_text(existing + entry)
+            marker = "<!-- auto-instincts -->"
+
+            def _modify(existing: str) -> str:
+                if marker in existing:
+                    return existing.replace(marker, entry + "\n" + marker)
+                return existing + entry
+
+            _locked_read_modify_write(mem_path, _modify)
         return "memory"
 
 
@@ -935,31 +972,38 @@ def auto_promote_instincts(max_promotions: int = 3) -> list[str]:
     if not mem_path.exists():
         return []
 
-    existing = mem_path.read_text()
     char_limit = 2200
     promoted = []
+    to_promote = eligible[:max_promotions]
 
-    for inst in eligible[:max_promotions]:
-        pattern = inst["pattern"]
-        entry = f"\n§ [auto] {pattern}"
+    def _modify(existing: str) -> str | None:
+        nonlocal promoted
+        content = existing
+        for inst in to_promote:
+            pattern = inst["pattern"]
+            entry = f"\n§ [auto] {pattern}"
 
-        # Check if pattern is already in MEMORY.md (substring match)
-        if pattern[:50] in existing:
-            mark_instinct_promoted(inst["id"], "memory_duplicate")
-            continue
+            # Check if pattern is already in MEMORY.md (substring match)
+            if pattern[:50] in content:
+                mark_instinct_promoted(inst["id"], "memory_duplicate")
+                continue
 
-        # Check char budget
-        if len(existing) + len(entry) > char_limit:
-            break
+            # Check char budget
+            if len(content) + len(entry) > char_limit:
+                break
 
-        existing += entry
-        promoted.append(pattern)
-        mark_instinct_promoted(inst["id"], "memory")
+            content += entry
+            promoted.append(pattern)
+            mark_instinct_promoted(inst["id"], "memory")
+
+        if not promoted:
+            return None  # skip write
+        return content
+
+    _locked_read_modify_write(mem_path, _modify)
 
     if promoted:
-        mem_path.write_text(existing)
-        import logging
-        logging.getLogger("agenticEvolve.instincts").info(
+        _mem_log.info(
             f"Auto-promoted {len(promoted)} instincts to MEMORY.md"
         )
 
@@ -1458,6 +1502,42 @@ def cleanup_platform_messages(days: int = 7):
     try:
         conn.execute("DELETE FROM platform_messages WHERE timestamp < ?", (cutoff,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Database maintenance ─────────────────────────────────────
+
+import logging as _logging
+_maint_log = _logging.getLogger("agenticEvolve.session_db")
+
+
+def run_maintenance():
+    """Run periodic database maintenance — VACUUM, ANALYZE, cleanup old data."""
+    _ensure_db()
+    conn = _connect()
+    try:
+        # Clean platform messages older than 7 days
+        conn.execute("DELETE FROM platform_messages WHERE timestamp < datetime('now', '-7 days')")
+        # Clean old messages from sessions older than 60 days
+        conn.execute("""
+            DELETE FROM messages WHERE session_id IN (
+                SELECT id FROM sessions WHERE ended_at < datetime('now', '-60 days')
+            )
+        """)
+        # Clean old audit log entries older than 30 days
+        conn.execute("DELETE FROM audit WHERE timestamp < datetime('now', '-30 days')")
+        conn.commit()
+        # Run VACUUM and ANALYZE
+        conn.execute("VACUUM")
+        conn.execute("ANALYZE")
+        rows = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        msg_rows = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        _maint_log.info(f"DB maintenance complete: {rows} sessions, {msg_rows} messages")
+        return {"sessions": rows, "messages": msg_rows}
+    except Exception as e:
+        _maint_log.error(f"DB maintenance failed: {e}")
+        return {"error": str(e)}
     finally:
         conn.close()
 

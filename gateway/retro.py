@@ -13,7 +13,6 @@ Context types:
 Output: gap report text (sent to Telegram by the caller).
 Cost tracked and returned.
 """
-import getpass
 import logging
 import re
 import yaml
@@ -25,7 +24,7 @@ log = logging.getLogger("agenticEvolve.retro")
 
 EXODIR = Path.home() / ".agenticEvolve"
 RETRO_LOG = EXODIR / "logs" / "retro.log"
-INSTINCTS_DIR = Path.home() / ".ae" / "instincts"
+INSTINCTS_DIR = Path.home() / ".agenticEvolve" / "instincts"
 
 
 def _write_instincts(gap_report: str, context_type: str) -> int:
@@ -88,8 +87,7 @@ def _write_instincts(gap_report: str, context_type: str) -> int:
 
 def _load_memory_snapshot() -> str:
     """Load bounded memory for retro context."""
-    username = getpass.getuser()
-    memory_dir = Path.home() / ".claude" / "projects" / f"-Users-{username}" / "memory"
+    memory_dir = Path.home() / ".agenticEvolve" / "memory"
     snippets = []
     for fname in ("MEMORY.md", "project_agenticevolve.md", "feedback_general.md"):
         fpath = memory_dir / fname
