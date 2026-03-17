@@ -40,9 +40,9 @@ class TestRedact:
         assert "IkpXVCJ9" not in result
 
     def test_telegram_bot_token(self):
-        text = "bot8630216622:AAEcbK435fJtf8Cn7dvExrH8iiZaO34S6DE"
+        text = "bot1234567890:AAFake_Token-ForTestingOnly_abcdef"
         result = redact(text)
-        assert "AAEcbK435fJtf8Cn7dv" not in result
+        assert "AAFake_Token" not in result
 
     def test_pem_block(self):
         text = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...base64...\n-----END RSA PRIVATE KEY-----"

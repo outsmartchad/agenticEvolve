@@ -417,6 +417,17 @@ class GatewayRunner:
             log.info(f"Rejecting message during drain ({platform}:{chat_id})")
             return "Gateway is restarting, please try again in 30s."
 
+        import time as _time
+        _msg_start = _time.monotonic()
+
+        # Emit diagnostic: message queued
+        try:
+            from .diagnostics import emit_message
+            emit_message(platform, chat_id, user_id, "queued",
+                         prompt_chars=len(text))
+        except Exception:
+            pass
+
         key = self._session_key(platform, chat_id)
         lock = self._get_lock(key)
 
@@ -747,6 +758,21 @@ class GatewayRunner:
             if cost > 0:
                 self._log_cost(platform, session_id, cost)
                 log.info(f"Response sent ({platform}:{chat_id}) cost=${cost:.4f}")
+
+            # Emit diagnostic: message completed
+            try:
+                from .diagnostics import emit_message, emit_usage
+                _duration_ms = (_time.monotonic() - _msg_start) * 1000
+                emit_message(platform, chat_id, user_id, "completed",
+                             duration_ms=_duration_ms,
+                             prompt_chars=len(text),
+                             response_chars=len(response_text),
+                             model=model, cost=cost)
+                if cost > 0:
+                    emit_usage(model, len(text), len(response_text),
+                               cost, _duration_ms, session_id=session_id)
+            except Exception:
+                pass
 
             return response_text
 
@@ -1113,6 +1139,14 @@ class GatewayRunner:
         PID_FILE.write_text(str(os.getpid()))
         import time
         self._start_time = time.time()
+
+        # Enable diagnostic event JSONL logging
+        try:
+            from .diagnostics import enable_jsonl_logging
+            enable_jsonl_logging()
+            log.info("Diagnostic JSONL logging enabled")
+        except Exception as _diag_err:
+            log.warning(f"Diagnostic logging init failed: {_diag_err}")
 
         # Start background tasks
         self._session_cleanup_task = asyncio.create_task(self._session_cleanup_loop())
