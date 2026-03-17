@@ -164,6 +164,52 @@ def _diff_configs(old: dict, new: dict, prefix: str = "") -> list[str]:
     return changes
 
 
+def validate_config(config: dict) -> list[str]:
+    """Validate config semantics. Returns list of error messages (empty = valid)."""
+    errors = []
+
+    # Cost caps must be non-negative
+    for key in ("daily_cost_cap", "weekly_cost_cap"):
+        val = config.get(key)
+        if val is not None and (not isinstance(val, (int, float)) or val < 0):
+            errors.append(f"{key} must be a non-negative number")
+
+    # Model must be a known string
+    model = config.get("model")
+    if model and not isinstance(model, str):
+        errors.append("model must be a string")
+
+    # Exec mode validation
+    exec_cfg = config.get("exec", {})
+    if exec_cfg:
+        if exec_cfg.get("security") and exec_cfg["security"] not in ("deny", "allowlist", "full"):
+            errors.append("exec.security must be deny|allowlist|full")
+        if exec_cfg.get("ask") and exec_cfg["ask"] not in ("off", "on-miss", "always"):
+            errors.append("exec.ask must be off|on-miss|always")
+        if exec_cfg.get("mode") and exec_cfg["mode"] not in ("sandbox", "gateway"):
+            errors.append("exec.mode must be sandbox|gateway")
+
+    # Platform configs
+    platforms = config.get("platforms", {})
+    for name, pcfg in platforms.items():
+        if not isinstance(pcfg, dict):
+            errors.append(f"platforms.{name} must be a dict")
+            continue
+        users = pcfg.get("allowed_users", [])
+        if users and not isinstance(users, list):
+            errors.append(f"platforms.{name}.allowed_users must be a list")
+
+    # Rate limiting
+    rl = config.get("rate_limit", {})
+    if rl:
+        for key in ("per_user_per_minute", "per_user_per_hour"):
+            val = rl.get(key)
+            if val is not None and (not isinstance(val, int) or val < 0):
+                errors.append(f"rate_limit.{key} must be a non-negative integer")
+
+    return errors
+
+
 def _deep_merge(base: dict, override: dict):
     for k, v in override.items():
         if k in base and isinstance(base[k], dict) and isinstance(v, dict):

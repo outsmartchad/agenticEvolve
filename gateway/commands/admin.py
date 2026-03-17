@@ -96,6 +96,9 @@ class AdminMixin:
             "/tasks — List running/recent background tasks\n"
             "/cancel <task_id> — Cancel a running task\n"
             "/hooks — Show registered hook listeners\n\n"
+            "Configuration\n"
+            "/reload — Force-reload config.yaml with validation\n"
+            "/allowlist — Manage exec mode command allowlist\n\n"
             "Maintenance\n"
             "/gc [--dry-run] — Garbage collection\n\n"
             "Settings\n"
@@ -636,5 +639,104 @@ class AdminMixin:
             lines.append(f"\nTotal: {sum(registered.values())} listeners "
                         f"across {len(registered)} hook points")
             await update.message.reply_text("\n".join(lines))
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
+
+    # ── Config hot-reload (Phase 4) ──────────────────────────────
+
+    async def _handle_reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Force-reload config: /reload"""
+        if not self._is_allowed(update):
+            return await self._deny(update)
+
+        try:
+            from ..config import reload_config, validate_config
+            new_config, changes = reload_config()
+
+            # Validate before applying
+            errors = validate_config(new_config)
+            if errors:
+                await update.message.reply_text(
+                    "Config validation errors:\n" +
+                    "\n".join(f"  - {e}" for e in errors) +
+                    "\n\nConfig NOT applied.")
+                return
+
+            self._gateway.config = new_config
+            if changes:
+                await update.message.reply_text(
+                    f"Config reloaded. Changed:\n" +
+                    "\n".join(f"  - {c}" for c in changes))
+            else:
+                await update.message.reply_text("Config reloaded. No changes detected.")
+
+            # Fire hook
+            try:
+                from ..hooks import hooks
+                await hooks.fire_void("config_reload", changes=changes)
+            except Exception:
+                pass
+        except Exception as e:
+            await update.message.reply_text(f"Reload failed: {e}")
+
+    # ── Exec allowlist management (Phase 4) ──────────────────────
+
+    async def _handle_allowlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Manage exec allowlist: /allowlist [add|rm|clear] [pattern|id]"""
+        if not self._is_allowed(update):
+            return await self._deny(update)
+
+        args = context.args or []
+
+        try:
+            from ..exec_allowlist import ExecAllowlist
+            al = ExecAllowlist(self._gateway.config)
+
+            if not args:
+                # Show current allowlist
+                entries = al.list_entries()
+                if not entries:
+                    await update.message.reply_text(
+                        "Exec allowlist is empty.\n"
+                        "Use /allowlist add <pattern> to add entries.")
+                    return
+                lines = ["Exec allowlist:\n"]
+                for e in entries:
+                    used = f" (used {e.use_count}x)" if e.use_count else ""
+                    lines.append(f"  [{e.id}] {e.pattern}{used}")
+                lines.append(f"\nSecurity: {al.security} | Ask: {al.ask}")
+                await update.message.reply_text("\n".join(lines))
+                return
+
+            subcmd = args[0].lower()
+
+            if subcmd == "add" and len(args) >= 2:
+                pattern = args[1]
+                user_id = str(update.message.from_user.id)
+                entry = al.add_entry(pattern, added_by=user_id)
+                await update.message.reply_text(
+                    f"Added to allowlist: [{entry.id}] {entry.pattern}")
+
+            elif subcmd == "rm" and len(args) >= 2:
+                entry_id = args[1]
+                if al.remove_entry(entry_id):
+                    await update.message.reply_text(f"Removed allowlist entry: {entry_id}")
+                else:
+                    await update.message.reply_text(f"Entry not found: {entry_id}")
+
+            elif subcmd == "clear":
+                count = len(al.list_entries())
+                for e in al.list_entries():
+                    al.remove_entry(e.id)
+                await update.message.reply_text(f"Cleared {count} allowlist entries.")
+
+            else:
+                await update.message.reply_text(
+                    "Usage:\n"
+                    "  /allowlist — show current allowlist\n"
+                    "  /allowlist add <pattern> — add entry\n"
+                    "  /allowlist rm <id> — remove entry\n"
+                    "  /allowlist clear — remove all entries")
+
         except Exception as e:
             await update.message.reply_text(f"Error: {e}")

@@ -687,6 +687,8 @@ class TelegramAdapter(
             "tasks": self._handle_tasks,
             "cancel": self._handle_cancel_task,
             "hooks": self._handle_hooks,
+            "reload": self._handle_reload,
+            "allowlist": self._handle_allowlist,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
