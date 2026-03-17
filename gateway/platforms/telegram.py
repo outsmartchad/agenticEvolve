@@ -689,6 +689,7 @@ class TelegramAdapter(
             "hooks": self._handle_hooks,
             "reload": self._handle_reload,
             "allowlist": self._handle_allowlist,
+            "doctor": self._handle_doctor,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))
@@ -770,6 +771,7 @@ class TelegramAdapter(
                 BotCommand("lang", "Set output language (e.g. /lang zh)"),
                 BotCommand("wechat", "WeChat group chat digest"),
                 BotCommand("digest", "Morning briefing"),
+                BotCommand("doctor", "System health check"),
             ])
         except Exception as e:
             log.warning(f"Failed to set bot commands: {e}")

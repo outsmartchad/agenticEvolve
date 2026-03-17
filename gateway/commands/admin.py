@@ -740,3 +740,23 @@ class AdminMixin:
 
         except Exception as e:
             await update.message.reply_text(f"Error: {e}")
+
+    # ── /doctor — system health check ────────────────────────────
+
+    async def _handle_doctor(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Run self-audit health check: /doctor"""
+        if not update.message:
+            return
+        if not self._is_allowed(update.message.from_user.id):
+            return await self._deny(update)
+
+        try:
+            from ..self_audit import run_audit
+            cfg = self._gateway.config if self._gateway else {}
+            report = run_audit(cfg)
+            text = report.format_text()
+            if len(text) > 4000:
+                text = text[:3950] + "\n\n... [truncated]"
+            await update.message.reply_text(text)
+        except Exception as e:
+            await update.message.reply_text(f"Doctor failed: {e}")
