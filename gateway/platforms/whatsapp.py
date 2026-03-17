@@ -255,6 +255,50 @@ class WhatsAppAdapter(BasePlatformAdapter):
                         log.debug(f"WhatsApp self-reply guard: skipping msg in {chat_id} ({_now - _last:.1f}s after last reply)")
                         continue
 
+                    # ── WhatsApp slash commands (for allowed users only) ──
+                    if text.startswith("/") and self._is_allowed(user_id):
+                        cmd = text.split()[0].lower().lstrip("/")
+                        if cmd == "cost":
+                            from ..session_db import get_cost_today, get_cost_week
+                            today = get_cost_today()
+                            week = get_cost_week()
+                            response = (
+                                f"*Cost Summary*\n"
+                                f"Today: ${today:.2f}\n"
+                                f"This week: ${week:.2f}"
+                            )
+                            await self.send(chat_id, response, reply_to=msg_key)
+                            continue
+                        elif cmd == "status":
+                            from ..diagnostics import get_status_summary
+                            s = get_status_summary()
+                            response = (
+                                f"*Status*\n"
+                                f"Messages processed: {s['messages_processed']}\n"
+                                f"Recent cost: ${s['total_cost_recent']:.4f}\n"
+                                f"Avg latency: {s['avg_latency_ms']:.0f}ms\n"
+                                f"Loop detections: {s['loop_detections']}\n"
+                                f"Models: {', '.join(s['models_used']) or 'n/a'}"
+                            )
+                            await self.send(chat_id, response, reply_to=msg_key)
+                            continue
+                        elif cmd == "doctor":
+                            from ..self_audit import run_audit
+                            report = run_audit()
+                            response = report.format_text()
+                            await self.send(chat_id, response, reply_to=msg_key)
+                            continue
+                        elif cmd == "help":
+                            response = (
+                                "*Available commands*\n"
+                                "/cost — Today & weekly cost summary\n"
+                                "/status — Runtime diagnostics\n"
+                                "/doctor — Self-audit report\n"
+                                "/help — Show this list"
+                            )
+                            await self.send(chat_id, response, reply_to=msg_key)
+                            continue
+
                     try:
                         # Build invoke text with any attached media
                         invoke_text = text
