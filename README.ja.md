@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-33-orange?style=for-the-badge" alt="33 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-44-blue?style=for-the-badge" alt="44 Commands"></a>
 </p>
 
@@ -340,6 +340,18 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 ---
 
 ## 最近の変更
+
+### v2.6 — セキュリティ、オブザーバビリティ、プラットフォーム統一
+- **コンテンツサニタイザー**：ランダム化された境界マーカーとUnicode同形文字フォールディングによるプロンプトインジェクション防御（OpenClawより改編）
+- **ログリダクション**：17の正規表現パターンにより、全ログ出力からAPIキー、トークン、PEMブロックを自動除去
+- **リトライユーティリティ**：一時的な障害に対する指数バックオフ + ジッター、Telegramリトライヘルパー
+- **ローリングログ**：RotatingFileHandler（50MB、5バックアップ）が無制限なログファイルを置き換え
+- **ツールループ検出器**：4モード検出（汎用リピート、ポーリング無進捗、ピンポン、グローバルサーキットブレーカー）で暴走セッションを防止
+- **セキュリティ自己監査**：`/doctor` コマンドで環境権限、設定シークレット、コスト上限、依存関係、サンドボックスの健全性、DB整合性をチェック
+- **診断イベントバス**：型付きイベント（メッセージ、使用量、セッション、ループ、ハートビート）、JSONLシンクとステータスサマリー対応
+- **WhatsAppコマンド**：`/cost`、`/status`、`/doctor`、`/help` がWhatsAppで利用可能に
+- **音声パイプライン修正**：長時間音声のチャンキング（48分 → 10分チャンク）、OGG→WAV変換、3層重複排除、音声のフォースリプライ、2部構成応答（転写 + 要約）
+- **セキュリティ修正**：CLI/TUIでの環境変数サニタイズ、動的オーナーパス、サーブグループのコンテンツラッピング
 
 ### v2.5 — セキュリティ + インテリジェンス + プラグインシステム
 

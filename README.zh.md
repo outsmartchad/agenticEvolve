@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-33-orange?style=for-the-badge" alt="33 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-44-blue?style=for-the-badge" alt="44 Commands"></a>
 </p>
 
@@ -340,6 +340,18 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 ---
 
 ## 最近更新
+
+### v2.6 — 安全、可观测性与平台对齐
+- **内容消毒器**：提示注入防御，使用随机化边界标记、Unicode 同形字折叠（改编自 OpenClaw）
+- **日志脱敏**：17 个正则模式自动剥离所有日志输出中的 API 密钥、令牌、PEM 块
+- **重试工具**：指数退避 + 抖动处理瞬态故障，Telegram 重试辅助函数
+- **滚动日志**：RotatingFileHandler（50MB，5 个备份）替代无限增长的日志文件
+- **工具循环检测器**：4 种检测模式（通用重复、轮询无进展、乒乓模式、全局断路器）防止失控会话
+- **安全自检**：`/doctor` 命令检查环境权限、配置密钥、费用上限、依赖项、沙箱健康状态、数据库完整性
+- **诊断事件总线**：类型化事件（消息、用量、会话、循环、心跳），支持 JSONL 输出和状态摘要
+- **WhatsApp 命令**：`/cost`、`/status`、`/doctor`、`/help` 现在可在 WhatsApp 上使用
+- **语音流水线修复**：长音频分片（48 分钟 → 10 分钟分片）、OGG→WAV 转换、三层去重、语音强制回复、双段响应（转写 + 摘要）
+- **安全修复**：CLI/TUI 中的环境变量消毒、动态所有者路径、服务群组的内容包装
 
 ### v2.5 — 安全 + 智能 + 插件系统
 

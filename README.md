@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Engine-Claude%20Code-blueviolet?style=for-the-badge" alt="Claude Code"></a>
-  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-26-orange?style=for-the-badge" alt="26 Skills"></a>
+  <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Skills-33-orange?style=for-the-badge" alt="33 Skills"></a>
   <a href="https://github.com/outsmartchad/agenticEvolve"><img src="https://img.shields.io/badge/Commands-44-blue?style=for-the-badge" alt="44 Commands"></a>
 </p>
 
@@ -341,6 +341,18 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 ---
 
 ## Recent Changes
+
+### v2.6 — Security, Observability & Platform Parity
+- **Content Sanitizer**: Prompt injection defense with randomized boundary markers, Unicode homoglyph folding (adapted from OpenClaw)
+- **Log Redaction**: 17 regex patterns auto-strip API keys, tokens, PEM blocks from all log output
+- **Retry Utility**: Exponential backoff + jitter for transient failures, Telegram retry helper
+- **Rolling Logs**: RotatingFileHandler (50MB, 5 backups) replaces unbounded log files
+- **Tool Loop Detector**: 4-mode detection (generic repeat, poll no-progress, ping-pong, global circuit breaker) prevents runaway sessions
+- **Security Self-Audit**: `/doctor` command checks env permissions, config secrets, cost caps, dependencies, sandbox health, DB integrity
+- **Diagnostic Event Bus**: Typed events (message, usage, session, loop, heartbeat) with JSONL sink and status summary
+- **WhatsApp Commands**: `/cost`, `/status`, `/doctor`, `/help` now work on WhatsApp
+- **Voice Pipeline Fixes**: Long audio chunking (48-min → 10-min chunks), OGG→WAV conversion, triple-layer dedup, force reply for voice, 2-part response (transcript + summary)
+- **Security Fixes**: Env sanitization in CLI/TUI, dynamic owner paths, content wrapping for served groups
 
 ### v2.5 — Security + Intelligence + Plugin System
 
