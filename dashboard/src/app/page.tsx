@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Card,
   CardContent,
@@ -21,105 +21,100 @@ import {
 } from "@/components/ui/table";
 import {
   Terminal,
-  TestTube2,
-  Brain,
-  GitCommit,
+  MessageSquare,
+  DollarSign,
+  TrendingUp,
   Activity,
   Clock,
 } from "lucide-react";
+import { fetchAPI } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
-// Mock data — will be replaced by API calls
+// Types
 // ---------------------------------------------------------------------------
 
-const summaryCards = [
-  {
-    label: "Commands",
-    value: 1_247,
-    icon: Terminal,
-    color: "bg-blue-500",
-    progress: 78,
-  },
-  {
-    label: "Tests",
-    value: "142 / 148",
-    icon: TestTube2,
-    color: "bg-green-500",
-    progress: 96,
-  },
-  {
-    label: "Patterns",
-    value: 38,
-    icon: Brain,
-    color: "bg-purple-500",
-    progress: 62,
-  },
-  {
-    label: "Commits",
-    value: 312,
-    icon: GitCommit,
-    color: "bg-amber-500",
-    progress: 85,
-  },
-];
+interface StatusData {
+  uptime: number;
+  platforms: string[];
+  active_sessions: number;
+  today_cost: number;
+  week_cost: number;
+  total_sessions: number;
+  total_messages: number;
+  model: string;
+  daily_cost_cap: number;
+  weekly_cost_cap: number;
+}
 
-const taskQueue = {
-  done: 24,
-  pending: 3,
-  active: 1,
-};
+interface ModuleEntry {
+  name: string;
+  status: string;
+}
 
-const agentMetrics = [
-  { metric: "Total Sessions", value: "89" },
-  { metric: "Tasks Completed", value: "1,247" },
-  { metric: "Patterns Extracted", value: "38" },
-  { metric: "Cost Today", value: "$4.23" },
-  { metric: "Autopilot Status", value: "Active" },
-];
-
-const modules = [
-  { name: "Gateway", status: "ready" as const },
-  { name: "Telegram Adapter", status: "active" as const },
-  { name: "WhatsApp Bridge", status: "active" as const },
-  { name: "Discord Adapter", status: "configured" as const },
-  { name: "Evolve Pipeline", status: "ready" as const },
-  { name: "Learn Pipeline", status: "ready" as const },
-  { name: "Cron Scheduler", status: "active" as const },
-  { name: "Memory Engine", status: "ready" as const },
-];
-
-const recentActivity = [
-  {
-    time: "2 min ago",
-    text: "Session #89 started — Telegram @outsmartchad",
-  },
-  {
-    time: "8 min ago",
-    text: "Evolve cycle completed — 2 skills installed",
-  },
-  { time: "15 min ago", text: "Cost alert: daily spend reached $4.00" },
-  {
-    time: "32 min ago",
-    text: "WhatsApp bridge reconnected",
-  },
-  { time: "1 hr ago", text: "Cron job signal-scan executed" },
-];
+interface MetricEvent {
+  type: string;
+  timestamp: string;
+  data?: Record<string, unknown>;
+  message?: string;
+}
 
 const statusColor: Record<string, string> = {
   ready: "bg-green-500/15 text-green-500 border-green-500/30",
   active: "bg-blue-500/15 text-blue-500 border-blue-500/30",
   configured: "bg-yellow-500/15 text-yellow-500 border-yellow-500/30",
   error: "bg-red-500/15 text-red-500 border-red-500/30",
+  stopped: "bg-gray-500/15 text-gray-400 border-gray-500/30",
 };
+
+function formatUptime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+function relativeTime(ts: string): string {
+  const diff = Date.now() - new Date(ts).getTime();
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<StatusData | null>(null);
+  const [modules, setModules] = useState<ModuleEntry[]>([]);
+  const [events, setEvents] = useState<MetricEvent[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [statusData, modulesData, metricsData] = await Promise.all([
+        fetchAPI("/api/status"),
+        fetchAPI("/api/modules").catch(() => ({ modules: [] })),
+        fetchAPI("/api/metrics").catch(() => ({ events: [] })),
+      ]);
+      setStatus(statusData);
+      setModules(modulesData.modules ?? modulesData ?? []);
+      const rawEvents = metricsData.events ?? metricsData ?? [];
+      setEvents(Array.isArray(rawEvents) ? rawEvents.slice(-5).reverse() : []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch data");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    // Simulate data fetch
-    const t = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+    loadData();
+    const interval = setInterval(loadData, 10_000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
   if (loading) {
     return (
@@ -133,6 +128,60 @@ export default function DashboardPage() {
       </div>
     );
   }
+
+  if (error && !status) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+          Failed to connect to gateway: {error}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const s = status!;
+  const costTodayPct = s.daily_cost_cap > 0 ? Math.min(100, (s.today_cost / s.daily_cost_cap) * 100) : 0;
+  const costWeekPct = s.weekly_cost_cap > 0 ? Math.min(100, (s.week_cost / s.weekly_cost_cap) * 100) : 0;
+
+  const summaryCards = [
+    {
+      label: "Sessions",
+      value: s.total_sessions,
+      icon: Terminal,
+      color: "bg-blue-500",
+      progress: Math.min(100, s.total_sessions),
+    },
+    {
+      label: "Messages",
+      value: s.total_messages,
+      icon: MessageSquare,
+      color: "bg-green-500",
+      progress: Math.min(100, s.total_messages),
+    },
+    {
+      label: "Cost Today",
+      value: `$${s.today_cost.toFixed(2)}`,
+      icon: DollarSign,
+      color: costTodayPct > 80 ? "bg-red-500" : "bg-purple-500",
+      progress: costTodayPct,
+    },
+    {
+      label: "Cost This Week",
+      value: `$${s.week_cost.toFixed(2)}`,
+      icon: TrendingUp,
+      color: costWeekPct > 80 ? "bg-red-500" : "bg-amber-500",
+      progress: costWeekPct,
+    },
+  ];
+
+  const agentMetrics = [
+    { metric: "Total Sessions", value: String(s.total_sessions) },
+    { metric: "Total Messages", value: String(s.total_messages) },
+    { metric: "Today Cost", value: `$${s.today_cost.toFixed(2)}` },
+    { metric: "Week Cost", value: `$${s.week_cost.toFixed(2)}` },
+    { metric: "Model", value: s.model },
+    { metric: "Uptime", value: formatUptime(s.uptime) },
+  ];
 
   return (
     <div className="space-y-6">
@@ -162,29 +211,23 @@ export default function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* ---- Left column: Metrics + Modules ---- */}
         <div className="space-y-6 lg:col-span-2">
-          {/* Task Queue */}
+          {/* Active Sessions */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Task Queue</CardTitle>
+              <CardTitle className="text-sm font-medium">Active Sessions</CardTitle>
             </CardHeader>
             <CardContent className="flex gap-3">
               <Badge
                 variant="outline"
-                className="bg-green-500/15 text-green-500 border-green-500/30"
-              >
-                Done: {taskQueue.done}
-              </Badge>
-              <Badge
-                variant="outline"
-                className="bg-yellow-500/15 text-yellow-500 border-yellow-500/30"
-              >
-                Pending: {taskQueue.pending}
-              </Badge>
-              <Badge
-                variant="outline"
                 className="bg-blue-500/15 text-blue-500 border-blue-500/30"
               >
-                Active: {taskQueue.active}
+                Active: {s.active_sessions}
+              </Badge>
+              <Badge
+                variant="outline"
+                className="bg-green-500/15 text-green-500 border-green-500/30"
+              >
+                Platforms: {s.platforms?.join(", ") || "none"}
               </Badge>
             </CardContent>
           </Card>
@@ -226,22 +269,26 @@ export default function DashboardPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {modules.map((m) => (
-                  <div
-                    key={m.name}
-                    className="flex items-center justify-between rounded-md border px-3 py-2"
-                  >
-                    <span className="text-sm">{m.name}</span>
-                    <Badge
-                      variant="outline"
-                      className={statusColor[m.status]}
+              {modules.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No module data available</p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {modules.map((m, i) => (
+                    <div
+                      key={m.name || i}
+                      className="flex items-center justify-between rounded-md border px-3 py-2"
                     >
-                      {m.status}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
+                      <span className="text-sm">{m.name}</span>
+                      <Badge
+                        variant="outline"
+                        className={statusColor[m.status] || statusColor.ready}
+                      >
+                        {m.status}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -254,22 +301,30 @@ export default function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {recentActivity.map((a, i) => (
-                <div key={i}>
-                  <div className="flex items-start gap-2">
-                    <Clock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm">{a.text}</p>
-                      <p className="text-xs text-muted-foreground">{a.time}</p>
+            {events.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No recent events</p>
+            ) : (
+              <div className="space-y-4">
+                {events.map((a, i) => (
+                  <div key={i}>
+                    <div className="flex items-start gap-2">
+                      <Clock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm">
+                          {a.message || a.type || "Event"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {a.timestamp ? relativeTime(a.timestamp) : "just now"}
+                        </p>
+                      </div>
                     </div>
+                    {i < events.length - 1 && (
+                      <Separator className="mt-3" />
+                    )}
                   </div>
-                  {i < recentActivity.length - 1 && (
-                    <Separator className="mt-3" />
-                  )}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

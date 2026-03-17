@@ -63,6 +63,21 @@ function seedLogs(): LogEntry[] {
   }));
 }
 
+function parseDemoLevel(): LogLevel {
+  const levels: LogLevel[] = ["DEBUG", "INFO", "WARNING", "ERROR"];
+  return levels[Math.floor(Math.random() * levels.length)];
+}
+
+function makeDemoEntry(): LogEntry {
+  const lvl = parseDemoLevel();
+  return {
+    id: logCounter++,
+    ts: new Date().toISOString(),
+    level: lvl,
+    message: `[demo] ${lvl.toLowerCase()} log entry #${logCounter}`,
+  };
+}
+
 export default function LogsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState<LogLevel | "ALL">("ALL");
@@ -70,6 +85,12 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const pausedRef = useRef(paused);
+
+  // Keep pausedRef in sync so WS callback can read latest value
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   // Seed initial logs
   useEffect(() => {
@@ -77,79 +98,90 @@ export default function LogsPage() {
     setLoading(false);
   }, []);
 
-  // Try WebSocket, fall back to interval demo
+  // WebSocket connection — connect once, not re-created on pause toggle
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
+    let wsConnected = false;
+
+    function startDemoFallback() {
+      if (interval) return;
+      interval = setInterval(() => {
+        if (pausedRef.current) return;
+        setLogs((prev) => [...prev.slice(-500), makeDemoEntry()]);
+      }, 3000);
+    }
 
     try {
-      const ws = new WebSocket(wsURL("/ws/logs"));
+      const ws = new WebSocket(wsURL("/ws"));
       wsRef.current = ws;
 
-      ws.onmessage = (evt) => {
-        if (paused) return;
-        const entry: LogEntry = JSON.parse(evt.data);
-        setLogs((prev) => [...prev.slice(-500), entry]);
+      ws.onopen = () => {
+        wsConnected = true;
       };
 
-      ws.onerror = () => {
-        // Fallback: push fake logs every 3s
-        interval = setInterval(() => {
-          if (paused) return;
-          const levels: LogLevel[] = ["DEBUG", "INFO", "WARNING", "ERROR"];
-          const lvl = levels[Math.floor(Math.random() * levels.length)];
+      ws.onmessage = (evt) => {
+        if (pausedRef.current) return;
+        try {
+          const msg = JSON.parse(evt.data);
+          let entry: LogEntry;
+
+          if (msg.type === "log" && msg.data) {
+            // {"type": "log", "data": {"level": "INFO", "message": "...", "timestamp": "..."}}
+            entry = {
+              id: logCounter++,
+              ts: msg.data.timestamp || new Date().toISOString(),
+              level: (msg.data.level?.toUpperCase() as LogLevel) || "INFO",
+              message: msg.data.message || JSON.stringify(msg.data),
+            };
+          } else if (msg.type === "event" && msg.data) {
+            // {"type": "event", "data": {...}} — show as INFO
+            entry = {
+              id: logCounter++,
+              ts: msg.data.timestamp || new Date().toISOString(),
+              level: "INFO",
+              message: msg.data.message || `[event] ${JSON.stringify(msg.data)}`,
+            };
+          } else {
+            // Unknown format — show raw
+            entry = {
+              id: logCounter++,
+              ts: new Date().toISOString(),
+              level: "INFO",
+              message: typeof msg === "string" ? msg : JSON.stringify(msg),
+            };
+          }
+
+          setLogs((prev) => [...prev.slice(-500), entry]);
+        } catch {
+          // Non-JSON message
           setLogs((prev) => [
             ...prev.slice(-500),
             {
               id: logCounter++,
               ts: new Date().toISOString(),
-              level: lvl,
-              message: `[demo] ${lvl.toLowerCase()} log entry #${logCounter}`,
+              level: "INFO",
+              message: evt.data,
             },
           ]);
-        }, 3000);
+        }
+      };
+
+      ws.onerror = () => {
+        if (!wsConnected) startDemoFallback();
       };
 
       ws.onclose = () => {
-        if (!interval) {
-          interval = setInterval(() => {
-            if (paused) return;
-            const levels: LogLevel[] = ["DEBUG", "INFO", "WARNING", "ERROR"];
-            const lvl = levels[Math.floor(Math.random() * levels.length)];
-            setLogs((prev) => [
-              ...prev.slice(-500),
-              {
-                id: logCounter++,
-                ts: new Date().toISOString(),
-                level: lvl,
-                message: `[demo] ${lvl.toLowerCase()} log entry #${logCounter}`,
-              },
-            ]);
-          }, 3000);
-        }
+        startDemoFallback();
       };
     } catch {
-      // WebSocket not available
-      interval = setInterval(() => {
-        if (paused) return;
-        const levels: LogLevel[] = ["DEBUG", "INFO", "WARNING", "ERROR"];
-        const lvl = levels[Math.floor(Math.random() * levels.length)];
-        setLogs((prev) => [
-          ...prev.slice(-500),
-          {
-            id: logCounter++,
-            ts: new Date().toISOString(),
-            level: lvl,
-            message: `[demo] ${lvl.toLowerCase()} log entry #${logCounter}`,
-          },
-        ]);
-      }, 3000);
+      startDemoFallback();
     }
 
     return () => {
       wsRef.current?.close();
       if (interval) clearInterval(interval);
     };
-  }, [paused]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll
   useEffect(() => {

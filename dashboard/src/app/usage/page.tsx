@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Card,
   CardContent,
@@ -18,35 +18,54 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DollarSign, TrendingUp, Calendar } from "lucide-react";
+import { fetchAPI } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
-// Mock data
+// Types
 // ---------------------------------------------------------------------------
 
-const costSummary = [
-  { label: "Today", value: "$4.23", icon: DollarSign, change: "+12%" },
-  { label: "This Week", value: "$18.67", icon: TrendingUp, change: "+5%" },
-  { label: "This Month", value: "$52.41", icon: Calendar, change: "-8%" },
-];
+interface DailyUsage {
+  date: string;
+  cost: number;
+  sessions: number;
+  messages: number;
+}
 
-const perSessionCosts = [
-  { id: "ses-025", model: "claude-sonnet-4-20250514", tokens: "12,340", cost: "$0.42" },
-  { id: "ses-024", model: "claude-sonnet-4-20250514", tokens: "8,210", cost: "$0.28" },
-  { id: "ses-023", model: "claude-sonnet-4-20250514", tokens: "24,500", cost: "$0.84" },
-  { id: "ses-022", model: "claude-sonnet-4-20250514", tokens: "6,100", cost: "$0.21" },
-  { id: "ses-021", model: "claude-opus-4-20250514", tokens: "3,200", cost: "$0.48" },
-  { id: "ses-020", model: "claude-sonnet-4-20250514", tokens: "15,800", cost: "$0.54" },
-  { id: "ses-019", model: "claude-sonnet-4-20250514", tokens: "9,700", cost: "$0.33" },
-  { id: "ses-018", model: "claude-opus-4-20250514", tokens: "4,100", cost: "$0.62" },
-];
+interface CostCard {
+  label: string;
+  value: string;
+  icon: typeof DollarSign;
+}
 
 export default function UsagePage() {
   const [loading, setLoading] = useState(true);
+  const [todayCost, setTodayCost] = useState(0);
+  const [weekCost, setWeekCost] = useState(0);
+  const [totalCost, setTotalCost] = useState(0);
+  const [daily, setDaily] = useState<DailyUsage[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [usageData, statusData] = await Promise.all([
+        fetchAPI("/api/usage?days=14"),
+        fetchAPI("/api/status"),
+      ]);
+      setTodayCost(statusData.today_cost ?? 0);
+      setWeekCost(statusData.week_cost ?? 0);
+      setTotalCost(usageData.total_cost ?? 0);
+      setDaily(usageData.daily ?? []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch usage data");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 500);
-    return () => clearTimeout(t);
-  }, []);
+    loadData();
+  }, [loadData]);
 
   if (loading) {
     return (
@@ -61,6 +80,25 @@ export default function UsagePage() {
       </div>
     );
   }
+
+  if (error && daily.length === 0) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-lg font-semibold">Usage &amp; Cost</h1>
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            Failed to load usage data: {error}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const costSummary: CostCard[] = [
+    { label: "Today", value: `$${todayCost.toFixed(2)}`, icon: DollarSign },
+    { label: "This Week", value: `$${weekCost.toFixed(2)}`, icon: TrendingUp },
+    { label: "Total (14 days)", value: `$${totalCost.toFixed(2)}`, icon: Calendar },
+  ];
 
   return (
     <div className="space-y-6">
@@ -78,15 +116,6 @@ export default function UsagePage() {
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold">{c.value}</p>
-              <p
-                className={`mt-1 text-xs ${
-                  c.change.startsWith("+")
-                    ? "text-red-400"
-                    : "text-green-400"
-                }`}
-              >
-                {c.change} vs previous period
-              </p>
             </CardContent>
           </Card>
         ))}
@@ -106,34 +135,42 @@ export default function UsagePage() {
         </CardContent>
       </Card>
 
-      {/* Per-session breakdown */}
+      {/* Daily breakdown table */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">
-            Per-Session Cost Breakdown
+            Daily Breakdown
           </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Session</TableHead>
-                <TableHead>Model</TableHead>
-                <TableHead className="text-right">Tokens</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead className="text-right">Sessions</TableHead>
+                <TableHead className="text-right">Messages</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {perSessionCosts.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-mono text-xs">{r.id}</TableCell>
-                  <TableCell className="text-xs">{r.model}</TableCell>
-                  <TableCell className="text-right">{r.tokens}</TableCell>
-                  <TableCell className="text-right font-medium">
-                    {r.cost}
+              {daily.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-muted-foreground">
+                    No usage data available
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                daily.map((d) => (
+                  <TableRow key={d.date}>
+                    <TableCell className="text-sm">{d.date}</TableCell>
+                    <TableCell className="text-right">{d.sessions}</TableCell>
+                    <TableCell className="text-right">{d.messages}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      ${d.cost.toFixed(2)}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

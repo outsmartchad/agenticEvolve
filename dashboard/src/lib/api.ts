@@ -1,7 +1,5 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:7777";
-
 export async function fetchAPI(path: string, options?: RequestInit) {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(path, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -13,6 +11,7 @@ export async function fetchAPI(path: string, options?: RequestInit) {
 }
 
 export function wsURL(path: string) {
-  const base = API_BASE.replace("http", "ws");
-  return `${base}${path}`;
+  if (typeof window === "undefined") return `ws://localhost:7777${path}`;
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}${path}`;
 }

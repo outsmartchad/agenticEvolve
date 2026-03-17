@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Card,
   CardContent,
@@ -9,34 +9,31 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { fetchAPI } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
-// Default config shape — will be fetched from gateway
+// Config shape matching actual API keys
 // ---------------------------------------------------------------------------
 
 interface ConfigData {
   model: string;
   daily_cost_cap: number;
-  session_cost_cap: number;
-  session_idle_timeout: number;
-  autonomy_level: string;
+  weekly_cost_cap: number;
+  session_idle_minutes: number;
+  autonomy: string;
   auto_approve_skills: boolean;
-  allowed_users: string;
 }
 
 const defaultConfig: ConfigData = {
   model: "claude-sonnet-4-20250514",
   daily_cost_cap: 25.0,
-  session_cost_cap: 5.0,
-  session_idle_timeout: 300,
-  autonomy_level: "full",
+  weekly_cost_cap: 100.0,
+  session_idle_minutes: 30,
+  autonomy: "full",
   auto_approve_skills: true,
-  allowed_users: "",
 };
 
 const fieldMeta: {
@@ -47,25 +44,7 @@ const fieldMeta: {
 }[] = [
   { key: "model", label: "Model", type: "text", section: "Agent" },
   {
-    key: "daily_cost_cap",
-    label: "Daily Cost Cap ($)",
-    type: "number",
-    section: "Cost",
-  },
-  {
-    key: "session_cost_cap",
-    label: "Session Cost Cap ($)",
-    type: "number",
-    section: "Cost",
-  },
-  {
-    key: "session_idle_timeout",
-    label: "Session Idle Timeout (s)",
-    type: "number",
-    section: "Sessions",
-  },
-  {
-    key: "autonomy_level",
+    key: "autonomy",
     label: "Autonomy Level",
     type: "text",
     section: "Agent",
@@ -77,10 +56,22 @@ const fieldMeta: {
     section: "Agent",
   },
   {
-    key: "allowed_users",
-    label: "Allowed Users (comma-separated)",
-    type: "text",
-    section: "Access",
+    key: "daily_cost_cap",
+    label: "Daily Cost Cap ($)",
+    type: "number",
+    section: "Cost",
+  },
+  {
+    key: "weekly_cost_cap",
+    label: "Weekly Cost Cap ($)",
+    type: "number",
+    section: "Cost",
+  },
+  {
+    key: "session_idle_minutes",
+    label: "Session Idle Timeout (min)",
+    type: "number",
+    section: "Sessions",
   },
 ];
 
@@ -88,11 +79,15 @@ export default function ConfigPage() {
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState<ConfigData>(defaultConfig);
   const [saving, setSaving] = useState(false);
+  const originalConfig = useRef<ConfigData>(defaultConfig);
 
   useEffect(() => {
-    // Try to load real config; fall back to defaults
     fetchAPI("/api/config")
-      .then((data) => setConfig({ ...defaultConfig, ...data }))
+      .then((data) => {
+        const merged = { ...defaultConfig, ...data };
+        setConfig(merged);
+        originalConfig.current = merged;
+      })
       .catch(() => {
         /* use defaults */
       })
@@ -102,10 +97,24 @@ export default function ConfigPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Only send changed fields
+      const changed: Partial<ConfigData> = {};
+      for (const key of Object.keys(config) as (keyof ConfigData)[]) {
+        if (config[key] !== originalConfig.current[key]) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (changed as any)[key] = config[key];
+        }
+      }
+      if (Object.keys(changed).length === 0) {
+        toast.info("No changes to save");
+        setSaving(false);
+        return;
+      }
       await fetchAPI("/api/config", {
         method: "POST",
-        body: JSON.stringify(config),
+        body: JSON.stringify(changed),
       });
+      originalConfig.current = { ...config };
       toast.success("Configuration saved");
     } catch {
       toast.error("Failed to save — gateway may be offline");
