@@ -109,9 +109,12 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     user_id = msg.get("user_id", chat_id)
                     text = msg.get("text", "")
                     image_path = msg.get("image_path")
+                    file_path = msg.get("file_path")
+                    file_name = msg.get("file_name", "")
+                    audio_path = msg.get("audio_path")
                     sender_name = msg.get("sender_name", user_id.split("@")[0])
 
-                    if not text and not image_path:
+                    if not text and not image_path and not file_path and not audio_path:
                         continue
 
                     # Dedup: Baileys can deliver the same message multiple times
@@ -196,14 +199,29 @@ class WhatsAppAdapter(BasePlatformAdapter):
                         continue
 
                     try:
-                        # If image attached, prepend image context to the message
+                        # Build invoke text with any attached media
                         invoke_text = text
+
                         if image_path:
                             img_instruction = (
                                 f"[The user sent an image. Read it at: {image_path}]\n"
                                 "Analyze the image and respond. If it contains math, solve it step by step.\n"
                             )
                             invoke_text = img_instruction + (text if text else "What is in this image?")
+
+                        elif file_path:
+                            file_instruction = (
+                                f"[The user sent a file: {file_name}. Read it at: {file_path}]\n"
+                                "Read and analyze the file contents, then respond to the user.\n"
+                            )
+                            invoke_text = file_instruction + (text if text else f"Please read and summarize this file: {file_name}")
+
+                        elif audio_path:
+                            audio_instruction = (
+                                f"[The user sent a voice/audio message. The audio file is at: {audio_path}]\n"
+                                "Transcribe or analyze the audio, then respond.\n"
+                            )
+                            invoke_text = audio_instruction + (text if text else "Please transcribe this audio message.")
 
                         response = await self.on_message("whatsapp", chat_id, user_id, invoke_text)
                         if response:

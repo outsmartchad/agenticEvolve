@@ -205,8 +205,10 @@ _REASONING_PATTERNS = _re.compile(
 
 def _needs_reasoning(text: str) -> bool:
     """Detect if a message likely needs math, coding, or logical reasoning."""
-    # Images with analysis instructions always escalate (likely math/diagram)
+    # Images and files with analysis instructions always escalate
     if "[The user sent an image" in text:
+        return True
+    if "[The user sent a file" in text:
         return True
     return bool(_REASONING_PATTERNS.search(text))
 

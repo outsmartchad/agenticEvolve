@@ -229,6 +229,8 @@ async function startBridge() {
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         msg.message?.imageMessage?.caption ||
+        msg.message?.documentMessage?.caption ||
+        msg.message?.videoMessage?.caption ||
         null;
 
       // Check for image message
@@ -254,8 +256,56 @@ async function startBridge() {
         }
       }
 
-      // Skip messages with no text AND no image
-      if (!text && !imagePath) continue;
+      // Check for document/file message (PDF, TXT, DOCX, etc.)
+      const docMsg = msg.message?.documentMessage;
+      let filePath = null;
+      let fileName = null;
+
+      if (docMsg) {
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {}, {
+            logger,
+            reuploadRequest: sock.updateMediaMessage,
+          });
+          const tmpDir = path.join(os.tmpdir(), "agenticEvolve-wa-files");
+          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+          // Use original filename if available, fallback to message ID + extension
+          fileName = docMsg.fileName || `${msg.key.id}`;
+          if (!fileName.includes(".") && docMsg.mimetype) {
+            const ext = docMsg.mimetype.split("/")[1] || "bin";
+            fileName += `.${ext}`;
+          }
+          filePath = path.join(tmpDir, fileName);
+          fs.writeFileSync(filePath, buffer);
+        } catch (docErr) {
+          filePath = null;
+          fileName = null;
+        }
+      }
+
+      // Check for audio/voice message
+      const audioMsg = msg.message?.audioMessage;
+      let audioPath = null;
+
+      if (audioMsg) {
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {}, {
+            logger,
+            reuploadRequest: sock.updateMediaMessage,
+          });
+          const tmpDir = path.join(os.tmpdir(), "agenticEvolve-wa-audio");
+          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+          const ext = audioMsg.ptt ? "ogg" : ((audioMsg.mimetype || "audio/ogg").split("/")[1] || "ogg");
+          const filename = `${msg.key.id}.${ext}`;
+          audioPath = path.join(tmpDir, filename);
+          fs.writeFileSync(audioPath, buffer);
+        } catch (audioErr) {
+          audioPath = null;
+        }
+      }
+
+      // Skip messages with no text AND no media
+      if (!text && !imagePath && !filePath && !audioPath) continue;
 
       const payload = {
         type: "message",
@@ -267,6 +317,11 @@ async function startBridge() {
         timestamp: msgTs,
       };
       if (imagePath) payload.image_path = imagePath;
+      if (filePath) {
+        payload.file_path = filePath;
+        payload.file_name = fileName;
+      }
+      if (audioPath) payload.audio_path = audioPath;
 
       emit(payload);
     }
