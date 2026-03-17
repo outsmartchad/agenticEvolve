@@ -1,29 +1,37 @@
-"""Tests for gateway.sandbox — Docker isolation wrapper."""
+"""Tests for gateway.sandbox — Docker sandbox for code execution."""
 import subprocess
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 
-from gateway.sandbox import is_docker_available, wrap_command
+from gateway.sandbox import (
+    is_docker_available,
+    is_image_built,
+    wrap_command,
+    _container_name,
+    _get_output_dir,
+    get_output_images,
+    clear_output,
+    build_sandbox_prompt,
+    CONTAINER_PREFIX,
+    SANDBOX_IMAGE,
+    SHARED_OUTPUT_DIR,
+)
 
 
-# ── wrap_command: passthrough when sandbox disabled ──────────────
+# ── wrap_command: legacy passthrough ─────────────────────────────
 
-class TestSandboxDisabled:
-    """wrap_command should return cmd unchanged when sandbox is off."""
+class TestWrapCommand:
+    """wrap_command always passes through now (legacy compat)."""
 
-    def test_no_sandbox_key(self):
+    def test_passthrough(self):
         cmd = ["claude", "-p", "hello"]
         assert wrap_command(cmd, {}) == cmd
 
-    def test_enabled_false(self):
+    def test_passthrough_with_sandbox_enabled(self):
         cmd = ["claude", "-p", "hello"]
-        config = {"sandbox": {"enabled": False, "backend": "docker"}}
-        assert wrap_command(cmd, config) == cmd
-
-    def test_backend_host(self):
-        cmd = ["claude", "-p", "hello"]
-        config = {"sandbox": {"enabled": True, "backend": "host"}}
+        config = {"sandbox": {"enabled": True}}
         assert wrap_command(cmd, config) == cmd
 
     def test_none_config(self):
@@ -31,104 +39,103 @@ class TestSandboxDisabled:
         assert wrap_command(cmd, None) == cmd
 
 
-# ── wrap_command: docker backend ─────────────────────────────────
+# ── Container naming ─────────────────────────────────────────────
 
-class TestDockerBackend:
-    """wrap_command should produce correct docker run args."""
+class TestContainerNaming:
+    """Container names should be deterministic and prefixed."""
 
-    BASE_CONFIG = {
-        "sandbox": {
-            "enabled": True,
-            "backend": "docker",
-            "image": "python:3.12-slim",
-            "mount_cwd": True,
-            "network": True,
-            "timeout": 600,
-        }
-    }
+    def test_deterministic(self):
+        name1 = _container_name("whatsapp:123@g.us")
+        name2 = _container_name("whatsapp:123@g.us")
+        assert name1 == name2
 
-    def test_basic_docker_wrap(self):
-        cmd = ["claude", "-p", "hello"]
-        result = wrap_command(cmd, self.BASE_CONFIG)
+    def test_different_sessions(self):
+        name1 = _container_name("whatsapp:123@g.us")
+        name2 = _container_name("whatsapp:456@g.us")
+        assert name1 != name2
 
-        assert result[0] == "docker"
-        assert result[1] == "run"
-        assert "--rm" in result
-        assert "python:3.12-slim" in result
-        # Original command must appear at the end
-        assert result[-3:] == ["claude", "-p", "hello"]
+    def test_prefixed(self):
+        name = _container_name("test-session")
+        assert name.startswith(CONTAINER_PREFIX)
 
-    def test_network_isolation(self):
-        config = {
-            "sandbox": {
-                "enabled": True,
-                "backend": "docker",
-                "image": "python:3.12-slim",
-                "mount_cwd": False,
-                "network": False,
-                "timeout": 600,
-            }
-        }
-        result = wrap_command(["claude", "-p", "test"], config)
-        assert "--network=none" in result
+    def test_reasonable_length(self):
+        name = _container_name("some-long-session-key-with-many-characters")
+        assert len(name) < 50
 
-    def test_network_allowed(self):
-        result = wrap_command(["claude", "-p", "test"], self.BASE_CONFIG)
-        assert "--network=none" not in result
 
-    def test_mount_cwd_enabled(self):
-        result = wrap_command(["claude", "-p", "test"], self.BASE_CONFIG)
-        assert "-v" in result
-        v_idx = result.index("-v")
-        assert result[v_idx + 1] == ".:/workspace"
-        assert "-w" in result
-        w_idx = result.index("-w")
-        assert result[w_idx + 1] == "/workspace"
+# ── Output directory ─────────────────────────────────────────────
 
-    def test_mount_cwd_disabled(self):
-        config = {
-            "sandbox": {
-                "enabled": True,
-                "backend": "docker",
-                "image": "node:20-slim",
-                "mount_cwd": False,
-                "network": True,
-                "timeout": 300,
-            }
-        }
-        result = wrap_command(["claude", "-p", "test"], config)
-        assert "-v" not in result
-        assert "-w" not in result
+class TestOutputDir:
+    """Output directory should be deterministic and under SHARED_OUTPUT_DIR."""
 
-    def test_custom_image(self):
-        config = {
-            "sandbox": {
-                "enabled": True,
-                "backend": "docker",
-                "image": "ubuntu:22.04",
-                "mount_cwd": False,
-                "network": True,
-                "timeout": 60,
-            }
-        }
-        result = wrap_command(["claude", "-p", "test"], config)
-        assert "ubuntu:22.04" in result
+    def test_under_shared_dir(self):
+        d = _get_output_dir("test-session")
+        assert str(d).startswith(str(SHARED_OUTPUT_DIR))
 
-    def test_timeout_in_args(self):
-        result = wrap_command(["claude", "-p", "test"], self.BASE_CONFIG)
-        assert "--stop-timeout" in result
-        idx = result.index("--stop-timeout")
-        assert result[idx + 1] == "600"
+    def test_deterministic(self):
+        d1 = _get_output_dir("test-session")
+        d2 = _get_output_dir("test-session")
+        assert d1 == d2
 
-    def test_default_image_when_missing(self):
-        config = {
-            "sandbox": {
-                "enabled": True,
-                "backend": "docker",
-            }
-        }
-        result = wrap_command(["claude", "-p", "test"], config)
-        assert "python:3.12-slim" in result
+
+# ── Image extraction ─────────────────────────────────────────────
+
+class TestGetOutputImages:
+    """get_output_images should find image files in the output dir."""
+
+    def test_no_images(self, tmp_path):
+        with patch("gateway.sandbox._get_output_dir", return_value=tmp_path):
+            assert get_output_images("test") == []
+
+    def test_finds_png(self, tmp_path):
+        (tmp_path / "chart.png").write_bytes(b"fake-png")
+        (tmp_path / "data.csv").write_text("a,b\n1,2")
+        with patch("gateway.sandbox._get_output_dir", return_value=tmp_path):
+            images = get_output_images("test")
+            assert len(images) == 1
+            assert images[0].name == "chart.png"
+
+    def test_finds_multiple_formats(self, tmp_path):
+        for ext in [".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp"]:
+            (tmp_path / f"img{ext}").write_bytes(b"fake")
+        with patch("gateway.sandbox._get_output_dir", return_value=tmp_path):
+            images = get_output_images("test")
+            assert len(images) == 6
+
+
+# ── Clear output ─────────────────────────────────────────────────
+
+class TestClearOutput:
+    """clear_output should remove all files from the output dir."""
+
+    def test_clears_files(self, tmp_path):
+        (tmp_path / "chart.png").write_bytes(b"fake")
+        (tmp_path / "data.csv").write_text("a,b")
+        with patch("gateway.sandbox._get_output_dir", return_value=tmp_path):
+            clear_output("test")
+            assert list(tmp_path.iterdir()) == []
+
+
+# ── Sandbox prompt ───────────────────────────────────────────────
+
+class TestSandboxPrompt:
+    """build_sandbox_prompt should produce useful instructions."""
+
+    def test_contains_container_name(self):
+        prompt = build_sandbox_prompt("ae-sandbox-abc123", "/tmp/out")
+        assert "ae-sandbox-abc123" in prompt
+
+    def test_contains_output_dir(self):
+        prompt = build_sandbox_prompt("ae-sandbox-abc123", "/tmp/out")
+        assert "/tmp/out" in prompt
+
+    def test_mentions_matplotlib(self):
+        prompt = build_sandbox_prompt("test", "/tmp/out")
+        assert "matplotlib" in prompt
+
+    def test_mentions_savefig(self):
+        prompt = build_sandbox_prompt("test", "/tmp/out")
+        assert "savefig" in prompt
 
 
 # ── is_docker_available ──────────────────────────────────────────
@@ -160,3 +167,23 @@ class TestIsDockerAvailable:
     @patch("gateway.sandbox.shutil.which", return_value="/usr/bin/docker")
     def test_docker_info_exception(self, mock_which, mock_run):
         assert is_docker_available() is False
+
+
+# ── is_image_built ───────────────────────────────────────────────
+
+class TestIsImageBuilt:
+    """is_image_built should check for the sandbox Docker image."""
+
+    @patch("gateway.sandbox.subprocess.run")
+    def test_image_exists(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b"", stderr=b"",
+        )
+        assert is_image_built() is True
+
+    @patch("gateway.sandbox.subprocess.run")
+    def test_image_missing(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b"",
+        )
+        assert is_image_built() is False

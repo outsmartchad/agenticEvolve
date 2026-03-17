@@ -176,16 +176,26 @@ async function startBridge() {
     const ownJid = sock.user?.id?.replace(/:.*@/, "@");
 
     for (const msg of messages) {
-      // Skip own messages and status broadcasts
-      if (msg.key.fromMe) continue;
       if (msg.key.remoteJid === "status@broadcast") continue;
+
+      // Extract text early to check for @agent prefix
+      const earlyText =
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text ||
+        msg.message?.imageMessage?.caption ||
+        "";
+      const isAgentInvoke = earlyText.toLowerCase().startsWith("@agent");
+
+      // Skip own messages UNLESS it's an @agent invocation
+      if (msg.key.fromMe && !isAgentInvoke) continue;
 
       const rawChatId = msg.key.remoteJid;
       const rawUserId = msg.key.participant || rawChatId;
 
       // Extra self-message guard: Baileys on linked devices sometimes delivers
       // our own sent messages with fromMe=false. Check sender JID explicitly.
-      if (ownJid) {
+      // But allow @agent invocations through.
+      if (ownJid && !isAgentInvoke) {
         const senderJid = (rawUserId || "").replace(/:.*@/, "@");
         if (senderJid === ownJid) continue;
       }
@@ -304,6 +314,28 @@ async function startBridge() {
         }
       }
 
+      // Extract quoted/replied-to message (contextInfo)
+      const contextInfo =
+        msg.message?.extendedTextMessage?.contextInfo ||
+        msg.message?.imageMessage?.contextInfo ||
+        msg.message?.documentMessage?.contextInfo ||
+        msg.message?.audioMessage?.contextInfo ||
+        null;
+      let quotedText = null;
+      let quotedSender = null;
+      if (contextInfo?.quotedMessage) {
+        quotedText =
+          contextInfo.quotedMessage.conversation ||
+          contextInfo.quotedMessage.extendedTextMessage?.text ||
+          contextInfo.quotedMessage.imageMessage?.caption ||
+          contextInfo.quotedMessage.documentMessage?.caption ||
+          null;
+        if (contextInfo.participant) {
+          const resolvedParticipant = resolveJid(contextInfo.participant);
+          quotedSender = resolvedParticipant?.split("@")[0] || null;
+        }
+      }
+
       // Skip messages with no text AND no media
       if (!text && !imagePath && !filePath && !audioPath) continue;
 
@@ -322,6 +354,8 @@ async function startBridge() {
         payload.file_name = fileName;
       }
       if (audioPath) payload.audio_path = audioPath;
+      if (quotedText) payload.quoted_text = quotedText;
+      if (quotedSender) payload.quoted_sender = quotedSender;
 
       emit(payload);
     }
@@ -512,6 +546,26 @@ async function startBridge() {
           await sock.sendMessage(targetJid, msgPayload);
         } catch (sendErr) {
           emit({ type: "error", error: `send failed: ${sendErr.message}` });
+        }
+
+      } else if (cmd.type === "send_image" && cmd.chat_id && cmd.image_path) {
+        // Send an image file to a chat
+        let targetJid = resolveJid(cmd.chat_id);
+        try {
+          const imgBuffer = fs.readFileSync(cmd.image_path);
+          const msgPayload = {
+            image: imgBuffer,
+            caption: cmd.caption || undefined,
+          };
+          if (cmd.quoted) {
+            msgPayload.quoted = {
+              key: cmd.quoted,
+              message: { conversation: "" },
+            };
+          }
+          await sock.sendMessage(targetJid, msgPayload);
+        } catch (sendErr) {
+          emit({ type: "error", error: `send_image failed: ${sendErr.message}` });
         }
       }
     } catch (err) {

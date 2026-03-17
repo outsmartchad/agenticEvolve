@@ -25,6 +25,12 @@ class WhatsAppAdapter(BasePlatformAdapter):
         self._subscribe_groups: set[str] = set()  # group JIDs subscribed for digests
         self._seen_msg_ids: set[str] = set()  # dedup: prevent processing same message multiple times
         self._seen_msg_ids_max = 2000  # cap to prevent unbounded growth
+        # Message debouncing for served groups (OpenClaw pattern)
+        from ..debounce import MessageDebouncer
+        self._debouncer = MessageDebouncer(
+            window_seconds=config.get("debounce_seconds", 2.5),
+            max_wait=config.get("debounce_max_wait", 8.0),
+        )
         self.process = None
         self._reader_task = None
         self._breaker = CircuitBreaker("whatsapp", fail_threshold=5, recovery_secs=60)
@@ -114,6 +120,10 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     audio_path = msg.get("audio_path")
                     sender_name = msg.get("sender_name", user_id.split("@")[0])
 
+                    # Extract quoted/reply-to context
+                    quoted_text = msg.get("quoted_text")
+                    quoted_sender = msg.get("quoted_sender")
+
                     if not text and not image_path and not file_path and not audio_path:
                         continue
 
@@ -136,6 +146,25 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     is_served_contact = (not is_group) and chat_id in self._serve_contacts
                     is_served = is_served_group or is_served_contact
 
+                    # ── @agent trigger: works for ANYONE, in groups AND DMs ──
+                    # Bypasses allowed_users check. This is the universal entry point.
+                    _is_agent_invoke = False
+                    _agent_prefix = "@agent"
+                    if text.lower().startswith(_agent_prefix):
+                        text = text[len(_agent_prefix):].lstrip()
+                        _is_agent_invoke = True
+                        # Prepend quoted message as context if replying
+                        if quoted_text:
+                            _quoted_by = f" (by {quoted_sender})" if quoted_sender else ""
+                            text = (
+                                f"[Replying to message{_quoted_by}: \"{quoted_text}\"]\n\n"
+                                f"{text}" if text else
+                                f"[Replying to message{_quoted_by}: \"{quoted_text}\"]\n\n"
+                                "Analyze and respond to this message."
+                            )
+                        if not text:
+                            continue  # @agent with no prompt and no reply
+
                     # Store messages from served + subscribed groups for digests
                     if is_group and (chat_id in self._serve_groups or chat_id in self._subscribe_groups):
                         try:
@@ -148,16 +177,24 @@ class WhatsAppAdapter(BasePlatformAdapter):
                         except Exception as e:
                             log.debug(f"Failed to store WhatsApp message: {e}")
 
-                    # For served groups: skip allowed_users + prefix check, respond to ALL messages
-                    # For non-served groups: require allowed_users + prefix
-                    # For DMs: require allowed_users only
-                    if is_group:
+                    # ── Access control ──
+                    # @agent invocations: always allowed (anyone can use)
+                    # Served groups: respond to ALL messages
+                    # Non-served groups: require prefix + allowed_users
+                    # DMs: require allowed_users (unless served contact)
+                    if _is_agent_invoke:
+                        pass  # always allowed
+                    elif is_group:
                         if is_served_group:
                             # Strip prefix if present, but don't require it
                             for prefix in self.GROUP_PREFIXES:
                                 if text.lower().startswith(prefix):
                                     text = text[len(prefix):].lstrip()
                                     break
+                            # Prepend quoted context for served group messages too
+                            if quoted_text and not text.startswith("[Replying"):
+                                _quoted_by = f" (by {quoted_sender})" if quoted_sender else ""
+                                text = f"[Replying to{_quoted_by}: \"{quoted_text}\"]\n\n{text}"
                         else:
                             prefix_match = False
                             for prefix in self.GROUP_PREFIXES:
@@ -194,7 +231,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     if not hasattr(self, "_last_reply_ts"):
                         self._last_reply_ts: dict[str, float] = {}
                     _last = self._last_reply_ts.get(chat_id, 0)
-                    if _now - _last < 3.0:
+                    if _now - _last < 3.0 and not _is_agent_invoke:
                         log.debug(f"WhatsApp self-reply guard: skipping msg in {chat_id} ({_now - _last:.1f}s after last reply)")
                         continue
 
@@ -232,6 +269,29 @@ class WhatsAppAdapter(BasePlatformAdapter):
                             except Exception as e:
                                 log.warning(f"WhatsApp audio transcription failed: {e}")
                                 invoke_text = text if text else "[The user sent a voice message but transcription is unavailable.]"
+
+                        # @agent invocations: force a response (never NO_REPLY)
+                        if _is_agent_invoke:
+                            invoke_text = (
+                                "[DIRECT @agent INVOCATION by a user — you MUST respond. "
+                                "Do NOT use [NO_REPLY]. The user explicitly asked for your help.]\n\n"
+                                + invoke_text
+                            )
+
+                        # Debounce served group messages (not @agent, not media)
+                        # Batches rapid-fire messages into one LLM call
+                        if is_served and not _is_agent_invoke and not image_path and not file_path and not audio_path:
+                            debounce_key = f"{chat_id}:{user_id}"
+                            _msg_key_ref = msg_key  # capture for callback
+
+                            async def _debounced_send(batched_text, _cid=chat_id, _uid=user_id, _mk=_msg_key_ref):
+                                resp = await self.on_message("whatsapp", _cid, _uid, batched_text)
+                                if resp:
+                                    await self.send(_cid, resp, reply_to=_mk)
+                                    self._last_reply_ts[_cid] = _time.monotonic()
+
+                            self._debouncer.enqueue(debounce_key, invoke_text, _debounced_send)
+                            continue  # don't invoke immediately
 
                         response = await self.on_message("whatsapp", chat_id, user_id, invoke_text)
                         if response:
@@ -340,6 +400,24 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 cmd["quoted"] = reply_to
             self.process.stdin.write((json.dumps(cmd) + "\n").encode())
             await self.process.stdin.drain()
+
+    async def send_image(self, chat_id: str, image_path: str,
+                         caption: str | None = None,
+                         reply_to: dict | None = None):
+        """Send an image file to a WhatsApp chat."""
+        if self.process and self.process.stdin:
+            cmd: dict = {
+                "type": "send_image",
+                "chat_id": chat_id,
+                "image_path": image_path,
+            }
+            if caption:
+                cmd["caption"] = caption
+            if reply_to:
+                cmd["quoted"] = reply_to
+            self.process.stdin.write((json.dumps(cmd) + "\n").encode())
+            await self.process.stdin.drain()
+            log.info(f"Sent image to {chat_id}: {image_path}")
 
     async def _send_command(self, cmd: dict) -> dict | None:
         """Send a command to bridge.js and wait for a response of the expected type."""

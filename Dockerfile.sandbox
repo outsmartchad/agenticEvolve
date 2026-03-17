@@ -1,0 +1,40 @@
+# agenticEvolve sandbox — isolated Python environment for code execution
+# Build: docker build -t agenticevolve-sandbox -f Dockerfile.sandbox .
+FROM python:3.12-slim-bookworm
+
+# System deps for matplotlib rendering (non-interactive backend)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Data science / charting libs
+RUN pip install --no-cache-dir \
+    matplotlib \
+    numpy \
+    pandas \
+    seaborn \
+    plotly \
+    kaleido \
+    pillow \
+    requests \
+    beautifulsoup4 \
+    tabulate \
+    scipy \
+    scikit-learn \
+    sympy
+
+# Force matplotlib to use non-interactive backend (no display needed)
+ENV MPLBACKEND=Agg
+
+# Working directory for user scripts
+WORKDIR /workspace
+
+# Output directory for generated files (images, CSVs, etc.)
+RUN mkdir -p /workspace/output
+
+# Run as non-root
+RUN useradd -m -s /bin/bash sandbox
+USER sandbox
+
+# Keep container alive
+CMD ["sleep", "infinity"]

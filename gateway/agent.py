@@ -17,6 +17,73 @@ log = logging.getLogger("agenticEvolve.agent")
 EXODIR = Path.home() / ".agenticEvolve"
 
 
+# ── Env var sanitization (OpenClaw pattern) ──────────────────────
+# Block sensitive env vars from leaking to claude -p subprocesses.
+
+_BLOCKED_ENV_EXACT = {
+    # API keys / tokens
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY",
+    "BRAVE_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY",
+    "COHERE_API_KEY", "MISTRAL_API_KEY", "VOYAGE_API_KEY",
+    "HUGGINGFACE_TOKEN", "HF_TOKEN",
+    # Platform tokens
+    "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "DISCORD_TOKEN",
+    "SLACK_TOKEN", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET",
+    "WHATSAPP_TOKEN",
+    # Cloud provider secrets
+    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID",
+    "GCP_SERVICE_ACCOUNT_KEY", "GOOGLE_APPLICATION_CREDENTIALS",
+    # Database / infra
+    "DATABASE_URL", "REDIS_URL", "MONGODB_URI",
+    "SUPABASE_SERVICE_ROLE_KEY", "FIREBASE_TOKEN",
+    # Misc secrets
+    "JWT_SECRET", "SESSION_SECRET", "ENCRYPTION_KEY",
+    "PRIVATE_KEY", "SECRET_KEY", "MASTER_KEY",
+    "SENDGRID_API_KEY", "TWILIO_AUTH_TOKEN",
+    "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
+    "NPM_TOKEN", "PYPI_TOKEN", "GITHUB_TOKEN",
+    "VERCEL_TOKEN", "NETLIFY_AUTH_TOKEN",
+    "DOPPLER_TOKEN", "VAULT_TOKEN",
+}
+
+_BLOCKED_ENV_PREFIXES = (
+    "AWS_", "AZURE_", "GCP_", "GCLOUD_",
+    "FIREBASE_", "SUPABASE_",
+    "STRIPE_", "TWILIO_", "SENDGRID_",
+    "DOPPLER_", "VAULT_",
+    "DOCKER_",  # prevent container escape
+)
+
+# Keys that MUST be kept (claude CLI needs ANTHROPIC_API_KEY via its own config)
+_KEEP_ENV = {
+    "PATH", "HOME", "USER", "SHELL", "LANG", "TERM",
+    "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+    "MPLBACKEND",  # matplotlib backend for sandbox
+}
+
+
+def _sanitize_env(env: dict[str, str], config: dict | None = None) -> dict[str, str]:
+    """Remove sensitive env vars before passing to claude -p.
+
+    The claude CLI reads its API key from its own config file (~/.claude/),
+    so we don't need to pass ANTHROPIC_API_KEY in the environment.
+    """
+    blocked_count = 0
+    for key in list(env.keys()):
+        if key in _KEEP_ENV:
+            continue
+        if key in _BLOCKED_ENV_EXACT:
+            del env[key]
+            blocked_count += 1
+        elif key.startswith(_BLOCKED_ENV_PREFIXES):
+            del env[key]
+            blocked_count += 1
+    if blocked_count:
+        log.debug(f"Sanitized env: blocked {blocked_count} sensitive vars")
+    return env
+
+
 # ── MemoryQueue ───────────────────────────────────────────────────
 # Debounced atomic writer for memory files.  Eliminates the MEMORY.md
 # read-modify-write race condition on high-volume days by coalescing rapid
@@ -541,7 +608,7 @@ def invoke_claude(message: str, model: str = "sonnet",
     if system_prompt:
         cmd.extend(["--append-system-prompt", system_prompt])
 
-    env = os.environ.copy()
+    env = _sanitize_env(os.environ.copy(), config)
     _workspace: Path | None = None
     if use_workspace:
         _workspace = _make_workspace()
@@ -720,7 +787,7 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
     if system_prompt:
         cmd.extend(["--append-system-prompt", system_prompt])
 
-    env = os.environ.copy()
+    env = _sanitize_env(os.environ.copy(), config)
     _workspace: Path | None = None
     if use_workspace:
         _workspace = _make_workspace()
