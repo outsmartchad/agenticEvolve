@@ -533,28 +533,82 @@ class TelegramAdapter(
             except Exception:
                 pass  # fall through to Claude on any DB error
 
-        # General chat via Claude (use /do for intent parsing)
-        typing_active = True
-        async def keep_typing():
-            while typing_active:
+        # General chat via Claude — streaming edit-in-place
+        import asyncio as _asyncio
+        import time as _time
+
+        # Send initial placeholder message
+        try:
+            placeholder = await update.message.reply_text("...", parse_mode=None)
+        except Exception:
+            placeholder = None
+
+        # Streaming state — text chunks arrive from executor thread
+        _stream_text = []
+        _last_edit_time = [0.0]
+        _edit_lock = _asyncio.Lock()
+        _placeholder_msg = [placeholder]
+
+        async def _do_edit(final=False):
+            """Edit the placeholder message with accumulated text."""
+            if not _placeholder_msg[0] or not _stream_text:
+                return
+            full = "".join(_stream_text)
+            if not full.strip():
+                return
+            # Truncate to Telegram limit
+            display = full[:4000]
+            if not final:
+                display += " ..."
+            try:
+                await _placeholder_msg[0].edit_text(display, parse_mode="Markdown")
+            except Exception:
                 try:
-                    await update.message.chat.send_action("typing")
+                    await _placeholder_msg[0].edit_text(display, parse_mode=None)
                 except Exception:
                     pass
-                await asyncio.sleep(4)
 
-        typing_task = asyncio.create_task(keep_typing())
+        def _on_text_chunk(chunk_text: str):
+            """Called from executor thread when Claude emits text."""
+            _stream_text.append(chunk_text)
+            now = _time.monotonic()
+            # Throttle edits to every 1.5s (Telegram rate limits)
+            if now - _last_edit_time[0] >= 1.5:
+                _last_edit_time[0] = now
+                # Schedule edit on the event loop from this thread
+                try:
+                    loop = _asyncio.get_event_loop()
+                    if loop.is_running():
+                        _asyncio.run_coroutine_threadsafe(_do_edit(), loop)
+                except Exception:
+                    pass
 
         try:
-            response = await self.on_message("telegram", chat_id, str(user_id), text)
+            response = await self.on_message(
+                "telegram", chat_id, str(user_id), text,
+                on_text_chunk=_on_text_chunk)
+
             if response:
-                for i in range(0, len(response), 4000):
-                    chunk = response[i:i+4000]
+                # Final edit with complete response
+                _stream_text.clear()
+                _stream_text.append(response)
+                await _do_edit(final=True)
+
+                # If response > 4000 chars, send remaining chunks as new messages
+                if len(response) > 4000:
+                    for i in range(4000, len(response), 4000):
+                        chunk = response[i:i+4000]
+                        try:
+                            await update.message.reply_text(chunk, parse_mode="Markdown")
+                        except Exception:
+                            await update.message.reply_text(chunk)
+            elif response is None:
+                # NO_REPLY — delete placeholder
+                if _placeholder_msg[0]:
                     try:
-                        await update.message.reply_text(chunk, parse_mode="Markdown")
+                        await _placeholder_msg[0].delete()
                     except Exception:
-                        # Fallback: send without Markdown if parse fails (e.g. unbalanced fences)
-                        await update.message.reply_text(chunk)
+                        pass
 
             # Send any screenshots captured by browser MCP during this turn
             if self._gateway:
@@ -568,10 +622,11 @@ class TelegramAdapter(
                         log.warning(f"Failed to send screenshot: {img_err}")
         except Exception as e:
             log.error(f"Telegram handler error: {e}")
-            await update.message.reply_text(f"Error: {e}")
-        finally:
-            typing_active = False
-            typing_task.cancel()
+            if _placeholder_msg[0]:
+                try:
+                    await _placeholder_msg[0].edit_text(f"Error: {e}")
+                except Exception:
+                    await update.message.reply_text(f"Error: {e}")
 
     # ── Lifecycle ────────────────────────────────────────────────
 
@@ -627,6 +682,8 @@ class TelegramAdapter(
             "reflect": self._handle_reflect,
             "subscribe": self._handle_subscribe,
             "serve": self._handle_serve,
+            "link": self._handle_link,
+            "whoami": self._handle_whoami,
         }
         for cmd, handler in commands.items():
             self.app.add_handler(CommandHandler(cmd, handler))

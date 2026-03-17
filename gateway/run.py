@@ -350,7 +350,8 @@ class GatewayRunner:
 
     async def _tracked_invoke(self, session_id: str, text: str, model: str,
                                history: list, session_context: str,
-                               cfg: dict, user_id: str | None = None) -> dict:
+                               cfg: dict, user_id: str | None = None,
+                               enable_browser: bool = False) -> dict:
         """Invoke Claude in executor and track the future in _inflight for drain-on-shutdown."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -358,12 +359,39 @@ class GatewayRunner:
             lambda: invoke_claude(
                 text, model=model, history=history,
                 session_context=session_context,
-                config=cfg, user_id=user_id
+                config=cfg, user_id=user_id,
+                enable_browser=enable_browser
             )
         )
 
+    async def _tracked_invoke_streaming(self, session_id: str, text: str,
+                                          model: str, history: list,
+                                          session_context: str, cfg: dict,
+                                          user_id: str | None = None,
+                                          enable_browser: bool = False,
+                                          on_text_chunk=None) -> dict:
+        """Invoke Claude with streaming — text chunks emitted via on_text_chunk callback."""
+        from .agent import invoke_claude_streaming
+        loop = asyncio.get_running_loop()
+
+        # on_text_chunk needs to be called from the executor thread
+        # We use a thread-safe queue to bridge chunks to the async world
+        def _invoke():
+            return invoke_claude_streaming(
+                text, on_progress=lambda _: None,  # ignore tool progress for chat
+                model=model, history=history,
+                session_context=session_context,
+                config=cfg, user_id=user_id,
+                enable_browser=enable_browser,
+                on_text_chunk=on_text_chunk,
+                session_key=session_id,
+            )
+
+        return await loop.run_in_executor(None, _invoke)
+
     async def handle_message(self, platform: str, chat_id: str,
-                               user_id: str, text: str) -> str:
+                               user_id: str, text: str,
+                               on_text_chunk=None) -> str:
         """Core message handler — called by platform adapters."""
         # Drain guard — reject new messages while shutting down
         if self._draining:
@@ -393,6 +421,13 @@ class GatewayRunner:
                     return rl_reason
                 self._rate_limiter.record(str(user_id or chat_id), str(chat_id))
 
+            # Resolve cross-platform identity
+            try:
+                from .session_db import resolve_user_id
+                _resolved_uid = resolve_user_id(platform, str(user_id or chat_id))
+            except Exception:
+                _resolved_uid = user_id
+
             session_id = self._get_or_create_session(platform, chat_id, user_id)
 
             # Fire message_received hook (void — non-blocking)
@@ -415,6 +450,17 @@ class GatewayRunner:
             # Remove the last message (the one we just added) — it's the current message
             if history:
                 history = history[:-1]
+
+            # Auto-compact history if context would be too large
+            if history and len(history) > 10:
+                try:
+                    from .context import auto_compact_if_needed
+                    history = auto_compact_if_needed(
+                        history, "", text,
+                        model=self.config.get("model", "sonnet"),
+                        config=self.config)
+                except Exception as _ctx_err:
+                    log.debug(f"Context compaction check failed: {_ctx_err}")
 
             # Build context
             session_context = (
@@ -583,12 +629,26 @@ class GatewayRunner:
 
             cfg = self.config
 
-            # Track in-flight futures for drain-on-shutdown
-            fut = asyncio.ensure_future(
-                self._tracked_invoke(session_id, invoke_text, model,
-                                     history, session_context, cfg,
-                                     user_id=user_id)
-            )
+            # Detect @agent invocation for browser enablement
+            _enable_browser = "[DIRECT @agent INVOCATION" in invoke_text
+
+            # Choose streaming vs non-streaming invoke
+            if on_text_chunk:
+                fut = asyncio.ensure_future(
+                    self._tracked_invoke_streaming(
+                        session_id, invoke_text, model,
+                        history, session_context, cfg,
+                        user_id=user_id,
+                        enable_browser=_enable_browser,
+                        on_text_chunk=on_text_chunk)
+                )
+            else:
+                fut = asyncio.ensure_future(
+                    self._tracked_invoke(session_id, invoke_text, model,
+                                         history, session_context, cfg,
+                                         user_id=user_id,
+                                         enable_browser=_enable_browser)
+                )
             self._inflight.add(fut)
             fut.add_done_callback(self._inflight.discard)
 

@@ -522,7 +522,8 @@ def invoke_claude(message: str, model: str = "sonnet",
                    config: dict | None = None,
                    use_workspace: bool = False,
                    max_seconds: int = 600,
-                   user_id: str | None = None) -> dict:
+                   user_id: str | None = None,
+                   enable_browser: bool = False) -> dict:
     """
     Invoke Claude Code with a message and return the response.
 
@@ -596,10 +597,20 @@ def invoke_claude(message: str, model: str = "sonnet",
         "--model", model,
         "--output-format", "stream-json",
         "--verbose",
-        "--no-chrome",
-        "--mcp-config", '{"mcpServers":{}}',
-        "--strict-mcp-config",
     ]
+    if enable_browser and config:
+        # Enable browser MCP for @agent invocations
+        browser_cfg = config.get("browser", {})
+        browser_default = browser_cfg.get("default", "abp")
+        browser_opts = browser_cfg.get("options", {}).get(browser_default, {})
+        browser_cmd = browser_opts.get("command", "npx -y agent-browser-protocol --mcp")
+        mcp_config = json.dumps({"mcpServers": {
+            "browser": {"command": browser_cmd.split()[0], "args": browser_cmd.split()[1:]}
+        }})
+        cmd.extend(["--mcp-config", mcp_config])
+    else:
+        cmd.extend(["--no-chrome", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"])
+
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])
     else:
@@ -740,12 +751,19 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                              config: dict | None = None,
                              context_mode: str | None = None,
                              use_workspace: bool = False,
-                             session_key: str = "") -> dict:
+                             session_key: str = "",
+                             history: list[dict] | None = None,
+                             on_text_chunk=None,
+                             user_id: str | None = None,
+                             enable_browser: bool = False) -> dict:
     """
     Invoke Claude Code with real-time progress reporting via on_progress callback.
 
     on_progress(update_text: str) is called whenever Claude uses a tool or
     produces intermediate output. Used for long-running tasks like /evolve.
+
+    on_text_chunk(text: str) is called when Claude produces text output blocks.
+    Used for streaming responses to Telegram (edit-in-place).
 
     Args:
         allowed_tools: If set, restricts Claude to these tools instead of --dangerously-skip-permissions
@@ -754,10 +772,15 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         context_mode: Optional overlay name passed to build_system_prompt (e.g. 'review', 'absorb').
         use_workspace: If True, create an isolated UUID-scoped cwd and clean it up after the call.
         session_key: Scope for LoopDetector (e.g. 'telegram:12345'). Defaults to session_context.
+        history: Conversation history (list of {role, content} dicts).
+        on_text_chunk: Callback for text output blocks (for streaming to chat).
+        user_id: User ID for language preference injection.
+        enable_browser: If True, enable browser MCP.
 
     Returns dict with keys: text, cost, success, timed_out (optional), loop_detected (optional)
     """
-    system_prompt = build_system_prompt(config, context_mode=context_mode)
+    system_prompt = build_system_prompt(config, context_mode=context_mode,
+                                         user_id=user_id)
 
     # Resolve autonomy level if no explicit allowed_tools given
     if allowed_tools is None and config:
@@ -767,6 +790,11 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
     prompt_parts = []
     if session_context:
         prompt_parts.append(session_context)
+    # Inject conversation history (same as invoke_claude)
+    if history:
+        formatted = _format_history(history)
+        if formatted:
+            prompt_parts.append(f"# Conversation history:\n\n{formatted}")
     prompt_parts.append(f"# Current message:\n\n{message}")
     full_prompt = "\n\n---\n\n".join(prompt_parts)
 
@@ -775,10 +803,19 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         "--model", model,
         "--output-format", "stream-json",
         "--verbose",
-        "--no-chrome",
-        "--mcp-config", '{"mcpServers":{}}',
-        "--strict-mcp-config",
     ]
+    if enable_browser and config:
+        browser_cfg = config.get("browser", {})
+        browser_default = browser_cfg.get("default", "abp")
+        browser_opts = browser_cfg.get("options", {}).get(browser_default, {})
+        browser_cmd = browser_opts.get("command", "npx -y agent-browser-protocol --mcp")
+        mcp_config = json.dumps({"mcpServers": {
+            "browser": {"command": browser_cmd.split()[0], "args": browser_cmd.split()[1:]}
+        }})
+        cmd.extend(["--mcp-config", mcp_config])
+    else:
+        cmd.extend(["--no-chrome", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"])
+
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])
     else:
@@ -903,6 +940,12 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
 
                             elif block.get("type") == "text":
                                 text_parts.append(block["text"])
+                                # Emit text chunk for streaming to chat
+                                if on_text_chunk:
+                                    try:
+                                        on_text_chunk(block["text"])
+                                    except Exception as _tc_err:
+                                        log.debug(f"Text chunk callback error: {_tc_err}")
 
                     elif msg_type == "result":
                         result_text = obj.get("result", "")

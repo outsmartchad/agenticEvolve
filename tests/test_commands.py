@@ -554,12 +554,22 @@ class TestMessageHandler:
     async def test_plain_message(self, adapter, mock_update, mock_context):
         mock_update.message.text = "What is the meaning of life?"
         adapter.on_message = AsyncMock(return_value="42, of course.")
+
+        # Streaming path sends "..." placeholder via reply_text, then edits it.
+        # Make reply_text return a mock message with edit_text.
+        placeholder_msg = MagicMock()
+        placeholder_msg.edit_text = AsyncMock()
+        mock_update.message.reply_text = AsyncMock(return_value=placeholder_msg)
+
         with patch.object(adapter, "_extract_urls", return_value=[]):
             await adapter._handle_message(mock_update, mock_context)
         adapter.on_message.assert_called_once()
+        # The placeholder is sent via reply_text("...")
         assert mock_update.message.reply_text.called
-        text = _reply_text(mock_update)
-        assert "42" in text
+        # Final response is delivered via edit_text on the placeholder
+        assert placeholder_msg.edit_text.called
+        final_text = placeholder_msg.edit_text.call_args[0][0]
+        assert "42" in final_text
 
 
 # ══════════════════════════════════════════════════════════════

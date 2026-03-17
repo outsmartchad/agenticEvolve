@@ -118,6 +118,19 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_pm_platform_chat ON platform_messages(platform, chat_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_pm_timestamp ON platform_messages(timestamp);
     """)
+    # Identity linking table — maps cross-platform user identities
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS identities (
+            canonical_id TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            platform_user_id TEXT NOT NULL,
+            display_name TEXT,
+            linked_at TEXT NOT NULL,
+            PRIMARY KEY (platform, platform_user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_identities_canonical ON identities(canonical_id);
+    """)
+
     # Migrations: add columns/indexes to existing tables (idempotent)
     for stmt in [
         "ALTER TABLE platform_messages ADD COLUMN message_id TEXT",
@@ -289,6 +302,50 @@ def delete_user_pref(user_id: str, key: str):
     conn.execute("DELETE FROM user_prefs WHERE user_id = ? AND key = ?", (user_id, key))
     conn.commit()
     conn.close()
+
+
+# ── Identity linking (cross-platform) ────────────────────────────
+
+def link_identity(canonical_id: str, platform: str, platform_user_id: str,
+                  display_name: str = "") -> None:
+    """Link a platform user to a canonical identity."""
+    conn = _connect()
+    conn.execute(
+        "INSERT OR REPLACE INTO identities (canonical_id, platform, platform_user_id, display_name, linked_at) "
+        "VALUES (?, ?, ?, ?, datetime('now'))",
+        (canonical_id, platform, platform_user_id, display_name))
+    conn.commit()
+    conn.close()
+
+
+def get_canonical_id(platform: str, platform_user_id: str) -> str | None:
+    """Get the canonical user ID for a platform user."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT canonical_id FROM identities WHERE platform = ? AND platform_user_id = ?",
+        (platform, platform_user_id)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def get_linked_platforms(canonical_id: str) -> list[dict]:
+    """Get all platform identities linked to a canonical user."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT platform, platform_user_id, display_name FROM identities WHERE canonical_id = ?",
+        (canonical_id,)).fetchall()
+    conn.close()
+    return [{"platform": r[0], "user_id": r[1], "name": r[2]} for r in rows]
+
+
+def resolve_user_id(platform: str, platform_user_id: str) -> str:
+    """Resolve to canonical ID if linked, otherwise return as-is.
+
+    This is the main entry point — call it when processing messages
+    to normalize user IDs across platforms.
+    """
+    canonical = get_canonical_id(platform, platform_user_id)
+    return canonical or platform_user_id
 
 
 def create_session(session_id: str, source: str, user_id: str = None,

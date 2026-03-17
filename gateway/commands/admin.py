@@ -89,6 +89,9 @@ class AdminMixin:
             "/serve — Select channels/users for the agent to actively respond in\n\n"
             "Briefings\n"
             "/digest [--days N] — Morning briefing\n\n"
+            "Identity\n"
+            "/link <platform> <platform_user_id> [display_name] — Link cross-platform identity\n"
+            "/whoami — Show linked identities for your account\n\n"
             "Maintenance\n"
             "/gc [--dry-run] — Garbage collection\n\n"
             "Settings\n"
@@ -504,3 +507,60 @@ class AdminMixin:
             await self.app.bot.send_message(
                 chat_id=update.message.chat_id, text=text[i:i+4000], parse_mode="Markdown"
             )
+
+    # ── Identity linking ─────────────────────────────────────────
+
+    async def _handle_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Link a cross-platform identity: /link <platform> <user_id> [display_name]"""
+        if not self._is_allowed(update):
+            return await self._deny(update)
+
+        args = context.args or []
+        if len(args) < 2:
+            await update.message.reply_text(
+                "Usage: /link <platform> <platform_user_id> [display_name]\n\n"
+                "Examples:\n"
+                "  /link whatsapp 85256171671@s.whatsapp.net Vincent\n"
+                "  /link telegram 934847281 Vincent"
+            )
+            return
+
+        platform = args[0].lower()
+        platform_uid = args[1]
+        display_name = " ".join(args[2:]) if len(args) > 2 else ""
+        # Use the Telegram user ID as canonical
+        canonical = str(update.message.from_user.id)
+
+        try:
+            from ..session_db import link_identity, get_linked_platforms
+            link_identity(canonical, platform, platform_uid, display_name)
+            linked = get_linked_platforms(canonical)
+            lines = [f"Linked {platform}:{platform_uid} to your identity.\n\nAll linked:"]
+            for l in linked:
+                name = f" ({l['name']})" if l.get("name") else ""
+                lines.append(f"  {l['platform']}: {l['user_id']}{name}")
+            await update.message.reply_text("\n".join(lines))
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
+
+    async def _handle_whoami(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show linked identities: /whoami"""
+        if not self._is_allowed(update):
+            return await self._deny(update)
+
+        canonical = str(update.message.from_user.id)
+        try:
+            from ..session_db import get_linked_platforms
+            linked = get_linked_platforms(canonical)
+            if not linked:
+                await update.message.reply_text(
+                    f"No linked identities. Your Telegram ID: {canonical}\n"
+                    "Use /link to connect other platforms.")
+                return
+            lines = [f"Canonical ID: {canonical}\n\nLinked platforms:"]
+            for l in linked:
+                name = f" ({l['name']})" if l.get("name") else ""
+                lines.append(f"  {l['platform']}: {l['user_id']}{name}")
+            await update.message.reply_text("\n".join(lines))
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
