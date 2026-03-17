@@ -34,6 +34,14 @@ sessions/
 # OS
 .DS_Store
 
+# Large model binaries (machine-local)
+models/
+tmp/audio/
+tmp/
+
+# Runtime knowledge/channel state
+channel_knowledge.json
+
 # Secrets (never commit)
 .env
 .discord-token
