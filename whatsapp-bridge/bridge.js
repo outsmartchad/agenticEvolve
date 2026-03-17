@@ -167,7 +167,12 @@ async function startBridge() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  // ── Incoming messages ───────────────────────────────────────
+   // ── Incoming messages ───────────────────────────────────────
+
+  // Bridge-side dedup: Baileys can deliver the same message multiple times
+  // via notify events on reconnect or multi-device sync
+  const _seenMsgIds = new Set();
+  const _SEEN_MAX = 2000;
 
   sock.ev.on("messages.upsert", async ({ messages, type: upsertType }) => {
     if (upsertType !== "notify") return;
@@ -177,6 +182,22 @@ async function startBridge() {
 
     for (const msg of messages) {
       if (msg.key.remoteJid === "status@broadcast") continue;
+
+      // Dedup: skip already-seen message IDs
+      const msgId = msg.key.id;
+      if (msgId && _seenMsgIds.has(msgId)) continue;
+      if (msgId) {
+        _seenMsgIds.add(msgId);
+        if (_seenMsgIds.size > _SEEN_MAX) {
+          // Trim oldest half (Set iteration is insertion-order)
+          let i = 0;
+          const half = _SEEN_MAX / 2;
+          for (const id of _seenMsgIds) {
+            if (i++ < half) _seenMsgIds.delete(id);
+            else break;
+          }
+        }
+      }
 
       // Extract text early to check for @agent prefix
       const earlyText =
@@ -310,6 +331,7 @@ async function startBridge() {
           audioPath = path.join(tmpDir, filename);
           fs.writeFileSync(audioPath, buffer);
         } catch (audioErr) {
+          console.error(JSON.stringify({ type: "log", level: "error", msg: `Audio download failed: ${audioErr.message}` }));
           audioPath = null;
         }
       }

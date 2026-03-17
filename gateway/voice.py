@@ -158,11 +158,101 @@ async def speech_to_text(
     return None
 
 
-WHISPER_MODEL_PATH = EXODIR / "models" / "ggml-small.bin"  # multilingual small model (better CJK/Cantonese accuracy)
+WHISPER_MODEL_PATH = EXODIR / "models" / "ggml-base.bin"  # multilingual base model (~2x faster than small, decent CJK)
+
+
+CHUNK_DURATION_SECS = 600  # 10-minute chunks for long audio
+MAX_AUDIO_DURATION_SECS = 7200  # 2-hour hard cap
+
+
+def _get_audio_duration(audio_path: Path) -> float | None:
+    """Get audio duration in seconds using ffprobe."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
+            capture_output=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return float(result.stdout.decode().strip())
+    except Exception:
+        pass
+    return None
+
+
+async def _split_audio(audio_path: Path, chunk_secs: int = CHUNK_DURATION_SECS) -> list[Path]:
+    """Split long audio into chunks using ffmpeg. Returns list of chunk paths."""
+    duration = _get_audio_duration(audio_path)
+    if not duration or duration <= chunk_secs:
+        return [audio_path]
+
+    if duration > MAX_AUDIO_DURATION_SECS:
+        log.warning(f"STT: Audio too long ({duration:.0f}s > {MAX_AUDIO_DURATION_SECS}s), capping")
+        duration = MAX_AUDIO_DURATION_SECS
+
+    chunks: list[Path] = []
+    chunk_dir = audio_path.parent / f"{audio_path.stem}_chunks"
+    chunk_dir.mkdir(exist_ok=True)
+
+    n_chunks = int(duration // chunk_secs) + (1 if duration % chunk_secs > 0 else 0)
+    for i in range(n_chunks):
+        start = i * chunk_secs
+        chunk_path = chunk_dir / f"chunk_{i:03d}.wav"
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(audio_path),
+             "-ss", str(start), "-t", str(chunk_secs),
+             "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+             str(chunk_path)],
+            capture_output=True, timeout=60,
+        )
+        if result.returncode == 0 and chunk_path.exists():
+            chunks.append(chunk_path)
+        else:
+            log.warning(f"STT: Failed to create chunk {i}: {result.stderr.decode()[:200]}")
+
+    log.info(f"STT: Split {duration:.0f}s audio into {len(chunks)} chunks")
+    return chunks if chunks else [audio_path]
+
+
+async def _whisper_one_chunk(cmd_name: str, model_path: Path, audio_path: Path,
+                              language: str, timeout_secs: int) -> str | None:
+    """Transcribe a single audio chunk with whisper-cli."""
+    try:
+        args = [cmd_name, "-m", str(model_path), "-f", str(audio_path), "--no-timestamps"]
+        if language and language != "auto":
+            args.extend(["-l", language])
+
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_secs)
+
+        if proc.returncode == 0:
+            transcript = stdout.decode().strip()
+            lines = [l.strip() for l in transcript.splitlines() if l.strip()]
+            return " ".join(lines)
+
+        log.warning(f"whisper-cli failed (rc={proc.returncode}): {stderr.decode()[:200]}")
+        return None
+    except asyncio.TimeoutError:
+        log.error(f"STT: whisper-cli timed out ({timeout_secs}s) on {audio_path.name}")
+        try:
+            proc.kill()  # type: ignore[possibly-unbound]
+        except Exception:
+            pass
+        return None
+    except Exception as e:
+        log.error(f"whisper-cli error: {e}")
+        return None
 
 
 async def _local_whisper(audio_path: Path, language: str) -> str | None:
-    """Run local whisper-cli (whisper.cpp). Requires model at ~/.agenticEvolve/models/ggml-small.bin"""
+    """Run local whisper-cli (whisper.cpp). Splits long audio into chunks.
+
+    Requires model at ~/.agenticEvolve/models/ggml-small.bin
+    """
     cmd_name = shutil.which("whisper-cli")
     if not cmd_name:
         return None
@@ -172,37 +262,39 @@ async def _local_whisper(audio_path: Path, language: str) -> str | None:
         log.warning(f"STT: whisper model not found at {model_path}")
         return None
 
-    try:
-        args = [cmd_name, "-m", str(model_path), "-f", str(audio_path), "--no-timestamps"]
-        if language and language != "auto":
-            args.extend(["-l", language])
-        # else: whisper-cli auto-detects language
+    # Get duration to decide chunking and timeout
+    duration = _get_audio_duration(audio_path)
+    if duration and duration > CHUNK_DURATION_SECS and _has_ffmpeg():
+        # Long audio: split into chunks and transcribe sequentially
+        chunks = await _split_audio(audio_path)
+        transcripts: list[str] = []
+        per_chunk_timeout = CHUNK_DURATION_SECS + 120  # generous: chunk duration + 2min buffer
+        for i, chunk in enumerate(chunks):
+            log.info(f"STT: Transcribing chunk {i+1}/{len(chunks)}: {chunk.name}")
+            result = await _whisper_one_chunk(cmd_name, model_path, chunk, language, per_chunk_timeout)
+            if result:
+                transcripts.append(result)
+            # Clean up chunk file
+            chunk.unlink(missing_ok=True)
+        # Clean up chunk directory
+        chunk_dir = audio_path.parent / f"{audio_path.stem}_chunks"
+        if chunk_dir.exists():
+            shutil.rmtree(chunk_dir, ignore_errors=True)
 
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-
-        if proc.returncode == 0:
-            # whisper-cli outputs transcript to stdout, model logs to stderr
-            transcript = stdout.decode().strip()
-            # Remove any leading/trailing whitespace lines
-            lines = [l.strip() for l in transcript.splitlines() if l.strip()]
-            transcript = " ".join(lines)
-            if transcript:
-                log.info(f"STT: Local whisper-cli transcribed {len(transcript)} chars")
-                return transcript
-
-        log.warning(f"Local whisper-cli failed (rc={proc.returncode}): {stderr.decode()[:300]}")
+        if transcripts:
+            full = " ".join(transcripts)
+            log.info(f"STT: Transcribed {len(chunks)} chunks, {len(full)} chars total")
+            return full
         return None
-
-    except asyncio.TimeoutError:
-        log.error("STT: Local whisper-cli timed out (60s)")
-        return None
-    except Exception as e:
-        log.error(f"Local whisper error: {e}")
+    else:
+        # Short audio: single pass with scaled timeout
+        # ~1x realtime on Apple Silicon M-series, add 60s buffer
+        timeout = max(120, int((duration or 60) * 1.5) + 60)
+        result = await _whisper_one_chunk(cmd_name, model_path, audio_path, language, timeout)
+        if result:
+            log.info(f"STT: Local whisper-cli transcribed {len(result)} chars")
+            return result
+        log.warning("STT: Local whisper-cli failed")
         return None
 
 

@@ -124,22 +124,41 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     quoted_text = msg.get("quoted_text")
                     quoted_sender = msg.get("quoted_sender")
 
+                    if audio_path:
+                        log.info(f"WhatsApp audio received: {audio_path}")
                     if not text and not image_path and not file_path and not audio_path:
                         continue
 
                     # Dedup: Baileys can deliver the same message multiple times
-                    # (history sync, retry, reconnect). Skip if already processed.
+                    # (history sync, retry, reconnect, multi-device).
+                    # Layer 1: message ID dedup
+                    # Layer 2: content+chat hash dedup (catches different IDs for same message)
                     msg_id = msg.get("message_id")
                     if msg_id:
                         if msg_id in self._seen_msg_ids:
-                            log.debug(f"WhatsApp dedup: skipping already-seen {msg_id}")
+                            log.debug(f"WhatsApp dedup (id): skipping {msg_id}")
                             continue
                         self._seen_msg_ids.add(msg_id)
-                        # Cap the set to prevent unbounded memory growth
                         if len(self._seen_msg_ids) > self._seen_msg_ids_max:
-                            # Discard oldest half (set is unordered, but that's fine)
                             to_keep = list(self._seen_msg_ids)[-self._seen_msg_ids_max // 2:]
                             self._seen_msg_ids = set(to_keep)
+
+                    # Content-based dedup: same chat + same text within 5s window
+                    import hashlib as _hashlib
+                    import time as _time2
+                    _content_key = _hashlib.md5(f"{chat_id}:{user_id}:{text[:200]}".encode()).hexdigest()
+                    _now2 = _time2.monotonic()
+                    if not hasattr(self, "_seen_content"):
+                        self._seen_content: dict[str, float] = {}
+                    _last_seen = self._seen_content.get(_content_key, 0)
+                    if _now2 - _last_seen < 5.0:
+                        log.debug(f"WhatsApp dedup (content): skipping duplicate in {chat_id} ({_now2 - _last_seen:.1f}s)")
+                        continue
+                    self._seen_content[_content_key] = _now2
+                    # Prune old entries every 100 messages
+                    if len(self._seen_content) > 500:
+                        cutoff = _now2 - 30.0
+                        self._seen_content = {k: v for k, v in self._seen_content.items() if v > cutoff}
 
                     is_group = chat_id.endswith("@g.us")
                     is_served_group = is_group and chat_id in self._serve_groups
@@ -255,13 +274,20 @@ class WhatsAppAdapter(BasePlatformAdapter):
 
                         elif audio_path:
                             # Transcribe via whisper.cpp first, then send text to Claude
+                            _force_reply_audio = True  # never NO_REPLY for voice messages
                             try:
                                 from ..voice import speech_to_text
                                 transcript = await speech_to_text(audio_path, language="auto")
                                 if transcript:
                                     audio_instruction = (
                                         f"[The user sent a voice message. Transcript: \"{transcript}\"]\n"
-                                        "Respond to what they said.\n"
+                                        "You MUST respond to what they said. Do NOT use [NO_REPLY].\n"
+                                        "Your response MUST have two parts:\n"
+                                        "**Part 1 — Full Transcript**: Reproduce the COMPLETE transcript above, "
+                                        "cleaned up for readability (fix punctuation, paragraphs) but preserving "
+                                        "every sentence the speaker said. Do NOT summarize or skip anything.\n"
+                                        "**Part 2 — Summary**: After the full transcript, provide your AI analysis/summary "
+                                        "of the key points, organized by topic.\n"
                                     )
                                     invoke_text = audio_instruction + (text if text else "")
                                 else:

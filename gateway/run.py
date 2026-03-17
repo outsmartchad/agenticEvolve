@@ -685,8 +685,10 @@ class GatewayRunner:
 
             # NO_REPLY / HEARTBEAT_OK tokens (OpenClaw pattern)
             # Agent can choose not to reply in group chats
+            # Never suppress voice message responses — user expects a reply
             _no_reply_tokens = {"[NO_REPLY]", "[HEARTBEAT_OK]", "NO_REPLY", "HEARTBEAT_OK"}
-            if response_text.strip() in _no_reply_tokens:
+            _is_voice = "sent a voice message" in text
+            if response_text.strip() in _no_reply_tokens and not _is_voice:
                 log.info(f"Agent chose NO_REPLY for {platform}:{chat_id} (cost=${cost:.4f})")
                 if cost > 0:
                     self._log_cost(platform, session_id, cost)
