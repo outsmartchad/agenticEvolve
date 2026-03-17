@@ -217,11 +217,21 @@ class WhatsAppAdapter(BasePlatformAdapter):
                             invoke_text = file_instruction + (text if text else f"Please read and summarize this file: {file_name}")
 
                         elif audio_path:
-                            audio_instruction = (
-                                f"[The user sent a voice/audio message. The audio file is at: {audio_path}]\n"
-                                "Transcribe or analyze the audio, then respond.\n"
-                            )
-                            invoke_text = audio_instruction + (text if text else "Please transcribe this audio message.")
+                            # Transcribe via whisper.cpp first, then send text to Claude
+                            try:
+                                from ..voice import speech_to_text
+                                transcript = await speech_to_text(audio_path, language="auto")
+                                if transcript:
+                                    audio_instruction = (
+                                        f"[The user sent a voice message. Transcript: \"{transcript}\"]\n"
+                                        "Respond to what they said.\n"
+                                    )
+                                    invoke_text = audio_instruction + (text if text else "")
+                                else:
+                                    invoke_text = text if text else "[The user sent a voice message but transcription failed.]"
+                            except Exception as e:
+                                log.warning(f"WhatsApp audio transcription failed: {e}")
+                                invoke_text = text if text else "[The user sent a voice message but transcription is unavailable.]"
 
                         response = await self.on_message("whatsapp", chat_id, user_id, invoke_text)
                         if response:
