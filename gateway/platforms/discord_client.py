@@ -45,62 +45,13 @@ class DiscordClientAdapter(BasePlatformAdapter):
         return user_id in self.allowed_users
 
     async def start(self):
-        self._session = aiohttp.ClientSession()
-
-        # Step 1: Connect to Discord desktop app via CDP
-        try:
-            targets = await self._get_cdp_targets()
-        except Exception as e:
-            log.error(f"Cannot connect to Discord desktop app CDP on port {CDP_PORT}: {e}")
-            log.info("Launch Discord with: open -a Discord --args --remote-debugging-port=9224")
-            return
-
-        page_target = next((t for t in targets if t.get("type") == "page"), None)
-        if not page_target:
-            log.error("No Discord page target found via CDP")
-            return
-
-        ws_url = page_target["webSocketDebuggerUrl"]
-        log.info(f"Connecting to Discord CDP: {page_target.get('title', 'unknown')}")
-
-        # Step 2: Extract auth token via CDP Network interception
-        self.token = await self._extract_token(ws_url)
-        if not self.token:
-            # Try reading from file as fallback
-            token_file = os.path.expanduser("~/.agenticEvolve/.discord-token")
-            if os.path.exists(token_file):
-                with open(token_file) as f:
-                    self.token = f.read().strip()
-                log.info("Using cached Discord token from .discord-token")
-
-        if not self.token:
-            log.error("Could not extract Discord token. Make sure you're logged in.")
-            return
-
-        # Save token for future use
-        token_file = os.path.expanduser("~/.agenticEvolve/.discord-token")
-        with open(token_file, "w") as f:
-            f.write(self.token)
-
-        # Step 3: Get current user info
-        user = await self._api_get("/users/@me")
-        if user:
-            self.user_id = user.get("id")
-            log.info(f"Discord client connected as {user.get('username')} (ID: {self.user_id})")
-
-        # Step 4: Discord serve targets DISABLED — account got limited from CDP sending.
-        # Read-only polling still works for /subscribe digests.
-        # Serve targets are NOT loaded so no replies are attempted.
-        log.info("Discord serve targets DISABLED (account limited). Read-only mode only.")
-
-        # Step 5: Start message polling
-        # CDP WebSocket frame interception doesn't work for ETF+zstd,
-        # so we poll the REST API for new messages in watched channels
-        if self.watch_channels:
-            self._poll_task = asyncio.create_task(self._poll_messages())
-            log.info(f"Polling {len(self.watch_channels)} channels for new messages")
-        else:
-            log.warning("No watch_channels configured — Discord adapter won't receive messages")
+        # ══════════════════════════════════════════════════════════════
+        # FULLY DISABLED — account got limited, second warning received.
+        # No CDP connections, no REST API calls, no token extraction.
+        # Discord data is read ONLY from local Chromium disk cache
+        # (tools/discord-local/read_cache.py) — zero network calls.
+        # ══════════════════════════════════════════════════════════════
+        log.info("Discord adapter DISABLED — local cache only, no network calls")
 
     async def _get_cdp_targets(self) -> list:
         async with self._session.get(f"http://localhost:{CDP_PORT}/json") as resp:

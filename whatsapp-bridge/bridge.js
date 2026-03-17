@@ -172,6 +172,9 @@ async function startBridge() {
   sock.ev.on("messages.upsert", async ({ messages, type: upsertType }) => {
     if (upsertType !== "notify") return;
 
+    // Get our own JID for self-message filtering (strip device suffix)
+    const ownJid = sock.user?.id?.replace(/:.*@/, "@");
+
     for (const msg of messages) {
       // Skip own messages and status broadcasts
       if (msg.key.fromMe) continue;
@@ -179,6 +182,13 @@ async function startBridge() {
 
       const rawChatId = msg.key.remoteJid;
       const rawUserId = msg.key.participant || rawChatId;
+
+      // Extra self-message guard: Baileys on linked devices sometimes delivers
+      // our own sent messages with fromMe=false. Check sender JID explicitly.
+      if (ownJid) {
+        const senderJid = (rawUserId || "").replace(/:.*@/, "@");
+        if (senderJid === ownJid) continue;
+      }
       // Resolve LID JIDs → phone JIDs so Python can match against serve targets
       const chatId = resolveJid(rawChatId);
       const userId = resolveJid(rawUserId);

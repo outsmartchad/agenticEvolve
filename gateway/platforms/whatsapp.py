@@ -23,6 +23,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
         self._serve_groups: set[str] = set()  # group JIDs being actively served
         self._serve_contacts: set[str] = set()  # contact JIDs being actively served
         self._subscribe_groups: set[str] = set()  # group JIDs subscribed for digests
+        self._seen_msg_ids: set[str] = set()  # dedup: prevent processing same message multiple times
+        self._seen_msg_ids_max = 2000  # cap to prevent unbounded growth
         self.process = None
         self._reader_task = None
         self._breaker = CircuitBreaker("whatsapp", fail_threshold=5, recovery_secs=60)
@@ -112,6 +114,20 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     if not text and not image_path:
                         continue
 
+                    # Dedup: Baileys can deliver the same message multiple times
+                    # (history sync, retry, reconnect). Skip if already processed.
+                    msg_id = msg.get("message_id")
+                    if msg_id:
+                        if msg_id in self._seen_msg_ids:
+                            log.debug(f"WhatsApp dedup: skipping already-seen {msg_id}")
+                            continue
+                        self._seen_msg_ids.add(msg_id)
+                        # Cap the set to prevent unbounded memory growth
+                        if len(self._seen_msg_ids) > self._seen_msg_ids_max:
+                            # Discard oldest half (set is unordered, but that's fine)
+                            to_keep = list(self._seen_msg_ids)[-self._seen_msg_ids_max // 2:]
+                            self._seen_msg_ids = set(to_keep)
+
                     is_group = chat_id.endswith("@g.us")
                     is_served_group = is_group and chat_id in self._serve_groups
                     is_served_contact = (not is_group) and chat_id in self._serve_contacts
@@ -168,6 +184,17 @@ class WhatsAppAdapter(BasePlatformAdapter):
                         if is_group and user_id != chat_id:
                             msg_key["participant"] = user_id
 
+                    # Self-reply cooldown: if we sent a response to this chat
+                    # very recently, this is likely our own message echoed back.
+                    import time as _time
+                    _now = _time.monotonic()
+                    if not hasattr(self, "_last_reply_ts"):
+                        self._last_reply_ts: dict[str, float] = {}
+                    _last = self._last_reply_ts.get(chat_id, 0)
+                    if _now - _last < 3.0:
+                        log.debug(f"WhatsApp self-reply guard: skipping msg in {chat_id} ({_now - _last:.1f}s after last reply)")
+                        continue
+
                     try:
                         # If image attached, prepend image context to the message
                         invoke_text = text
@@ -181,6 +208,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                         response = await self.on_message("whatsapp", chat_id, user_id, invoke_text)
                         if response:
                             await self.send(chat_id, response, reply_to=msg_key)
+                            self._last_reply_ts[chat_id] = _time.monotonic()
                     except Exception as e:
                         log.error(f"WhatsApp handler error: {e}")
 
