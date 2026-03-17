@@ -9,6 +9,7 @@ Usage:
 """
 import asyncio
 import logging
+import logging.handlers
 import signal
 import sys
 import os
@@ -16,6 +17,8 @@ import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
+
+from .redact import RedactingFilter
 
 from croniter import croniter
 
@@ -49,6 +52,7 @@ CRON_OUTPUT_DIR = CRON_DIR / "output"
 
 # ── Channel-specific knowledge bases for served channels ──────────────
 # Maps channel/group ID → knowledge prompt injected alongside the personality.
+# TODO: move to config.yaml
 _CHANNEL_KNOWLEDGE: dict[str, str] = {
     # degen-damm Discord channel
     "1371208572930887770": (
@@ -1185,14 +1189,21 @@ def setup_logging():
         "%(asctime)s %(levelname)-5s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
+    redact_filter = RedactingFilter()
 
     stderr_handler = logging.StreamHandler(sys.stderr)
     stderr_handler.setFormatter(fmt)
     stderr_handler.setLevel(logging.INFO)
+    stderr_handler.addFilter(redact_filter)
 
-    file_handler = logging.FileHandler(LOG_DIR / "gateway.log")
+    file_handler = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "gateway.log",
+        maxBytes=50_000_000,
+        backupCount=5,
+    )
     file_handler.setFormatter(fmt)
     file_handler.setLevel(logging.DEBUG)
+    file_handler.addFilter(redact_filter)
 
     root = logging.getLogger("agenticEvolve")
     root.setLevel(logging.DEBUG)

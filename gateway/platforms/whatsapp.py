@@ -79,8 +79,9 @@ class WhatsAppAdapter(BasePlatformAdapter):
             if serve_total:
                 log.info(f"WhatsApp serving {len(self._serve_groups)} groups + {len(self._serve_contacts)} contacts from DB")
             # Load subscribed groups (for message storage / digests)
-            # Use a dummy user_id — we want ALL subscriptions across users
-            subs = get_subscriptions("934847281", mode="subscribe", platform="whatsapp")
+            _wa_users = self.config.get("platforms", {}).get("whatsapp", {}).get("allowed_users", [])
+            _wa_owner = str(_wa_users[0]).split("@")[0] if _wa_users else ""
+            subs = get_subscriptions(_wa_owner, mode="subscribe", platform="whatsapp")
             self._subscribe_groups = {s["target_id"] for s in subs}
             if self._subscribe_groups:
                 log.info(f"WhatsApp storing messages for {len(self._subscribe_groups)} subscribed groups")
@@ -257,6 +258,11 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     try:
                         # Build invoke text with any attached media
                         invoke_text = text
+
+                        # Wrap served group messages with content sanitizer (prompt injection guard)
+                        if is_served and not _is_agent_invoke:
+                            from ..content_sanitizer import wrap_platform_message
+                            invoke_text = wrap_platform_message(text, "whatsapp", sender=sender_name, is_served=True)
 
                         if image_path:
                             img_instruction = (

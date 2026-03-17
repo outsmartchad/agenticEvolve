@@ -62,6 +62,7 @@ from gateway.agent import (
     get_week_cost,
     generate_title,
     _format_history,
+    _sanitize_env,
 )
 from gateway.session_db import (
     generate_session_id,
@@ -1276,7 +1277,7 @@ class AEApp(App):
         except Exception:
             pass
 
-        env = os.environ.copy()
+        env = _sanitize_env(os.environ.copy())
         work_dir = str(Path.home())
 
         text_parts = []
