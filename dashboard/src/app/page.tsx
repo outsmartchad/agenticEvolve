@@ -34,8 +34,8 @@ import { fetchAPI } from "@/lib/api";
 // ---------------------------------------------------------------------------
 
 interface StatusData {
-  uptime: number;
-  platforms: string[];
+  uptime_secs: number;
+  platforms: Record<string, boolean>;
   active_sessions: number;
   today_cost: number;
   week_cost: number;
@@ -100,7 +100,7 @@ export default function DashboardPage() {
       ]);
       setStatus(statusData);
       setModules(modulesData.modules ?? modulesData ?? []);
-      const rawEvents = metricsData.events ?? metricsData ?? [];
+      const rawEvents = metricsData.recent_events ?? metricsData.events ?? [];
       setEvents(Array.isArray(rawEvents) ? rawEvents.slice(-5).reverse() : []);
       setError(null);
     } catch (err) {
@@ -180,7 +180,7 @@ export default function DashboardPage() {
     { metric: "Today Cost", value: `$${s.today_cost.toFixed(2)}` },
     { metric: "Week Cost", value: `$${s.week_cost.toFixed(2)}` },
     { metric: "Model", value: s.model },
-    { metric: "Uptime", value: formatUptime(s.uptime) },
+    { metric: "Uptime", value: formatUptime(s.uptime_secs) },
   ];
 
   return (
@@ -227,7 +227,7 @@ export default function DashboardPage() {
                 variant="outline"
                 className="bg-green-500/15 text-green-500 border-green-500/30"
               >
-                Platforms: {s.platforms?.join(", ") || "none"}
+                Platforms: {s.platforms ? Object.keys(s.platforms).filter(k => s.platforms[k]).join(", ") : "none"}
               </Badge>
             </CardContent>
           </Card>
