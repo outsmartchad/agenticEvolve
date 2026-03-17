@@ -220,6 +220,7 @@ def log_audit(
         user_id: Acting user (None for automated pipeline events).
         metadata: Arbitrary JSON-serialisable dict for extra context.
     """
+    _ensure_db()
     conn = _connect()
     try:
         conn.execute(
@@ -245,6 +246,7 @@ def signal_url_seen(url: str, ttl_days: int = 7) -> bool:
 
     Inserts the URL if unseen (or expired). Cleans up expired rows on each call.
     """
+    _ensure_db()
     from datetime import timedelta
     conn = _connect()
     try:
@@ -274,6 +276,7 @@ def signal_url_seen(url: str, ttl_days: int = 7) -> bool:
 
 def get_user_pref(user_id: str, key: str, default: str = None) -> str | None:
     """Get a user preference value."""
+    _ensure_db()
     conn = _connect()
     row = conn.execute(
         "SELECT value FROM user_prefs WHERE user_id = ? AND key = ?",
@@ -285,6 +288,7 @@ def get_user_pref(user_id: str, key: str, default: str = None) -> str | None:
 
 def set_user_pref(user_id: str, key: str, value: str):
     """Set a user preference value (upsert)."""
+    _ensure_db()
     conn = _connect()
     conn.execute(
         "INSERT INTO user_prefs (user_id, key, value, updated_at) "
@@ -298,6 +302,7 @@ def set_user_pref(user_id: str, key: str, value: str):
 
 def delete_user_pref(user_id: str, key: str):
     """Delete a user preference."""
+    _ensure_db()
     conn = _connect()
     conn.execute("DELETE FROM user_prefs WHERE user_id = ? AND key = ?", (user_id, key))
     conn.commit()
@@ -309,6 +314,7 @@ def delete_user_pref(user_id: str, key: str):
 def link_identity(canonical_id: str, platform: str, platform_user_id: str,
                   display_name: str = "") -> None:
     """Link a platform user to a canonical identity."""
+    _ensure_db()
     conn = _connect()
     conn.execute(
         "INSERT OR REPLACE INTO identities (canonical_id, platform, platform_user_id, display_name, linked_at) "
@@ -320,6 +326,7 @@ def link_identity(canonical_id: str, platform: str, platform_user_id: str,
 
 def get_canonical_id(platform: str, platform_user_id: str) -> str | None:
     """Get the canonical user ID for a platform user."""
+    _ensure_db()
     conn = _connect()
     row = conn.execute(
         "SELECT canonical_id FROM identities WHERE platform = ? AND platform_user_id = ?",
@@ -330,6 +337,7 @@ def get_canonical_id(platform: str, platform_user_id: str) -> str | None:
 
 def get_linked_platforms(canonical_id: str) -> list[dict]:
     """Get all platform identities linked to a canonical user."""
+    _ensure_db()
     conn = _connect()
     rows = conn.execute(
         "SELECT platform, platform_user_id, display_name FROM identities WHERE canonical_id = ?",
@@ -350,6 +358,7 @@ def resolve_user_id(platform: str, platform_user_id: str) -> str:
 
 def create_session(session_id: str, source: str, user_id: str = None,
                    model: str = "sonnet") -> str:
+    _ensure_db()
     conn = _connect()
     conn.execute(
         "INSERT INTO sessions (id, source, user_id, model, started_at) VALUES (?, ?, ?, ?, ?)",
@@ -367,6 +376,7 @@ def generate_session_id() -> str:
 
 
 def add_message(session_id: str, role: str, content: str, token_count: int = 0):
+    _ensure_db()
     conn = _connect()
     ts = datetime.now(timezone.utc).isoformat()
     cursor = conn.execute(
@@ -415,6 +425,7 @@ def snapshot_session(session_id: str, handoff_note: str = "") -> Path:
     Returns:
         Path to the written handoff file.
     """
+    _ensure_db()
     HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
     conn = _connect()
     rows = conn.execute(
@@ -467,6 +478,7 @@ def end_session(session_id: str, handoff_note: str = ""):
         session_id: Session to end.
         handoff_note: Optional note captured in the handoff file.
     """
+    _ensure_db()
     conn = _connect()
     conn.execute(
         "UPDATE sessions SET ended_at = ? WHERE id = ?",
@@ -497,6 +509,7 @@ def search_sessions(query: str, limit: int = 5,
         limit: Maximum number of unique sessions to return.
         time_decay_days: Half-life in days for recency weighting.
     """
+    _ensure_db()
     conn = _connect()
     rows = conn.execute("""
         SELECT m.session_id, m.role, m.content, m.timestamp,
@@ -561,6 +574,7 @@ def search_sessions(query: str, limit: int = 5,
 
 
 def set_title(session_id: str, title: str):
+    _ensure_db()
     conn = _connect()
     conn.execute(
         "UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL",
@@ -571,6 +585,7 @@ def set_title(session_id: str, title: str):
 
 
 def list_sessions(source: str = None, limit: int = 20) -> list[dict]:
+    _ensure_db()
     conn = _connect()
     if source:
         rows = conn.execute(
@@ -587,6 +602,7 @@ def list_sessions(source: str = None, limit: int = 20) -> list[dict]:
 
 
 def get_session_messages(session_id: str) -> list[dict]:
+    _ensure_db()
     conn = _connect()
     rows = conn.execute(
         "SELECT role, content, timestamp FROM messages WHERE session_id = ? ORDER BY id",
@@ -597,6 +613,7 @@ def get_session_messages(session_id: str) -> list[dict]:
 
 
 def stats() -> dict:
+    _ensure_db()
     conn = _connect()
     total_sessions = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
     total_messages = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
@@ -620,6 +637,7 @@ def add_learning(target: str, target_type: str, verdict: str,
                  skill_created: str = "", full_report: str = "",
                  cost: float = 0) -> int:
     """Store a /learn finding. Returns the learning ID."""
+    _ensure_db()
     conn = _connect()
     ts = datetime.now(timezone.utc).isoformat()
     cursor = conn.execute(
@@ -643,6 +661,7 @@ def add_learning(target: str, target_type: str, verdict: str,
 
 def search_learnings(query: str, limit: int = 5) -> list[dict]:
     """FTS5 search across learnings."""
+    _ensure_db()
     conn = _connect()
     rows = conn.execute(
         "SELECT l.id, l.target, l.target_type, l.verdict, l.patterns, "
@@ -658,6 +677,7 @@ def search_learnings(query: str, limit: int = 5) -> list[dict]:
 
 def list_learnings(limit: int = 20) -> list[dict]:
     """List recent learnings."""
+    _ensure_db()
     conn = _connect()
     rows = conn.execute(
         "SELECT id, target, target_type, verdict, patterns, skill_created, "
@@ -673,6 +693,7 @@ def list_learnings(limit: int = 20) -> list[dict]:
 def log_cost(cost: float, platform: str = "", session_id: str = "",
              pipeline: str = "") -> None:
     """Dual-write cost entry to SQLite. Complements the cost.log file."""
+    _ensure_db()
     conn = _connect()
     ts = datetime.now(timezone.utc).isoformat()
     conn.execute(
@@ -686,6 +707,7 @@ def log_cost(cost: float, platform: str = "", session_id: str = "",
 
 def get_cost_today() -> float:
     """Return total cost for the current UTC day from SQLite."""
+    _ensure_db()
     conn = _connect()
     row = conn.execute(
         "SELECT SUM(cost) FROM costs WHERE date(timestamp) = date('now')"
@@ -696,6 +718,7 @@ def get_cost_today() -> float:
 
 def get_cost_week() -> float:
     """Return total cost for the current UTC week (Mon–Sun) from SQLite."""
+    _ensure_db()
     conn = _connect()
     row = conn.execute(
         "SELECT SUM(cost) FROM costs "
@@ -724,6 +747,7 @@ def upsert_instinct(pattern: str, context: str = "", project_id: str = "",
     Returns:
         The instinct row ID.
     """
+    _ensure_db()
     conn = _connect()
     ts = datetime.now(timezone.utc).isoformat()
 
@@ -787,6 +811,7 @@ def get_promotable_instincts(min_conf: float = 0.8,
     Returns:
         List of instinct dicts ordered by confidence descending.
     """
+    _ensure_db()
     conn = _connect()
     rows = conn.execute(
         "SELECT * FROM instincts WHERE confidence >= ? AND promoted_to IS NULL "
@@ -948,6 +973,7 @@ def mark_instinct_promoted(instinct_id: int, promoted_to: str) -> None:
         instinct_id: Row ID of the instinct to promote.
         promoted_to: Promotion target label — 'skill', 'command', or 'agent'.
     """
+    _ensure_db()
     conn = _connect()
     ts = datetime.now(timezone.utc).isoformat()
     conn.execute(
@@ -976,6 +1002,7 @@ def search_active_session(session_id: str, query: str,
     Returns:
         List of matching message dicts with role, content snippet, timestamp.
     """
+    _ensure_db()
     conn = _connect()
     rows = conn.execute(
         "SELECT role, content, timestamp FROM messages "
@@ -993,6 +1020,7 @@ def get_active_session_context(session_id: str, last_n: int = 5) -> list[dict]:
 
     Used for injecting current session awareness into search results.
     """
+    _ensure_db()
     conn = _connect()
     rows = conn.execute(
         "SELECT role, content, timestamp FROM messages "
@@ -1070,6 +1098,7 @@ def search_instincts(query: str, limit: int = 10) -> list[dict]:
     Returns:
         List of instinct dicts with source tag.
     """
+    _ensure_db()
     conn = _connect()
     rows = conn.execute(
         "SELECT i.id, i.pattern, i.context, i.confidence, i.seen_count, "
@@ -1284,6 +1313,7 @@ def add_subscription(user_id: str, platform: str, target_id: str,
                      mode: str = "subscribe") -> bool:
     """Add a subscription (subscribe=digest, serve=active agent).
     Returns True if new, False if already exists."""
+    _ensure_db()
     conn = _connect()
     try:
         conn.execute(
@@ -1301,6 +1331,7 @@ def add_subscription(user_id: str, platform: str, target_id: str,
 
 def remove_subscription(user_id: str, platform: str, target_id: str,
                         mode: str = "subscribe") -> bool:
+    _ensure_db()
     conn = _connect()
     try:
         conn.execute(
@@ -1315,6 +1346,7 @@ def remove_subscription(user_id: str, platform: str, target_id: str,
 
 def get_subscriptions(user_id: str, mode: str = "subscribe",
                       platform: str | None = None) -> list[dict]:
+    _ensure_db()
     conn = _connect()
     try:
         if platform:
@@ -1338,6 +1370,7 @@ def get_subscriptions(user_id: str, mode: str = "subscribe",
 
 def get_serve_targets(platform: str) -> list[dict]:
     """Get all targets in serve mode for a platform (used by adapters)."""
+    _ensure_db()
     conn = _connect()
     try:
         rows = conn.execute(
@@ -1352,6 +1385,7 @@ def get_serve_targets(platform: str) -> list[dict]:
 
 def is_subscribed(user_id: str, platform: str, target_id: str,
                   mode: str = "subscribe") -> bool:
+    _ensure_db()
     conn = _connect()
     try:
         row = conn.execute(
@@ -1371,6 +1405,7 @@ def store_platform_message(platform: str, chat_id: str, user_id: str,
                            message_id: str | None = None,
                            timestamp: str | None = None):
     """Store an incoming message from a platform for digest purposes."""
+    _ensure_db()
     ts = timestamp or datetime.now(timezone.utc).isoformat()
     conn = _connect()
     try:
@@ -1396,6 +1431,7 @@ def store_platform_message(platform: str, chat_id: str, user_id: str,
 def get_platform_messages(platform: str, chat_ids: list[str],
                           hours: int = 24) -> list[dict]:
     """Get messages from specific chats within the last N hours."""
+    _ensure_db()
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     conn = _connect()
@@ -1415,6 +1451,7 @@ def get_platform_messages(platform: str, chat_ids: list[str],
 
 def cleanup_platform_messages(days: int = 7):
     """Delete platform messages older than N days."""
+    _ensure_db()
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     conn = _connect()
@@ -1425,5 +1462,13 @@ def cleanup_platform_messages(days: int = 7):
         conn.close()
 
 
-# Initialize on import
-init_db()
+# ── Lazy initialization ──────────────────────────────────────
+_db_initialized = False
+
+
+def _ensure_db():
+    """Lazily initialize the database on first access (idempotent)."""
+    global _db_initialized
+    if not _db_initialized:
+        init_db()
+        _db_initialized = True
