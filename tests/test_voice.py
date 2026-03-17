@@ -202,29 +202,31 @@ class TestDetectLanguageVoice:
 
 
 class TestCleanupTemp:
-    def test_removes_converted_file(self, tmp_path):
+    def test_removes_converted_and_original(self, tmp_path):
         original = tmp_path / "voice.ogg"
-        converted = tmp_path / "voice.mp3"
+        converted = tmp_path / "voice.wav"
         original.write_bytes(b"ogg data")
-        converted.write_bytes(b"mp3 data")
+        converted.write_bytes(b"wav data")
 
         _cleanup_temp(converted, original)
         assert not converted.exists()
-        assert original.exists()
+        assert not original.exists()  # original now cleaned up too (Bug 3 fix)
 
     def test_does_not_remove_when_same(self, tmp_path):
-        f = tmp_path / "voice.mp3"
+        f = tmp_path / "voice.wav"
         f.write_bytes(b"data")
 
         _cleanup_temp(f, f)
-        assert f.exists()
+        # When same path, only unlink is called once (original_path.unlink)
+        assert not f.exists()
 
     def test_handles_already_missing_file(self, tmp_path):
         original = tmp_path / "voice.ogg"
-        converted = tmp_path / "voice.mp3"
+        converted = tmp_path / "voice.wav"
         original.write_bytes(b"ogg data")
         # converted doesn't exist — should not raise
         _cleanup_temp(converted, original)
+        assert not original.exists()  # original still cleaned up
 
 
 # ══════════════════════════════════════════════════════════════
@@ -272,7 +274,7 @@ class TestEnsureCompatibleFormat:
     async def test_ogg_converts_with_ffmpeg(self, tmp_path):
         ogg = tmp_path / "audio.ogg"
         ogg.write_bytes(b"ogg data")
-        mp3_out = tmp_path / "audio.mp3"
+        wav_out = tmp_path / "audio.wav"
 
         mock_result = MagicMock(returncode=0)
 
@@ -280,17 +282,18 @@ class TestEnsureCompatibleFormat:
              patch("gateway.voice.subprocess.run", return_value=mock_result) as mock_run:
             # Simulate ffmpeg creating the output file
             def side_effect(*args, **kwargs):
-                mp3_out.write_bytes(b"converted mp3")
+                wav_out.write_bytes(b"converted wav")
                 return mock_result
             mock_run.side_effect = side_effect
 
             result = await _ensure_compatible_format(ogg)
-            assert result == mp3_out
+            assert result == wav_out
             mock_run.assert_called_once()
-            # Verify ffmpeg was called with libmp3lame
+            # Verify ffmpeg was called with pcm_s16le (16-bit PCM WAV)
             call_args = mock_run.call_args[0][0]
             assert "ffmpeg" in call_args
-            assert "libmp3lame" in call_args
+            assert "pcm_s16le" in call_args
+            assert "16000" in call_args
 
     @pytest.mark.asyncio
     async def test_ogg_falls_back_without_ffmpeg(self, tmp_path):

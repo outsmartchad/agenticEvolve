@@ -305,7 +305,7 @@ async function startBridge() {
           });
           const tmpDir = path.join(os.tmpdir(), "agenticEvolve-wa-audio");
           if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-          const ext = audioMsg.ptt ? "ogg" : ((audioMsg.mimetype || "audio/ogg").split("/")[1] || "ogg");
+          const ext = audioMsg.ptt ? "ogg" : ((audioMsg.mimetype || "audio/ogg").split("/")[1]?.split(";")[0]?.trim() || "ogg");
           const filename = `${msg.key.id}.${ext}`;
           audioPath = path.join(tmpDir, filename);
           fs.writeFileSync(audioPath, buffer);

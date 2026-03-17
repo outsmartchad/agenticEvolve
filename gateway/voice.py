@@ -130,7 +130,7 @@ async def list_voices(language_filter: str = "en") -> list[dict]:
 
 async def speech_to_text(
     audio_path: str | Path,
-    language: str = "zh",
+    language: str = "auto",
 ) -> str | None:
     """Transcribe audio file to text using local whisper-cli (whisper.cpp).
 
@@ -207,32 +207,34 @@ async def _local_whisper(audio_path: Path, language: str) -> str | None:
 
 
 async def _ensure_compatible_format(audio_path: Path) -> Path:
-    """Convert to MP3 if the audio is in OGG/Opus format (Telegram voice).
-    Most whisper APIs accept MP3 directly.
+    """Convert to 16-bit PCM WAV (16 kHz mono) if the audio is in OGG/Opus format.
+
+    whisper-cli (whisper.cpp) expects 16-bit PCM WAV at 16 kHz for best results.
+    Previous MP3 conversion was lossy and fragile on non-Homebrew builds.
     """
     suffix = audio_path.suffix.lower()
-    if suffix in (".mp3", ".wav", ".m4a", ".flac", ".webm"):
+    if suffix in (".wav", ".mp3", ".m4a", ".flac", ".webm"):
         return audio_path
 
     if not _has_ffmpeg():
         log.warning("ffmpeg not found, sending original format to API")
         return audio_path
 
-    # Convert OGG/OGA to MP3
-    mp3_path = audio_path.with_suffix(".mp3")
+    # Convert OGG/OGA to 16-bit PCM WAV (16 kHz mono) — optimal for whisper-cli
+    wav_path = audio_path.with_suffix(".wav")
     try:
         result = subprocess.run(
             [
                 "ffmpeg", "-y", "-i", str(audio_path),
-                "-c:a", "libmp3lame", "-q:a", "4",
-                str(mp3_path),
+                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                str(wav_path),
             ],
             capture_output=True,
             timeout=30,
         )
-        if result.returncode == 0 and mp3_path.exists():
-            log.info(f"STT: Converted {suffix} → MP3 ({mp3_path.stat().st_size} bytes)")
-            return mp3_path
+        if result.returncode == 0 and wav_path.exists():
+            log.info(f"STT: Converted {suffix} → WAV 16kHz mono ({wav_path.stat().st_size} bytes)")
+            return wav_path
     except Exception as e:
         log.warning(f"Audio conversion failed: {e}")
 
@@ -240,9 +242,12 @@ async def _ensure_compatible_format(audio_path: Path) -> Path:
 
 
 def _cleanup_temp(usable_path: Path, original_path: Path):
-    """Remove temp conversion files (but not the original)."""
+    """Remove temp conversion files and the original audio file."""
     if usable_path != original_path:
         usable_path.unlink(missing_ok=True)
+    # Also clean up the original (e.g. OGG downloaded by bridge) to prevent
+    # /tmp/agenticEvolve-wa-audio/ from accumulating indefinitely
+    original_path.unlink(missing_ok=True)
 
 
 # ── TTS auto-mode logic ──────────────────────────────────────
