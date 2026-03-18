@@ -429,8 +429,8 @@ class CommandSuggestions(Widget):
     CommandSuggestions {
         dock: bottom;
         height: auto;
-        max-height: 8;
-        margin: 0 1;
+        max-height: 10;
+        margin: 0 1 3 1;
         background: $surface;
         border: tall $accent;
         display: none;
@@ -449,18 +449,37 @@ class CommandSuggestions(Widget):
 
     suggestions: reactive[list[tuple[str, str]]] = reactive(list, always_update=True)
     selected_index: reactive[int] = reactive(0)
+    _is_path_mode: bool = False  # True when showing filesystem paths
 
     def render(self) -> Text:
         text = Text()
-        for i, (cmd, desc) in enumerate(self.suggestions[:7]):
-            prefix = "▸ " if i == self.selected_index else "  "
-            style = "bold" if i == self.selected_index else "dim"
-            text.append(f"{prefix}{cmd:16s} {desc}\n", style=style)
+        if self._is_path_mode:
+            # Path mode: show full path as main, dir name as hint
+            for i, (full_path, dir_name) in enumerate(self.suggestions[:7]):
+                prefix = "▸ " if i == self.selected_index else "  "
+                if i == self.selected_index:
+                    text.append(f"{prefix}", style="bold")
+                    text.append(f"{dir_name:<30s}", style="bold green")
+                    # Show the full path as dim hint
+                    # Extract just the path part after the command
+                    parts = full_path.split(None, 1)
+                    if len(parts) > 1:
+                        text.append(f" {parts[1]}", style="dim")
+                    text.append("\n")
+                else:
+                    text.append(f"{prefix}{dir_name}\n", style="dim")
+        else:
+            # Command mode: show command + description
+            for i, (cmd, desc) in enumerate(self.suggestions[:7]):
+                prefix = "▸ " if i == self.selected_index else "  "
+                style = "bold" if i == self.selected_index else "dim"
+                text.append(f"{prefix}{cmd:16s} {desc}\n", style=style)
         return text
 
     def update_suggestions(self, prefix: str) -> None:
         if not prefix.startswith("/"):
             self.suggestions = []
+            self._is_path_mode = False
             self.display = False
             return
 
@@ -472,9 +491,11 @@ class CommandSuggestions(Widget):
                 self._update_path_suggestions(cmd, parts[1])
                 return
             self.suggestions = []
+            self._is_path_mode = False
             self.display = False
             return
 
+        self._is_path_mode = False
         matches = [(cmd, desc) for cmd, desc in SLASH_COMMANDS if cmd.startswith(prefix)]
         self.suggestions = matches
         self.selected_index = 0
@@ -482,6 +503,7 @@ class CommandSuggestions(Widget):
 
     def _update_path_suggestions(self, cmd: str, partial: str) -> None:
         """Generate filesystem path suggestions for /workspace."""
+        self._is_path_mode = True
         try:
             partial = partial.strip()
             if not partial:
@@ -557,7 +579,9 @@ class ChatInput(Input):
         """Update autocomplete suggestions as user types."""
         try:
             suggestions = self.app.query_one(CommandSuggestions)
-            suggestions.update_suggestions(event.value.strip())
+            # Don't strip — trailing / matters for path completion
+            val = event.value.lstrip()
+            suggestions.update_suggestions(val)
         except NoMatches:
             pass
 
