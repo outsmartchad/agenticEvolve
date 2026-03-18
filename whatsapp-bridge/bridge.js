@@ -475,6 +475,10 @@ startBridge().catch((err) => {
 const rl = readline.createInterface({ input: process.stdin });
 
 rl.on("line", async (line) => {
+  if (!sock) {
+    emit({ type: "error", error: "Bridge not connected yet — ignoring command" });
+    return;
+  }
   try {
     const cmd = JSON.parse(line.trim());
     if (cmd.type === "list_groups") {

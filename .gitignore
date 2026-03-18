@@ -50,3 +50,9 @@ config.yaml
 __pycache__/
 dashboard/node_modules/
 dashboard/.next/
+
+# Embedding cache (machine-local)
+cache/
+
+# Instinct YAML files (runtime artifacts)
+instincts/
