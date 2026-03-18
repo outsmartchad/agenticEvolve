@@ -1,0 +1,14 @@
+body: 'Evidence: `evolve-daily` cost $0.5541 at 06:00 with no breakdown of what was
+  produced. No skills shipped, no memory updates visible in the digest. Half a dollar
+  with no artifact is a silent waste.
+
+  Action: Require evolve-daily to emit a structured end-of-run summary to NDJSON:
+  cost, skills attempted, instincts promoted, commands modified. Feed this into next
+  morning''s digest.'
+confidence: 0.3
+created_at: '2026-03-18T00:00:39.443339+00:00'
+label: Evolve-daily cost opacity
+last_seen: '2026-03-18T00:00:39.443339+00:00'
+seen_count: 1
+source: retro/digest
+status: open

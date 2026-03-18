@@ -1,0 +1,12 @@
+body: 'Evidence: 5 reconnection events across the log window (status 428 × 2, status
+  503 × 2, plus an initial reconnect at 00:36). Occurring every ~1–2 hours overnight.
+
+  Action: Add exponential backoff with jitter to the reconnect loop and alert Vincent
+  via Telegram if >3 reconnects occur within 1 hour.'
+confidence: 0.3
+created_at: '2026-03-18T00:00:39.443339+00:00'
+label: WhatsApp bridge instability
+last_seen: '2026-03-18T00:00:39.443339+00:00'
+seen_count: 1
+source: retro/digest
+status: open

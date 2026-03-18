@@ -109,6 +109,11 @@ const latestMsgKeys = new Map(); // chatJid -> { key: WAMessageKey, timestamp: n
 // Pending history fetch requests: requestId -> { resolve, timer }
 const pendingHistoryFetches = new Map();
 
+// Bridge-side dedup: lives at module scope so it survives reconnects.
+// Baileys can re-deliver the same message on reconnect / multi-device sync.
+const _seenMsgIds = new Set();
+const _SEEN_MAX = 2000;
+
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
@@ -179,11 +184,6 @@ async function startBridge() {
   sock.ev.on("creds.update", saveCreds);
 
    // ── Incoming messages ───────────────────────────────────────
-
-  // Bridge-side dedup: Baileys can deliver the same message multiple times
-  // via notify events on reconnect or multi-device sync
-  const _seenMsgIds = new Set();
-  const _SEEN_MAX = 2000;
 
   sock.ev.on("messages.upsert", async ({ messages, type: upsertType }) => {
     if (upsertType !== "notify") return;
@@ -451,160 +451,6 @@ async function startBridge() {
     }
   });
 
-  // ── Read commands from stdin ────────────────────────────────
-
-  const rl = readline.createInterface({ input: process.stdin });
-
-  rl.on("line", async (line) => {
-    try {
-      const cmd = JSON.parse(line.trim());
-      if (cmd.type === "list_groups") {
-        try {
-          const groups = await sock.groupFetchAllParticipating();
-          const result = Object.values(groups).map((g) => ({
-            id: g.id,
-            subject: g.subject,
-            size: g.size || g.participants?.length || 0,
-          }));
-          emit({ type: "groups", groups: result });
-        } catch (e) {
-          emit({ type: "error", error: `list_groups failed: ${e.message}` });
-        }
-      } else if (cmd.type === "list_contacts") {
-        // Combine: 1) lid-mapping files from auth store, 2) seen chat JIDs, 3) chatFetchAll if available
-        const contactMap = new Map(); // jid -> name
-
-        // Source 1: Read lid-mapping-<phone>.json files from auth dir
-        try {
-          const files = fs.readdirSync(AUTH_DIR);
-          for (const f of files) {
-            const m = f.match(/^lid-mapping-(\d+)\.json$/);
-            if (m) {
-              const phone = m[1];
-              const jid = `${phone}@s.whatsapp.net`;
-              contactMap.set(jid, phone);
-            }
-          }
-        } catch (e) { /* ignore */ }
-
-        // Source 2: Seen chats (from incoming messages this session)
-        for (const [jid, info] of seenChats) {
-          if (jid.endsWith("@s.whatsapp.net")) {
-            contactMap.set(jid, info.name || jid.split("@")[0]);
-          }
-        }
-
-        // Source 3: Try chatFetchAll (works in some Baileys versions)
-        try {
-          const chats = await sock.chatFetchAll?.() || [];
-          for (const c of chats) {
-            if (c.id?.endsWith("@s.whatsapp.net")) {
-              contactMap.set(c.id, c.name || c.id.split("@")[0]);
-            }
-          }
-        } catch (e) { /* v7 may not support this */ }
-
-        // Exclude own JID
-        const ownJid = sock.user?.id?.replace(/:.*@/, "@");
-        if (ownJid) contactMap.delete(ownJid);
-
-        const contacts = Array.from(contactMap).map(([id, name]) => ({ id, name }));
-        emit({ type: "contacts", contacts });
-      } else if (cmd.type === "fetch_messages" && cmd.chat_id) {
-        // Fetch historical messages for a chat using on-demand history sync
-        const chatId = cmd.chat_id;
-        const count = cmd.count || 50;
-        const requestId = cmd.request_id || `fetch_${Date.now()}`;
-
-        // We need an anchor message key for this chat
-        const anchor = latestMsgKeys.get(chatId);
-        if (!anchor) {
-          emit({
-            type: "history_messages",
-            request_id: requestId,
-            chat_id: chatId,
-            messages: [],
-            error: "no_anchor",
-          });
-        } else {
-          try {
-            const sessionId = await sock.fetchMessageHistory(
-              count,
-              anchor.key,
-              anchor.timestamp * 1000 // API expects ms
-            );
-            // Register pending request — results come via messaging-history.set
-            pendingHistoryFetches.set(requestId, {
-              chatId,
-              sessionId,
-              messages: [],
-              timer: setTimeout(() => {
-                // Timeout: no history received after 30s
-                pendingHistoryFetches.delete(requestId);
-                emit({
-                  type: "history_messages",
-                  request_id: requestId,
-                  chat_id: chatId,
-                  messages: [],
-                  error: "timeout",
-                });
-              }, 30000),
-            });
-          } catch (e) {
-            emit({
-              type: "error",
-              error: `fetch_messages failed: ${e.message}`,
-            });
-            emit({
-              type: "history_messages",
-              request_id: requestId,
-              chat_id: chatId,
-              messages: [],
-              error: e.message,
-            });
-          }
-        }
-      } else if (cmd.type === "send" && cmd.chat_id && cmd.text) {
-        // Resolve LID JIDs → phone JIDs using our mapping
-        let targetJid = resolveJid(cmd.chat_id);
-        try {
-          const msgPayload = { text: cmd.text };
-          // Support reply-to (quote) by passing the original message key
-          if (cmd.quoted) {
-            msgPayload.quoted = {
-              key: cmd.quoted,
-              message: { conversation: "" }, // minimal placeholder
-            };
-          }
-          await sock.sendMessage(targetJid, msgPayload);
-        } catch (sendErr) {
-          emit({ type: "error", error: `send failed: ${sendErr.message}` });
-        }
-
-      } else if (cmd.type === "send_image" && cmd.chat_id && cmd.image_path) {
-        // Send an image file to a chat
-        let targetJid = resolveJid(cmd.chat_id);
-        try {
-          const imgBuffer = fs.readFileSync(cmd.image_path);
-          const msgPayload = {
-            image: imgBuffer,
-            caption: cmd.caption || undefined,
-          };
-          if (cmd.quoted) {
-            msgPayload.quoted = {
-              key: cmd.quoted,
-              message: { conversation: "" },
-            };
-          }
-          await sock.sendMessage(targetJid, msgPayload);
-        } catch (sendErr) {
-          emit({ type: "error", error: `send_image failed: ${sendErr.message}` });
-        }
-      }
-    } catch (err) {
-      emit({ type: "error", error: `stdin parse error: ${err.message}` });
-    }
-  });
 }
 
 // ── Start ─────────────────────────────────────────────────────
@@ -612,4 +458,169 @@ async function startBridge() {
 startBridge().catch((err) => {
   emit({ type: "error", error: `Fatal: ${err.message}` });
   process.exit(1);
+});
+
+// ── Read commands from stdin (one-time setup — must NOT be inside startBridge)
+//
+// BUG FIX: Previously readline.createInterface was called inside startBridge(),
+// which is re-called on every reconnect. Each call added a new "line" listener
+// on process.stdin, resulting in N listeners after N reconnects. A single
+// Python "send" command would fire all N listeners, each calling sock.sendMessage
+// — causing every WhatsApp message to be sent N times (observed as 5x after
+// 4 reconnects). Moving this block here ensures exactly one listener exists
+// for the lifetime of the process. The handler references the module-level
+// `sock` variable so it always uses the current active socket after a reconnect.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const rl = readline.createInterface({ input: process.stdin });
+
+rl.on("line", async (line) => {
+  try {
+    const cmd = JSON.parse(line.trim());
+    if (cmd.type === "list_groups") {
+      try {
+        const groups = await sock.groupFetchAllParticipating();
+        const result = Object.values(groups).map((g) => ({
+          id: g.id,
+          subject: g.subject,
+          size: g.size || g.participants?.length || 0,
+        }));
+        emit({ type: "groups", groups: result });
+      } catch (e) {
+        emit({ type: "error", error: `list_groups failed: ${e.message}` });
+      }
+    } else if (cmd.type === "list_contacts") {
+      // Combine: 1) lid-mapping files from auth store, 2) seen chat JIDs, 3) chatFetchAll if available
+      const contactMap = new Map(); // jid -> name
+
+      // Source 1: Read lid-mapping-<phone>.json files from auth dir
+      try {
+        const files = fs.readdirSync(AUTH_DIR);
+        for (const f of files) {
+          const m = f.match(/^lid-mapping-(\d+)\.json$/);
+          if (m) {
+            const phone = m[1];
+            const jid = `${phone}@s.whatsapp.net`;
+            contactMap.set(jid, phone);
+          }
+        }
+      } catch (e) { /* ignore */ }
+
+      // Source 2: Seen chats (from incoming messages this session)
+      for (const [jid, info] of seenChats) {
+        if (jid.endsWith("@s.whatsapp.net")) {
+          contactMap.set(jid, info.name || jid.split("@")[0]);
+        }
+      }
+
+      // Source 3: Try chatFetchAll (works in some Baileys versions)
+      try {
+        const chats = await sock.chatFetchAll?.() || [];
+        for (const c of chats) {
+          if (c.id?.endsWith("@s.whatsapp.net")) {
+            contactMap.set(c.id, c.name || c.id.split("@")[0]);
+          }
+        }
+      } catch (e) { /* v7 may not support this */ }
+
+      // Exclude own JID
+      const ownJid = sock.user?.id?.replace(/:.*@/, "@");
+      if (ownJid) contactMap.delete(ownJid);
+
+      const contacts = Array.from(contactMap).map(([id, name]) => ({ id, name }));
+      emit({ type: "contacts", contacts });
+    } else if (cmd.type === "fetch_messages" && cmd.chat_id) {
+      // Fetch historical messages for a chat using on-demand history sync
+      const chatId = cmd.chat_id;
+      const count = cmd.count || 50;
+      const requestId = cmd.request_id || `fetch_${Date.now()}`;
+
+      // We need an anchor message key for this chat
+      const anchor = latestMsgKeys.get(chatId);
+      if (!anchor) {
+        emit({
+          type: "history_messages",
+          request_id: requestId,
+          chat_id: chatId,
+          messages: [],
+          error: "no_anchor",
+        });
+      } else {
+        try {
+          const sessionId = await sock.fetchMessageHistory(
+            count,
+            anchor.key,
+            anchor.timestamp * 1000 // API expects ms
+          );
+          // Register pending request — results come via messaging-history.set
+          pendingHistoryFetches.set(requestId, {
+            chatId,
+            sessionId,
+            messages: [],
+            timer: setTimeout(() => {
+              // Timeout: no history received after 30s
+              pendingHistoryFetches.delete(requestId);
+              emit({
+                type: "history_messages",
+                request_id: requestId,
+                chat_id: chatId,
+                messages: [],
+                error: "timeout",
+              });
+            }, 30000),
+          });
+        } catch (e) {
+          emit({
+            type: "error",
+            error: `fetch_messages failed: ${e.message}`,
+          });
+          emit({
+            type: "history_messages",
+            request_id: requestId,
+            chat_id: chatId,
+            messages: [],
+            error: e.message,
+          });
+        }
+      }
+    } else if (cmd.type === "send" && cmd.chat_id && cmd.text) {
+      // Resolve LID JIDs → phone JIDs using our mapping
+      let targetJid = resolveJid(cmd.chat_id);
+      try {
+        const msgPayload = { text: cmd.text };
+        // Support reply-to (quote) by passing the original message key
+        if (cmd.quoted) {
+          msgPayload.quoted = {
+            key: cmd.quoted,
+            message: { conversation: "" }, // minimal placeholder
+          };
+        }
+        await sock.sendMessage(targetJid, msgPayload);
+      } catch (sendErr) {
+        emit({ type: "error", error: `send failed: ${sendErr.message}` });
+      }
+
+    } else if (cmd.type === "send_image" && cmd.chat_id && cmd.image_path) {
+      // Send an image file to a chat
+      let targetJid = resolveJid(cmd.chat_id);
+      try {
+        const imgBuffer = fs.readFileSync(cmd.image_path);
+        const msgPayload = {
+          image: imgBuffer,
+          caption: cmd.caption || undefined,
+        };
+        if (cmd.quoted) {
+          msgPayload.quoted = {
+            key: cmd.quoted,
+            message: { conversation: "" },
+          };
+        }
+        await sock.sendMessage(targetJid, msgPayload);
+      } catch (sendErr) {
+        emit({ type: "error", error: `send_image failed: ${sendErr.message}` });
+      }
+    }
+  } catch (err) {
+    emit({ type: "error", error: `stdin parse error: ${err.message}` });
+  }
 });
