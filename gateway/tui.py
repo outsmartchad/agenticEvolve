@@ -614,24 +614,18 @@ class ChatInput(Input):
         if not suggestions.suggestions:
             return
 
-        if event.key in ("tab", "enter") and suggestions._is_path_mode:
+        if event.key == "tab" and suggestions._is_path_mode:
             selected = suggestions.get_selected()
             if selected:
                 parts = selected.split(None, 1)
                 if len(parts) > 1:
                     p = Path(parts[1]).expanduser()
                     if p.is_dir():
-                        # Drill into directory — show its contents
                         self.value = selected + "/"
                         self.cursor_position = len(self.value)
                         suggestions.update_suggestions(self.value.lstrip())
-                        event.prevent_default()
-                        event.stop()
-                        return
-            # Not a directory or no selection — let Enter fall through to submit
-            if event.key == "tab":
-                event.prevent_default()
-                event.stop()
+            event.prevent_default()
+            event.stop()
             return
         elif event.key == "tab":
             selected = suggestions.get_selected()
