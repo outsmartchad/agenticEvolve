@@ -54,6 +54,8 @@ from rich.text import Text
 EXODIR = Path.home() / ".agenticEvolve"
 sys.path.insert(0, str(EXODIR))
 
+import logging
+
 from gateway.config import load_config
 from gateway.agent import (
     build_system_prompt,
@@ -63,7 +65,10 @@ from gateway.agent import (
     generate_title,
     _format_history,
     _sanitize_env,
+    _terminate_proc,
 )
+
+log = logging.getLogger("agenticEvolve.tui")
 from gateway.session_db import (
     generate_session_id,
     create_session,
@@ -132,6 +137,7 @@ _COMMAND_SCHEMA = """Available commands:
 /config
 /heartbeat
 /notify <duration> <message>
+/workspace <path>
 /help
 """
 
@@ -528,6 +534,7 @@ class ChatInput(Input):
 
 SLASH_COMMANDS = [
     ("/help", "Show available commands"),
+    ("/workspace", "Set project workspace directory"),
     ("/new", "Start a new session"),
     ("/quit", "Exit the REPL"),
     ("/cost", "Show cost breakdown"),
@@ -615,7 +622,7 @@ class HelpScreen(ModalScreen[None]):
             )
 
             _categories = {
-                "Session": ["/help", "/new", "/quit"],
+                "Session": ["/help", "/new", "/workspace", "/quit"],
                 "Utilities": ["/lang", "/do", "/speak"],
                 "Subscriptions": ["/subscribe", "/serve"],
                 "Info": ["/cost", "/model", "/status", "/memory", "/soul",
@@ -1187,7 +1194,24 @@ class AEApp(App):
 
         prompt_parts = []
         ctx = f"[Gateway: platform=cli, session={self._state.session_id}]"
+        if self._state.workspace:
+            ctx += f"\n[Workspace: {self._state.workspace}]"
         prompt_parts.append(ctx)
+
+        # Inject project-specific instructions from workspace
+        if self._state.workspace:
+            ws = Path(self._state.workspace)
+            for instructions_file in ("CLAUDE.md", "AGENTS.md"):
+                ipath = ws / instructions_file
+                if ipath.exists():
+                    try:
+                        content = ipath.read_text().strip()
+                        if content:
+                            prompt_parts.append(
+                                f"# Project Instructions ({instructions_file})\n{content}"
+                            )
+                    except Exception:
+                        pass
 
         if self._state.history:
             formatted = _format_history(self._state.history)
@@ -1239,7 +1263,7 @@ class AEApp(App):
             pass
 
         env = _sanitize_env(os.environ.copy())
-        work_dir = str(Path.home())
+        work_dir = self._state.workspace or str(Path.home())
 
         text_parts = []
         cost = 0.0
@@ -1278,6 +1302,34 @@ class AEApp(App):
                             elif block.get("type") == "tool_use":
                                 name = block.get("name", "tool")
                                 input_data = block.get("input", {})
+
+                                # HARD GUARD: Check Bash commands against denylist
+                                if name == "Bash":
+                                    _bash_cmd = input_data.get("command", "")
+                                    log.info(f"BASH_AUDIT [TUI]: {_bash_cmd[:500]}")
+                                    try:
+                                        from gateway.exec_allowlist import ExecAllowlist
+                                        _al = ExecAllowlist()
+                                        _denied = _al._check_denylist(_bash_cmd)
+                                        if _denied:
+                                            log.critical(
+                                                f"BLOCKED destructive command [TUI]: "
+                                                f"{_bash_cmd[:200]} (matched: {_denied})"
+                                            )
+                                            _terminate_proc(proc)
+                                            blocked_msg = (
+                                                f"[BLOCKED] Destructive command terminated: "
+                                                f"`{_bash_cmd[:100]}` (pattern: {_denied})"
+                                            )
+                                            text_parts = [blocked_msg]
+                                            self.call_from_thread(
+                                                self.post_message,
+                                                StreamToken(blocked_msg),
+                                            )
+                                            break
+                                    except Exception as _al_err:
+                                        log.debug(f"Allowlist check failed: {_al_err}")
+
                                 self.call_from_thread(
                                     self.post_message,
                                     ToolStart(name, input_data),
@@ -1623,6 +1675,9 @@ class AEApp(App):
         elif name in ("/serve",):
             self._cmd_serve(arg)
 
+        elif name in ("/workspace", "/ws", "/cwd"):
+            self._cmd_workspace(arg)
+
         else:
             self._add_system_message(f"[yellow]Unknown command: {name}[/yellow]")
 
@@ -1644,6 +1699,61 @@ class AEApp(App):
         except Exception as e:
             self._add_system_message(f"[red]Error: {e}[/red]")
 
+    def _cmd_workspace(self, arg: str) -> None:
+        """Set or show the project workspace directory."""
+        if not arg.strip():
+            ws = self._state.workspace or str(Path.home())
+            # Check for CLAUDE.md
+            claude_md = Path(ws) / "CLAUDE.md"
+            agents_md = Path(ws) / "AGENTS.md"
+            has_project = claude_md.exists() or agents_md.exists()
+            project_indicator = " (has CLAUDE.md)" if claude_md.exists() else (
+                " (has AGENTS.md)" if agents_md.exists() else ""
+            )
+            msg = (
+                f"**Workspace**\n"
+                f"- Directory: `{ws}`{project_indicator}\n"
+                f"- Use `/workspace /path/to/project` to change\n"
+            )
+            self.post_message(CommandOutput(msg, is_markdown=True))
+            return
+
+        target = Path(arg.strip()).expanduser().resolve()
+        if not target.exists():
+            self._add_system_message(f"[red]Directory not found: {target}[/red]")
+            return
+        if not target.is_dir():
+            self._add_system_message(f"[red]Not a directory: {target}[/red]")
+            return
+
+        self._state.workspace = str(target)
+
+        # Check for project instructions
+        claude_md = target / "CLAUDE.md"
+        agents_md = target / "AGENTS.md"
+        info_parts = [f"[green]Workspace: {target}[/green]"]
+        if claude_md.exists():
+            info_parts.append(f"[dim]Found CLAUDE.md — will inject as project context[/dim]")
+        if agents_md.exists():
+            info_parts.append(f"[dim]Found AGENTS.md — will inject as project context[/dim]")
+
+        # List top-level contents
+        try:
+            entries = sorted(target.iterdir())
+            dirs = [e.name + "/" for e in entries if e.is_dir() and not e.name.startswith(".")][:15]
+            files = [e.name for e in entries if e.is_file() and not e.name.startswith(".")][:15]
+            if dirs or files:
+                listing = ", ".join(dirs[:10] + files[:10])
+                if len(dirs) + len(files) > 10:
+                    listing += f", ... ({len(dirs) + len(files)} total)"
+                info_parts.append(f"[dim]{listing}[/dim]")
+        except Exception:
+            pass
+
+        self._add_system_message("\n".join(info_parts))
+        self._update_status_bar()
+        self.query_one(Sidebar).refresh_info()
+
     def _cmd_status(self) -> None:
         try:
             s = stats()
@@ -1655,6 +1765,7 @@ class AEApp(App):
                 f"- DB: {s.get('db_size_mb', '?')} MB\n"
                 f"- Cost today: ${today:.4f}\n"
                 f"- Model: {self._state.model}\n"
+                f"- Workspace: `{self._state.workspace or '~ (default)'}`\n"
                 f"- Session: `{self._state.session_id}`\n"
             )
             self.post_message(CommandOutput(msg, is_markdown=True))

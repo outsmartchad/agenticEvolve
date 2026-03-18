@@ -20,6 +20,7 @@ class SessionState:
         self.history: list[dict] = []
         self.message_count: int = 0
         self.session_cost: float = 0.0
+        self.workspace: str = ""  # project directory — empty = $HOME
         self.new_session()
 
     def new_session(self):
