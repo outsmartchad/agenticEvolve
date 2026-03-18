@@ -416,7 +416,7 @@ class StatusBar(Widget):
             parts.append(("● ready ", "bold green"))
         parts.append((f"│ {self.model_name} ", ""))
         parts.append((f"│ {self.cost_text} ", "dim"))
-        parts.append(("│ ⏎:send  ^⏎:send multi  ?:help  ^n:new  ^p:sessions  ^q:quit", "dim"))
+        parts.append(("│ ⏎:send  ⇧⏎:newline  ?:help  ^n:new  ^p:sessions  ^q:quit", "dim"))
         text = Text()
         for content, style in parts:
             text.append(content, style=style)
@@ -626,29 +626,26 @@ class ChatInput(TextArea):
             pass
 
     def _on_key(self, event) -> None:
-        """Enter sends single-line, Shift+Enter/plain Enter for newline in multi-line."""
-        # Send logic: Enter sends if content is single-line (no newlines).
-        # If content has newlines (multi-line paste), Ctrl+Enter or Escape+Enter sends.
-        # This gives the best UX: simple messages send on Enter, pasted code stays editable.
-        if event.key in ("enter", "ctrl+enter", "ctrl+j"):
-            text = self.text.strip()
-            if not text:
-                event.prevent_default()
-                event.stop()
-                return
+        """Enter always sends. Shift+Enter for newline."""
+        # Shift+Enter → insert newline
+        if event.key == "shift+enter":
+            self.insert("\n")
+            lines = self.text.count("\n") + 1
+            self.styles.height = max(3, min(lines + 1, 10))
+            event.prevent_default()
+            event.stop()
+            return
 
-            # Single-line: Enter sends immediately
-            # Multi-line: only Ctrl+Enter sends
-            is_multiline = "\n" in self.text.rstrip()
-            if not is_multiline or event.key in ("ctrl+enter", "ctrl+j"):
+        # Enter → always send
+        if event.key == "enter":
+            text = self.text.strip()
+            if text:
                 self.post_message(ChatSubmitted(text))
                 self.clear()
                 self._last_text = ""
                 self.styles.height = 3
-                event.prevent_default()
-                event.stop()
-                return
-            # Multi-line + plain Enter: let TextArea insert newline
+            event.prevent_default()
+            event.stop()
             return
 
         # Autocomplete handling
