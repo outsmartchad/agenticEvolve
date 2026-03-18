@@ -806,53 +806,137 @@ class HelpScreen(ModalScreen[None]):
 # ── Session Picker Screen ──────────────────────────────────────
 
 class SessionScreen(ModalScreen[str]):
-    """Pick a session to resume."""
+    """Pick a session to resume — keyboard-navigable list."""
     DEFAULT_CSS = """
     SessionScreen {
         align: center middle;
     }
     SessionScreen > Vertical {
-        width: 80;
-        max-height: 70%;
+        width: 90;
+        max-height: 80%;
         background: $surface;
         border: thick $primary;
         padding: 1 2;
     }
-    SessionScreen .session-title {
+    SessionScreen .session-header {
         text-style: bold;
         color: $primary;
         text-align: center;
         margin-bottom: 1;
     }
-    SessionScreen .session-item {
-        padding: 0 1;
-        height: 1;
-    }
-    SessionScreen .session-item:hover {
-        background: $primary-background;
+    SessionScreen .session-hint {
+        color: $text-muted;
+        text-align: center;
+        margin-top: 1;
     }
     """
-    BINDINGS = [Binding("escape", "dismiss('')", "Close")]
+    BINDINGS = [
+        Binding("escape", "dismiss('')", "Close"),
+        Binding("up", "move(-1)", "Up"),
+        Binding("down", "move(1)", "Down"),
+        Binding("k", "move(-1)", "Up", show=False),
+        Binding("j", "move(1)", "Down", show=False),
+        Binding("enter", "select_session", "Select"),
+    ]
+
+    _sessions: list[dict] = []
+    _selected: reactive[int] = reactive(0)
+    _current_session_id: str = ""
+
+    def __init__(self, current_session_id: str = "") -> None:
+        super().__init__()
+        self._current_session_id = current_session_id
 
     def compose(self) -> ComposeResult:
+        self._sessions = list_sessions(limit=30)
         with Vertical():
-            yield Static("Switch Session", classes="session-title")
-            sessions = list_sessions(limit=15)
-            if not sessions:
-                yield Static("[dim]No sessions found[/dim]")
+            yield Static("Sessions  (↑↓/jk navigate, Enter select, Esc close)", classes="session-header")
+            yield Static("", id="session-list")
+            yield Static("", classes="session-hint")
+
+    def on_mount(self) -> None:
+        # Pre-select current session if found
+        for i, s in enumerate(self._sessions):
+            if s.get("id") == self._current_session_id:
+                self._selected = i
+                break
+        self._render_list()
+
+    def _render_list(self) -> None:
+        list_widget = self.query_one("#session-list", Static)
+        hint_widget = self.query_one(".session-hint", Static)
+
+        if not self._sessions:
+            list_widget.update("[dim]No sessions found[/dim]")
+            hint_widget.update("")
+            return
+
+        text = Text()
+        # Scrolling window
+        vis = 15
+        total = len(self._sessions)
+        if total <= vis:
+            start, end = 0, total
+        else:
+            half = vis // 2
+            start = max(0, self._selected - half)
+            end = start + vis
+            if end > total:
+                end = total
+                start = end - vis
+
+        for i in range(start, end):
+            s = self._sessions[i]
+            sid = s.get("id", "?")
+            title = s.get("title", "untitled")[:45]
+            msgs = s.get("message_count", 0)
+            ts = s.get("started_at", "")[:16]
+            is_current = sid == self._current_session_id
+
+            prefix = "▸ " if i == self._selected else "  "
+            marker = " ●" if is_current else ""
+
+            if i == self._selected:
+                text.append(prefix, style="bold")
+                text.append(f"{ts}", style="bold cyan")
+                text.append(f"  {msgs:3d} msgs  ", style="bold")
+                text.append(f"{title}", style="bold green")
+                if marker:
+                    text.append(marker, style="bold yellow")
+                text.append("\n")
             else:
-                for s in sessions:
-                    sid = s.get("id", "?")
-                    title = s.get("title", "untitled")[:40]
-                    msgs = s.get("message_count", 0)
-                    ts = s.get("started_at", "")[:16]
-                    btn = Static(
-                        f"  {ts}  {msgs:3d} msgs  {title}",
-                        classes="session-item",
-                    )
-                    btn.session_id = sid
-                    yield btn
-            yield Static("\n[dim]Press Escape to close[/dim]")
+                style = "dim" if not is_current else ""
+                text.append(f"{prefix}{ts}  {msgs:3d} msgs  {title}", style=style)
+                if marker:
+                    text.append(marker, style="yellow")
+                text.append("\n")
+
+        list_widget.update(text)
+
+        # Show session ID and info for selected
+        if 0 <= self._selected < total:
+            s = self._sessions[self._selected]
+            sid = s.get("id", "?")
+            source = s.get("source", "?")
+            model = s.get("model", "?")
+            is_current = sid == self._current_session_id
+            current_label = " (current session)" if is_current else ""
+            hint = f"[dim]{sid}  │  {source}  │  {model}{current_label}[/dim]"
+            if total > vis:
+                hint += f"  │  [{self._selected + 1}/{total}]"
+            hint_widget.update(hint)
+
+    def watch__selected(self, value: int) -> None:
+        self._render_list()
+
+    def action_move(self, delta: int) -> None:
+        if self._sessions:
+            self._selected = (self._selected + delta) % len(self._sessions)
+
+    def action_select_session(self) -> None:
+        if self._sessions and 0 <= self._selected < len(self._sessions):
+            sid = self._sessions[self._selected].get("id", "")
+            self.dismiss(sid)
 
 
 # ── Model Picker Screen ────────────────────────────────────────
@@ -1280,6 +1364,23 @@ class AEApp(App):
                 self._scroll_to_bottom()
                 sidebar.refresh_info()
 
+        # Show last session info if starting fresh
+        if not self._resume_session:
+            try:
+                recent = list_sessions(limit=1)
+                if recent:
+                    last = recent[0]
+                    last_title = last.get("title", "untitled")[:50]
+                    last_msgs = last.get("message_count", 0)
+                    last_ts = last.get("started_at", "")[:16]
+                    if last_msgs > 0:
+                        self._add_system_message(
+                            f"[dim]Last session: {last_title} ({last_msgs} msgs, {last_ts})\n"
+                            f"Ctrl+P or /sessions to resume  │  /new for fresh session[/dim]"
+                        )
+            except Exception:
+                pass
+
         # Focus input
         self.query_one(ChatInput).focus()
 
@@ -1681,7 +1782,10 @@ class AEApp(App):
         def on_result(session_id: str | None) -> None:
             if session_id:
                 self._resume_to(session_id)
-        self.push_screen(SessionScreen(), callback=on_result)
+        self.push_screen(
+            SessionScreen(current_session_id=self._state.session_id),
+            callback=on_result,
+        )
 
     def action_switch_model(self) -> None:
         def on_result(model: str | None) -> None:
@@ -1768,7 +1872,7 @@ class AEApp(App):
             self._cmd_config()
 
         elif name in ("/sessions", "/s"):
-            self._cmd_sessions(arg)
+            self.action_switch_session()
 
         elif name in ("/search",):
             self._cmd_search(arg)
