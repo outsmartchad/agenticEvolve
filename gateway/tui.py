@@ -416,7 +416,7 @@ class StatusBar(Widget):
             parts.append(("● ready ", "bold green"))
         parts.append((f"│ {self.model_name} ", ""))
         parts.append((f"│ {self.cost_text} ", "dim"))
-        parts.append(("│ ?:help  ^n:new  ^p:sessions  ^o:model  ^q:quit", "dim"))
+        parts.append(("│ ^⏎:send  ?:help  ^n:new  ^p:sessions  ^o:model  ^q:quit", "dim"))
         text = Text()
         for content, style in parts:
             text.append(content, style=style)
@@ -578,12 +578,22 @@ class CommandSuggestions(Widget):
         return None
 
 
-class ChatInput(Input):
-    """The chat input box with slash command autocomplete."""
+class ChatSubmitted(Message):
+    """Fired when user presses Ctrl+Enter to send."""
+    def __init__(self, value: str) -> None:
+        super().__init__()
+        self.value = value
+
+
+class ChatInput(TextArea):
+    """Multi-line chat input with Ctrl+Enter to send, autocomplete support."""
     DEFAULT_CSS = """
     ChatInput {
         dock: bottom;
         margin: 0 1;
+        height: 3;
+        max-height: 10;
+        min-height: 3;
         border: tall $accent;
     }
     ChatInput:focus {
@@ -591,21 +601,50 @@ class ChatInput(Input):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__(placeholder="Type a message or /command...", id="chat-input")
+    _last_text: str = ""
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    def __init__(self) -> None:
+        super().__init__(id="chat-input", language=None, soft_wrap=True, show_line_numbers=False)
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Update autocomplete suggestions as user types."""
+        current = self.text
+        if current == self._last_text:
+            return
+        self._last_text = current
+
+        # Auto-resize height based on line count
+        lines = current.count("\n") + 1
+        self.styles.height = max(3, min(lines + 1, 10))
+
+        # Update suggestions from first line only
+        first_line = current.split("\n")[0].lstrip()
         try:
             suggestions = self.app.query_one(CommandSuggestions)
-            # Don't strip — trailing / matters for path completion
-            val = event.value.lstrip()
-            suggestions.update_suggestions(val)
+            suggestions.update_suggestions(first_line)
         except NoMatches:
             pass
 
     def _on_key(self, event) -> None:
-        """Handle Tab/arrow keys for autocomplete."""
+        """Ctrl+Enter sends, Tab for autocomplete, arrows for suggestion nav."""
+        # Ctrl+Enter or Cmd+Enter → send
+        if event.key in ("ctrl+j", "ctrl+m") and event.is_printable is False:
+            # This doesn't work reliably, use the binding below
+            pass
+
+        # Handle Ctrl+Enter to submit
+        if event.key == "ctrl+enter":
+            text = self.text.strip()
+            if text:
+                self.post_message(ChatSubmitted(text))
+                self.clear()
+                self._last_text = ""
+                self.styles.height = 3
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Autocomplete handling
         try:
             suggestions = self.app.query_one(CommandSuggestions)
         except NoMatches:
@@ -621,25 +660,26 @@ class ChatInput(Input):
                 if len(parts) > 1:
                     p = Path(parts[1]).expanduser()
                     if p.is_dir():
-                        self.value = selected + "/"
-                        self.cursor_position = len(self.value)
-                        suggestions.update_suggestions(self.value.lstrip())
+                        self.clear()
+                        self.insert(selected + "/")
+                        first_line = (selected + "/").lstrip()
+                        suggestions.update_suggestions(first_line)
             event.prevent_default()
             event.stop()
             return
         elif event.key == "tab":
             selected = suggestions.get_selected()
             if selected:
-                self.value = selected + " "
-                self.cursor_position = len(self.value)
+                self.clear()
+                self.insert(selected + " ")
                 suggestions.display = False
             event.prevent_default()
             event.stop()
-        elif event.key == "up":
+        elif event.key == "up" and suggestions.display:
             suggestions.move_selection(-1)
             event.prevent_default()
             event.stop()
-        elif event.key == "down":
+        elif event.key == "down" and suggestions.display:
             suggestions.move_selection(1)
             event.prevent_default()
             event.stop()
@@ -1249,13 +1289,12 @@ class AEApp(App):
 
     # ── Input handling ──────────────────────────────────────────
 
-    @on(Input.Submitted, "#chat-input")
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle user input."""
+    @on(ChatSubmitted)
+    def on_input_submitted(self, event: ChatSubmitted) -> None:
+        """Handle user input (Ctrl+Enter to send)."""
         text = event.value.strip()
         if not text:
             return
-        event.input.value = ""
 
         if self.is_streaming:
             return
