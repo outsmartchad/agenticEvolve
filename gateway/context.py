@@ -13,6 +13,7 @@ Claude's context window:
   - Reserve at least 16K tokens (~64K chars) for response generation
 """
 import logging
+import subprocess
 from typing import Optional
 
 log = logging.getLogger("agenticEvolve.context")
@@ -89,6 +90,44 @@ def check_context_size(prompt: str, model: str = "sonnet",
     }
 
 
+# ── LLM summarization helper ─────────────────────────────────────
+
+def _llm_summarize_messages(messages: list[dict], target_chars: int = 500) -> str | None:
+    """Summarize conversation messages using Claude Sonnet.
+    Returns summary string or None on failure.
+    """
+    # Format messages for the prompt
+    formatted = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")[:300]  # cap each msg
+        formatted.append(f"[{role}]: {content}")
+
+    text = "\n".join(formatted)
+    if len(text) > 8000:
+        text = text[:8000] + "\n... [truncated]"
+
+    prompt = (
+        f"Summarize this conversation segment in 3-5 concise bullet points "
+        f"(under {target_chars} chars total). Focus on key decisions, "
+        f"facts, and action items. No preamble.\n\n{text}"
+    )
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt, "--model", "claude-sonnet-4-20250514"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            summary = result.stdout.strip()
+            if len(summary) <= target_chars * 2:  # sanity check
+                return summary
+    except Exception as e:
+        log.debug(f"LLM summarization failed: {e}")
+
+    return None
+
+
 # ── Auto-compaction ──────────────────────────────────────────────
 
 def compact_history(history: list[dict], target_chars: int = 6000) -> list[dict]:
@@ -123,21 +162,27 @@ def compact_history(history: list[dict], target_chars: int = 6000) -> list[dict]
     last_5 = history[-5:]
     middle = history[1:-5]
 
-    # Build summary of middle messages
-    summary_parts = []
-    for m in middle:
-        role = m.get("role", "user")
-        content = m.get("content", "")[:100]
-        summary_parts.append(f"- [{role}] {content}")
-
-    middle_summary = "\n".join(summary_parts)
-    if len(middle_summary) > 1500:
-        middle_summary = middle_summary[:1500] + f"\n... [{len(middle)} messages compacted]"
-
-    summary_msg = {
-        "role": "system",
-        "content": f"[Conversation summary — {len(middle)} earlier messages compacted]\n{middle_summary}"
-    }
+    # Try LLM summarization first (better quality, ~$0.01)
+    llm_summary = _llm_summarize_messages(middle)
+    if llm_summary:
+        summary_msg = {
+            "role": "system",
+            "content": f"[AI summary of {len(middle)} earlier messages]\n{llm_summary}"
+        }
+    else:
+        # Fallback: truncation-based summary
+        summary_parts = []
+        for m in middle:
+            role = m.get("role", "user")
+            content = m.get("content", "")[:100]
+            summary_parts.append(f"- [{role}] {content}")
+        middle_summary = "\n".join(summary_parts)
+        if len(middle_summary) > 1500:
+            middle_summary = middle_summary[:1500] + f"\n... [{len(middle)} messages compacted]"
+        summary_msg = {
+            "role": "system",
+            "content": f"[Conversation summary — {len(middle)} earlier messages compacted]\n{middle_summary}"
+        }
 
     result = [first, summary_msg] + last_5
 

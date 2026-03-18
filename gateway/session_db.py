@@ -4,7 +4,8 @@ import sqlite3
 import json
 import logging
 import os
-from datetime import datetime, timezone
+import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _mem_log = logging.getLogger("agenticEvolve.session_db")
@@ -170,6 +171,24 @@ def init_db():
             expires_at TEXT NOT NULL
         )""",
         "CREATE INDEX IF NOT EXISTS idx_signal_urls_expires ON signal_urls(expires_at)",
+    ]:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # already exists
+
+    # Migration: skill_metrics table (Phase 6b)
+    for stmt in [
+        """CREATE TABLE IF NOT EXISTS skill_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            skill_name TEXT NOT NULL UNIQUE,
+            invoked_count INTEGER DEFAULT 0,
+            last_used TEXT,
+            user_rating REAL DEFAULT 0,
+            auto_rating REAL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )""",
     ]:
         try:
             conn.execute(stmt)
@@ -976,6 +995,18 @@ def auto_promote_instincts(max_promotions: int = 3) -> list[str]:
     promoted = []
     to_promote = eligible[:max_promotions]
 
+    # Check if memory is already over threshold — warn and trigger consolidation
+    try:
+        current_chars = len(mem_path.read_text())
+        if current_chars > char_limit * 0.9:
+            _mem_log.warning(
+                f"MEMORY.md at {current_chars}/{char_limit} chars "
+                f"({current_chars / char_limit * 100:.0f}%%) — "
+                "consolidation recommended"
+            )
+    except OSError:
+        pass
+
     def _modify(existing: str) -> str | None:
         nonlocal promoted
         content = existing
@@ -1008,6 +1039,232 @@ def auto_promote_instincts(max_promotions: int = 3) -> list[str]:
         )
 
     return promoted
+
+
+async def consolidate_memory(char_limit: int = 2200, force: bool = False) -> dict:
+    """Consolidate MEMORY.md to stay under char_limit using Sonnet summarization.
+
+    Steps:
+    1. Read MEMORY.md
+    2. If under (char_limit * 0.9) and not force, skip
+    3. Call Claude Sonnet to consolidate: merge duplicates, remove outdated, keep valuable
+    4. Write back consolidated version (file-locked)
+
+    Returns: {"before_chars": int, "after_chars": int, "consolidated": bool, "error": str|None}
+    """
+    mem_path = Path.home() / ".agenticEvolve" / "memory" / "MEMORY.md"
+    result: dict = {
+        "before_chars": 0,
+        "after_chars": 0,
+        "consolidated": False,
+        "error": None,
+    }
+
+    # Step 1: Read MEMORY.md
+    if not mem_path.exists():
+        result["error"] = "MEMORY.md not found"
+        return result
+
+    try:
+        content = mem_path.read_text()
+    except OSError as e:
+        result["error"] = f"Failed to read MEMORY.md: {e}"
+        return result
+
+    result["before_chars"] = len(content)
+
+    # Step 2: Check threshold
+    threshold = int(char_limit * 0.9)
+    if len(content) <= threshold and not force:
+        _mem_log.debug(
+            f"MEMORY.md at {len(content)}/{char_limit} chars — "
+            "under threshold, skipping consolidation"
+        )
+        result["after_chars"] = len(content)
+        return result
+
+    _mem_log.info(
+        f"Consolidating MEMORY.md: {len(content)} chars "
+        f"(limit {char_limit}, threshold {threshold})"
+    )
+
+    # Step 3: Call Claude Sonnet to consolidate
+    target_chars = int(char_limit * 0.75)  # aim for 75% of limit after consolidation
+    prompt = (
+        f"Consolidate these agent memory notes to under {target_chars} characters. "
+        "Merge duplicates, remove outdated entries, keep the most valuable insights. "
+        "Preserve the § delimiter between entries. "
+        "Keep the '<!-- auto-instincts -->' marker at the end. "
+        "Output ONLY the consolidated notes, no commentary.\n\n"
+        f"Current notes:\n{content}"
+    )
+
+    try:
+        proc = subprocess.run(
+            ["claude", "-p", prompt, "--model", "claude-sonnet-4-20250514"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() or f"claude exit code {proc.returncode}"
+            result["error"] = f"Sonnet consolidation failed: {err_msg}"
+            _mem_log.error(result["error"])
+            return result
+
+        consolidated = proc.stdout.strip()
+    except subprocess.TimeoutExpired:
+        result["error"] = "Sonnet consolidation timed out (30s)"
+        _mem_log.error(result["error"])
+        return result
+    except FileNotFoundError:
+        result["error"] = "claude CLI not found — cannot consolidate"
+        _mem_log.error(result["error"])
+        return result
+    except Exception as e:
+        result["error"] = f"Consolidation subprocess error: {e}"
+        _mem_log.error(result["error"])
+        return result
+
+    if not consolidated:
+        result["error"] = "Sonnet returned empty output"
+        _mem_log.error(result["error"])
+        return result
+
+    # Ensure auto-instincts marker is present
+    marker = "<!-- auto-instincts -->"
+    if marker not in consolidated:
+        consolidated = consolidated.rstrip() + "\n" + marker + "\n"
+
+    result["after_chars"] = len(consolidated)
+
+    # Step 4: Write back using file-locked helper
+    def _replace(_existing: str) -> str:
+        return consolidated
+
+    written = _locked_read_modify_write(mem_path, _replace)
+    if not written:
+        result["error"] = "Failed to write consolidated MEMORY.md (lock error)"
+        _mem_log.error(result["error"])
+        return result
+
+    result["consolidated"] = True
+    _mem_log.info(
+        f"MEMORY.md consolidated: {result['before_chars']} → "
+        f"{result['after_chars']} chars "
+        f"({result['before_chars'] - result['after_chars']} chars freed)"
+    )
+    return result
+
+
+def get_memory_stats() -> dict:
+    """Return current memory/user file stats and DB counts.
+
+    Returns:
+        Dict with memory_chars, memory_limit, memory_pct, user_chars,
+        user_limit, user_pct, instinct_count, learning_count, session_count.
+    """
+    mem_dir = Path.home() / ".agenticEvolve" / "memory"
+    mem_path = mem_dir / "MEMORY.md"
+    user_path = mem_dir / "USER.md"
+
+    memory_limit = 2200
+    user_limit = 1375
+
+    # File sizes
+    memory_chars = len(mem_path.read_text()) if mem_path.exists() else 0
+    user_chars = len(user_path.read_text()) if user_path.exists() else 0
+
+    # DB counts
+    _ensure_db()
+    conn = _connect()
+    try:
+        instinct_count = conn.execute(
+            "SELECT COUNT(*) FROM instincts"
+        ).fetchone()[0]
+        learning_count = conn.execute(
+            "SELECT COUNT(*) FROM learnings"
+        ).fetchone()[0]
+        session_count = conn.execute(
+            "SELECT COUNT(*) FROM sessions"
+        ).fetchone()[0]
+    except Exception:
+        instinct_count = 0
+        learning_count = 0
+        session_count = 0
+    finally:
+        conn.close()
+
+    return {
+        "memory_chars": memory_chars,
+        "memory_limit": memory_limit,
+        "memory_pct": round(memory_chars / memory_limit * 100, 1) if memory_limit else 0,
+        "user_chars": user_chars,
+        "user_limit": user_limit,
+        "user_pct": round(user_chars / user_limit * 100, 1) if user_limit else 0,
+        "instinct_count": instinct_count,
+        "learning_count": learning_count,
+        "session_count": session_count,
+    }
+
+
+def record_skill_usage(skill_name: str, auto_rating: float = 0.0) -> None:
+    """Record that a skill was used. Increments invoked_count, updates last_used."""
+    _ensure_db()
+    conn = _connect()
+    ts = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO skill_metrics (skill_name, invoked_count, last_used, auto_rating, updated_at) "
+        "VALUES (?, 1, ?, ?, ?) "
+        "ON CONFLICT(skill_name) DO UPDATE SET "
+        "invoked_count = invoked_count + 1, last_used = ?, auto_rating = ?, updated_at = ?",
+        (skill_name, ts, auto_rating, ts, ts, auto_rating, ts)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_skill_metrics(limit: int = 50) -> list[dict]:
+    """Return skill usage metrics ordered by most used."""
+    _ensure_db()
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT skill_name, invoked_count, last_used, user_rating, auto_rating "
+        "FROM skill_metrics ORDER BY invoked_count DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_stale_skills(days: int = 30) -> list[str]:
+    """Return skill names not used in the last N days."""
+    _ensure_db()
+    conn = _connect()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        "SELECT skill_name FROM skill_metrics "
+        "WHERE last_used < ? OR last_used IS NULL",
+        (cutoff,)
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def rate_skill(skill_name: str, rating: float) -> None:
+    """Set user rating for a skill (1-5 scale)."""
+    _ensure_db()
+    conn = _connect()
+    ts = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO skill_metrics (skill_name, user_rating, updated_at) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(skill_name) DO UPDATE SET user_rating = ?, updated_at = ?",
+        (skill_name, rating, ts, rating, ts)
+    )
+    conn.commit()
+    conn.close()
 
 
 def mark_instinct_promoted(instinct_id: int, promoted_to: str) -> None:
@@ -1254,18 +1511,25 @@ def unified_search(query: str, session_id: str = "",
         except Exception:
             pass
 
-    # 7. Semantic search — TF-IDF cosine similarity (catches non-keyword matches)
+    # 7. Semantic search — vector embeddings (fallback: TF-IDF)
     try:
-        from .semantic import semantic_search
-        semantic_results = semantic_search(query, top_k=limit_per_layer)
-        # Only add semantic results that aren't already in FTS results (by content prefix)
-        existing_prefixes = {r.get("content", "")[:80] for r in results}
-        for sr in semantic_results:
-            if sr["content"][:80] not in existing_prefixes:
-                sr["source"] = f"semantic:{sr['source']}"  # tag as semantic match
-                results.append(sr)
+        from .embeddings import get_index
+        idx = get_index()
+        semantic_results = idx.search(query, top_k=limit_per_layer)
     except Exception:
-        pass
+        # Fallback to TF-IDF if embeddings unavailable
+        try:
+            from .semantic import semantic_search
+            semantic_results = semantic_search(query, top_k=limit_per_layer)
+        except Exception:
+            semantic_results = []
+
+    # Only add semantic results that aren't already in FTS results (by content prefix)
+    existing_prefixes = {r.get("content", "")[:80] for r in results}
+    for sr in semantic_results:
+        if sr.get("content", "")[:80] not in existing_prefixes:
+            sr["source"] = f"semantic:{sr.get('source', 'embedding')}"
+            results.append(sr)
 
     return results
 
@@ -1306,6 +1570,8 @@ def format_recall_context(results: list[dict], max_chars: int = 2000) -> str:
         "semantic:instinct": "Related Patterns",
         "semantic:memory": "Related Notes",
         "semantic:user_profile": "Related Profile",
+        "semantic:embedding": "Semantic Match",
+        "embedding": "Semantic Match",
     }
 
     total = len(lines[0])

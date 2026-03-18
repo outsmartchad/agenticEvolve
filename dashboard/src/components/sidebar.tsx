@@ -9,6 +9,7 @@ import {
   BarChart3,
   Settings,
   ScrollText,
+  Brain,
   Menu,
   X,
   Zap,
@@ -28,6 +29,7 @@ const navSections = [
       { name: "Sessions", href: "/sessions", icon: MessageSquare },
       { name: "Usage", href: "/usage", icon: BarChart3 },
       { name: "Chat", href: "/chat", icon: MessageCircle },
+      { name: "Memory", href: "/memory", icon: Brain },
     ],
   },
   {

@@ -173,6 +173,8 @@ class DashboardServer:
         self.app.router.add_get("/api/modules", self._handle_modules)
         self.app.router.add_get("/api/git/log", self._handle_git_log)
         self.app.router.add_post("/api/chat", self._handle_chat)
+        self.app.router.add_get("/api/memory/search", self._handle_memory_search)
+        self.app.router.add_get("/api/memory/stats", self._handle_memory_stats)
         self.app.router.add_get("/ws", self._handle_ws)
 
         # Static files + SPA fallback (must be last)
@@ -495,6 +497,53 @@ class DashboardServer:
         except Exception as e:
             log.error(f"Chat endpoint error: {e}")
             return _error_response(str(e), status=500)
+
+    # ── Memory API ───────────────────────────────────────────
+
+    async def _handle_memory_search(self, request: web.Request) -> web.Response:
+        """GET /api/memory/search?q=query&limit=20 — hybrid search across all memory layers."""
+        query = request.query.get("q", "").strip()
+        if not query:
+            return _error_response("q parameter is required")
+
+        limit = min(int(request.query.get("limit", "20")), 50)
+
+        try:
+            from .embeddings import hybrid_search
+            results = hybrid_search(query, top_k=limit)
+        except Exception:
+            # Fallback to unified_search if embeddings not available
+            try:
+                from .session_db import unified_search
+                results = unified_search(query, limit_per_layer=limit // 5 or 3)
+            except Exception as e:
+                log.error(f"Memory search failed: {e}")
+                return _error_response(str(e), status=500)
+
+        return _json_response({"query": query, "results": results, "count": len(results)})
+
+    async def _handle_memory_stats(self, request: web.Request) -> web.Response:
+        """GET /api/memory/stats — memory file sizes, DB counts, embedding index status."""
+        try:
+            from .session_db import get_memory_stats
+            stats = get_memory_stats()
+        except Exception as e:
+            log.error(f"Memory stats failed: {e}")
+            stats = {}
+
+        # Add embedding index info
+        try:
+            from .embeddings import get_index
+            idx = get_index()
+            stats["embedding_docs"] = len(idx._docs) if idx._docs else 0
+            stats["embedding_model"] = "all-MiniLM-L6-v2"
+            stats["embedding_cached"] = idx._built_at.isoformat() if idx._built_at else None
+        except Exception:
+            stats["embedding_docs"] = 0
+            stats["embedding_model"] = "not loaded"
+            stats["embedding_cached"] = None
+
+        return _json_response(stats)
 
     # ── WebSocket ────────────────────────────────────────────
 
