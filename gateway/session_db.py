@@ -1100,23 +1100,27 @@ async def consolidate_memory(char_limit: int = 2200, force: bool = False) -> dic
     )
 
     try:
-        proc = subprocess.run(
-            ["claude", "-p", prompt, "--model", "claude-sonnet-4-20250514"],
-            capture_output=True,
-            text=True,
-            timeout=30,
+        import asyncio as _asyncio
+        proc = await _asyncio.create_subprocess_exec(
+            "claude", "-p", prompt, "--model", "claude-sonnet-4-20250514",
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.PIPE,
         )
+        try:
+            stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=30)
+        except _asyncio.TimeoutError:
+            proc.kill()
+            result["error"] = "Sonnet consolidation timed out (30s)"
+            _mem_log.error(result["error"])
+            return result
+
         if proc.returncode != 0:
-            err_msg = proc.stderr.strip() or f"claude exit code {proc.returncode}"
+            err_msg = (stderr or b"").decode().strip() or f"claude exit code {proc.returncode}"
             result["error"] = f"Sonnet consolidation failed: {err_msg}"
             _mem_log.error(result["error"])
             return result
 
-        consolidated = proc.stdout.strip()
-    except subprocess.TimeoutExpired:
-        result["error"] = "Sonnet consolidation timed out (30s)"
-        _mem_log.error(result["error"])
-        return result
+        consolidated = (stdout or b"").decode().strip()
     except FileNotFoundError:
         result["error"] = "claude CLI not found — cannot consolidate"
         _mem_log.error(result["error"])

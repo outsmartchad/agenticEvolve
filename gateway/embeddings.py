@@ -140,6 +140,7 @@ class EmbeddingIndex:
         docs: list[dict] = []
 
         # 1. Session messages (last 30 days)
+        conn = None
         try:
             conn = sqlite3.connect(str(DB_PATH), timeout=5)
             conn.row_factory = sqlite3.Row
@@ -157,11 +158,14 @@ class EmbeddingIndex:
                     "meta": f"{r['title'] or 'untitled'} "
                             f"({(r['started_at'] or '')[:10]})",
                 })
-            conn.close()
         except Exception as e:
             log.warning(f"Failed to load session messages: {e}")
+        finally:
+            if conn:
+                conn.close()
 
         # 2. Learnings
+        conn = None
         try:
             conn = sqlite3.connect(str(DB_PATH), timeout=5)
             conn.row_factory = sqlite3.Row
@@ -179,11 +183,14 @@ class EmbeddingIndex:
                     "source": "learning",
                     "meta": f"{r['target']} [{r['verdict']}]",
                 })
-            conn.close()
         except Exception as e:
             log.warning(f"Failed to load learnings: {e}")
+        finally:
+            if conn:
+                conn.close()
 
         # 3. Instincts
+        conn = None
         try:
             conn = sqlite3.connect(str(DB_PATH), timeout=5)
             conn.row_factory = sqlite3.Row
@@ -198,9 +205,11 @@ class EmbeddingIndex:
                     "source": "instinct",
                     "meta": f"conf:{r['confidence']:.1f}",
                 })
-            conn.close()
         except Exception as e:
             log.warning(f"Failed to load instincts: {e}")
+        finally:
+            if conn:
+                conn.close()
 
         # 4. MEMORY.md
         mem_path = Path.home() / ".agenticEvolve" / "memory" / "MEMORY.md"

@@ -39,10 +39,14 @@ class HeartbeatRunner:
         while True:
             await asyncio.sleep(self.interval_minutes * 60)
 
-            # Check quiet hours
+            # Check quiet hours (handles wraparound, e.g. [22, 7])
             hour = datetime.now().hour
             start, end = self.quiet_hours
-            if start <= hour < end:
+            if start <= end:
+                in_quiet = start <= hour < end
+            else:
+                in_quiet = hour >= start or hour < end
+            if in_quiet:
                 continue
 
             try:

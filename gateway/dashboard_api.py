@@ -506,7 +506,10 @@ class DashboardServer:
         if not query:
             return _error_response("q parameter is required")
 
-        limit = min(int(request.query.get("limit", "20")), 50)
+        try:
+            limit = min(int(request.query.get("limit", "20")), 50)
+        except (ValueError, TypeError):
+            limit = 20
 
         try:
             from .embeddings import hybrid_search

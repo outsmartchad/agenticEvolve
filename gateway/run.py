@@ -576,7 +576,7 @@ class GatewayRunner:
                                                    self.config.get("model", "sonnet"))
                 log.info(f"Smart router: cascade triggered, re-invoking with {reasoning_model}")
                 if _routing_tier:
-                    self._smart_router.stats.record(_routing_tier, cascaded=True)
+                    self._smart_router.stats.record_cascade_escalated()
                 try:
                     cascade_result = await self._tracked_invoke(
                         session_id, invoke_text, reasoning_model,
@@ -585,6 +585,14 @@ class GatewayRunner:
                         enable_browser=_enable_browser,
                     )
                     response_text = cascade_result.get("text", response_text)
+                    # Redact cascade response (first redaction ran on pre-cascade text)
+                    if hasattr(self, "_leak_detector") and self._leak_detector:
+                        response_text, leaks = self._leak_detector.redact_leaks(response_text)
+                        if leaks:
+                            leaked_names = [l.secret_name for l in leaks]
+                            log.warning(f"Credential leak detected in cascade output: {leaked_names}")
+                    from .redact import redact
+                    response_text = redact(response_text)
                     cost += cascade_result.get("cost", 0)
                     input_tokens += cascade_result.get("input_tokens", 0)
                     output_tokens += cascade_result.get("output_tokens", 0)
@@ -924,6 +932,15 @@ class GatewayRunner:
 
             response = result.get("text", "No response.")
             cost = result.get("cost", 0)
+
+            # Security: redact leaked credentials from cron output
+            if hasattr(self, "_leak_detector") and self._leak_detector:
+                response, leaks = self._leak_detector.redact_leaks(response)
+                if leaks:
+                    leaked_names = [l.secret_name for l in leaks]
+                    log.warning(f"Credential leak detected in cron output: {leaked_names}")
+            from .redact import redact
+            response = redact(response)
 
             if cost > 0:
                 self._log_cost("cron", job_id, cost)

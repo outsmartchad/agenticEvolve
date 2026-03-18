@@ -60,6 +60,10 @@ class RoutingStats:
         with self._lock:
             self.cascade_triggered += 1
 
+    def record_cascade_escalated(self) -> None:
+        with self._lock:
+            self.cascade_escalated += 1
+
     def to_dict(self) -> dict:
         with self._lock:
             return {
@@ -331,6 +335,7 @@ class SmartRouter:
 
     def score(self, text: str) -> tuple[int, dict[str, int]]:
         """Score a message across 13 dimensions. Returns (total, dimension_scores)."""
+        text = text or ""
         dimension_scores: dict[str, int] = {}
         for dim, method_name in self._DIMENSION_SCORERS.items():
             scorer = getattr(self, method_name)
@@ -362,6 +367,7 @@ class SmartRouter:
         2. Pattern overrides (greetings -> Flash, security audit -> Frontier)
         3. Score-based thresholds
         """
+        text = text or ""
         # 1. Explicit hints
         hint_match = _RE_HINT.search(text)
         if hint_match:
