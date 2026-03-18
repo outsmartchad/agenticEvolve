@@ -24,6 +24,7 @@ from croniter import croniter
 
 from .config import load_config, config_changed, reload_config
 from .agent import invoke_claude, get_today_cost, generate_title, consolidate_session
+from .provider_chain import build_provider_chain, walk_chain
 from .hooks import hooks
 from .plugin_loader import load_all_plugins
 from .background import BackgroundTaskManager
@@ -35,6 +36,7 @@ from .platforms.telegram import TelegramAdapter
 from .platforms.discord import DiscordAdapter
 from .platforms.discord_client import DiscordClientAdapter
 from .platforms.whatsapp import WhatsAppAdapter
+from .smart_router import SmartRouter
 
 log = logging.getLogger("agenticEvolve.gateway")
 
@@ -115,6 +117,8 @@ class GatewayRunner:
         self._jobs_mtime: float = 0.0       # mtime of last successful read
         self._cost_cap_backoff_until: Optional[datetime] = None  # hard backoff end time
         self._cost_cap_strike: int = 0
+        self._provider_chain = None  # initialized in start() after config load
+        self._smart_router: Optional[SmartRouter] = None
 
     # ── Channel context for served channels ───────────────────────
 
@@ -259,22 +263,32 @@ class GatewayRunner:
                                           user_id: str | None = None,
                                           enable_browser: bool = False,
                                           on_text_chunk=None) -> dict:
-        """Invoke Claude with streaming — text chunks emitted via on_text_chunk callback."""
+        """Invoke Claude with streaming — text chunks emitted via on_text_chunk callback.
+
+        Routes through the provider chain (Retry -> CircuitBreaker -> Cache -> Raw)
+        when available, falling back to direct invoke_claude_streaming otherwise.
+        """
         from .agent import invoke_claude_streaming
         loop = asyncio.get_running_loop()
 
-        # on_text_chunk needs to be called from the executor thread
-        # We use a thread-safe queue to bridge chunks to the async world
-        def _invoke():
-            return invoke_claude_streaming(
-                text, on_progress=lambda _: None,  # ignore tool progress for chat
-                model=model, history=history,
-                session_context=session_context,
-                config=cfg, user_id=user_id,
-                enable_browser=enable_browser,
-                on_text_chunk=on_text_chunk,
-                session_key=session_id,
-            )
+        # Build kwargs matching invoke_claude_streaming signature
+        invoke_kwargs = dict(
+            message=text,
+            on_progress=lambda _: None,  # ignore tool progress for chat
+            model=model, history=history,
+            session_context=session_context,
+            config=cfg, user_id=user_id,
+            enable_browser=enable_browser,
+            on_text_chunk=on_text_chunk,
+            session_key=session_id,
+        )
+
+        if self._provider_chain:
+            def _invoke():
+                return self._provider_chain.invoke(**invoke_kwargs)
+        else:
+            def _invoke():
+                return invoke_claude_streaming(**invoke_kwargs)
 
         return await loop.run_in_executor(None, _invoke)
 
@@ -464,7 +478,13 @@ class GatewayRunner:
                         session_context += f"\n\n{channel_kb}"
 
             # Model selection for served channels
-            if _is_served:
+            _cascade_enabled = False
+            _routing_tier = None
+            if _is_served and self._smart_router and self._smart_router.config.enabled:
+                model, _routing_tier, _cascade_enabled = self._smart_router.select_model(text, self.config)
+                log.info(f"Smart router: tier={_routing_tier.value} model={model} cascade={_cascade_enabled}")
+                self._smart_router.stats.record(_routing_tier)
+            elif _is_served:
                 if _needs_reasoning(text):
                     model = self.config.get("serve_reasoning_model", "opus")
                 else:
@@ -516,6 +536,34 @@ class GatewayRunner:
             images = result.get("images", [])
             if images:
                 self._pending_images[key] = images
+
+            # Smart router cascade: re-invoke with reasoning model if
+            # Sonnet response indicates uncertainty
+            if (_cascade_enabled and self._smart_router
+                    and self._smart_router.should_cascade(response_text)):
+                self._smart_router.stats.record_cascade_triggered()
+                reasoning_model = self.config.get("serve_reasoning_model",
+                                                   self.config.get("model", "sonnet"))
+                log.info(f"Smart router: cascade triggered, re-invoking with {reasoning_model}")
+                if _routing_tier:
+                    self._smart_router.stats.record(_routing_tier, cascaded=True)
+                try:
+                    cascade_result = await self._tracked_invoke(
+                        session_id, invoke_text, reasoning_model,
+                        history, session_context, cfg,
+                        user_id=user_id,
+                        enable_browser=_enable_browser,
+                    )
+                    response_text = cascade_result.get("text", response_text)
+                    cost += cascade_result.get("cost", 0)
+                    input_tokens += cascade_result.get("input_tokens", 0)
+                    output_tokens += cascade_result.get("output_tokens", 0)
+                    cascade_images = cascade_result.get("images", [])
+                    if cascade_images:
+                        images = cascade_images
+                        self._pending_images[key] = images
+                except Exception as _cascade_err:
+                    log.warning(f"Smart router: cascade re-invoke failed: {_cascade_err}")
 
             # NO_REPLY / HEARTBEAT_OK tokens (OpenClaw pattern)
             # Agent can choose not to reply in group chats
@@ -931,6 +979,26 @@ class GatewayRunner:
     async def start(self):
         self.config = load_config()
         log.info("Config loaded")
+
+        # Initialize smart router for per-message model selection
+        try:
+            self._smart_router = SmartRouter(self.config)
+            if self._smart_router.config.enabled:
+                log.info("Smart router: enabled (cascade=%s)", self._smart_router.config.cascade_enabled)
+            else:
+                log.info("Smart router: disabled by config")
+        except Exception as _sr_err:
+            log.warning(f"Smart router init failed: {_sr_err}")
+            self._smart_router = None
+
+        # Initialize provider chain (Retry → CircuitBreaker → Cache → Raw)
+        try:
+            from .agent import invoke_claude_streaming
+            self._provider_chain = build_provider_chain(
+                invoke_claude_streaming, self.config
+            )
+        except Exception as _pc_err:
+            log.warning(f"Provider chain init failed: {_pc_err}")
 
         # Initialize rate limiter now that config is loaded
         try:

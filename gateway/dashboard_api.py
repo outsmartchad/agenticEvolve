@@ -206,7 +206,7 @@ class DashboardServer:
 
             st = db_stats()
 
-            return _json_response({
+            data = {
                 "uptime_secs": round(uptime),
                 "platforms": platforms,
                 "active_sessions": len(self.runner._active_sessions),
@@ -217,7 +217,32 @@ class DashboardServer:
                 "model": self.runner.config.get("model", "sonnet"),
                 "daily_cost_cap": self.runner.config.get("daily_cost_cap", 5.0),
                 "weekly_cost_cap": self.runner.config.get("weekly_cost_cap", 25.0),
-            })
+            }
+
+            # Smart router stats
+            if hasattr(self.runner, '_smart_router') and self.runner._smart_router:
+                data["routing"] = self.runner._smart_router.stats.to_dict()
+
+            # Provider chain stats (Retry → CircuitBreaker → Cache)
+            if hasattr(self.runner, '_provider_chain') and self.runner._provider_chain:
+                try:
+                    from .provider_chain import walk_chain
+                    layers = walk_chain(self.runner._provider_chain)
+                    chain_data: dict = {}
+                    cache = layers.get("cache")
+                    if cache is not None:
+                        chain_data["cache_hits"] = cache.hits
+                        chain_data["cache_misses"] = cache.misses
+                    cb = layers.get("circuit_breaker")
+                    if cb is not None:
+                        chain_data["circuit_state"] = cb.state.value
+                        chain_data["circuit_failure_count"] = cb.failure_count
+                    if chain_data:
+                        data["provider_chain"] = chain_data
+                except Exception:
+                    pass
+
+            return _json_response(data)
         except Exception as e:
             log.error(f"Status endpoint error: {e}")
             return _error_response(str(e), status=500)
