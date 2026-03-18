@@ -429,7 +429,7 @@ class CommandSuggestions(Widget):
     CommandSuggestions {
         dock: bottom;
         height: auto;
-        max-height: 10;
+        max-height: 12;
         margin: 0 1 3 1;
         background: $surface;
         border: tall $accent;
@@ -451,17 +451,36 @@ class CommandSuggestions(Widget):
     selected_index: reactive[int] = reactive(0)
     _is_path_mode: bool = False  # True when showing filesystem paths
 
+    _VISIBLE_ROWS = 10  # max visible suggestions at a time
+
     def render(self) -> Text:
         text = Text()
+        total = len(self.suggestions)
+        if total == 0:
+            return text
+
+        # Compute visible window around selected index
+        vis = self._VISIBLE_ROWS
+        if total <= vis:
+            start, end = 0, total
+        else:
+            # Keep selected index roughly centered
+            half = vis // 2
+            start = max(0, self.selected_index - half)
+            end = start + vis
+            if end > total:
+                end = total
+                start = end - vis
+
         if self._is_path_mode:
-            # Path mode: show full path as main, dir name as hint
-            for i, (full_path, dir_name) in enumerate(self.suggestions[:7]):
+            if total > vis:
+                text.append(f"  ({total} items, ↑↓ to scroll)\n", style="dim italic")
+            for i in range(start, end):
+                full_path, dir_name = self.suggestions[i]
                 prefix = "▸ " if i == self.selected_index else "  "
                 if i == self.selected_index:
                     text.append(f"{prefix}", style="bold")
                     text.append(f"{dir_name:<30s}", style="bold green")
-                    # Show the full path as dim hint
-                    # Extract just the path part after the command
                     parts = full_path.split(None, 1)
                     if len(parts) > 1:
                         text.append(f" {parts[1]}", style="dim")
@@ -469,8 +488,8 @@ class CommandSuggestions(Widget):
                 else:
                     text.append(f"{prefix}{dir_name}\n", style="dim")
         else:
-            # Command mode: show command + description
-            for i, (cmd, desc) in enumerate(self.suggestions[:7]):
+            for i in range(start, end):
+                cmd, desc = self.suggestions[i]
                 prefix = "▸ " if i == self.selected_index else "  "
                 style = "bold" if i == self.selected_index else "dim"
                 text.append(f"{prefix}{cmd:16s} {desc}\n", style=style)
@@ -516,7 +535,7 @@ class CommandSuggestions(Widget):
                     (f"{cmd} {e}", e.name + ("/" if e.is_dir() else ""))
                     for e in entries
                     if e.is_dir() and not e.name.startswith(".")
-                ][:8]
+                ]
             else:
                 p = Path(partial).expanduser()
                 if p.is_dir() and partial.endswith("/"):
@@ -526,7 +545,7 @@ class CommandSuggestions(Widget):
                         (f"{cmd} {e}", e.name + ("/" if e.is_dir() else ""))
                         for e in entries
                         if e.is_dir() and not e.name.startswith(".")
-                    ][:8]
+                    ]
                 else:
                     # Partial name — complete in parent
                     parent = p.parent
@@ -538,7 +557,7 @@ class CommandSuggestions(Widget):
                             for e in entries
                             if e.is_dir() and not e.name.startswith(".")
                             and e.name.lower().startswith(stem.lower())
-                        ][:8]
+                        ]
                     else:
                         matches = []
 
