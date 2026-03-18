@@ -595,26 +595,31 @@ class ChatInput(Input):
         if not suggestions.suggestions:
             return
 
-        if event.key == "tab":
+        if event.key in ("tab", "enter") and suggestions._is_path_mode:
             selected = suggestions.get_selected()
             if selected:
-                # For path completions, add trailing / for dirs, space for final selection
-                if selected.startswith(("/workspace ", "/ws ", "/cwd ")):
-                    # Check if selected path is a directory
-                    parts = selected.split(None, 1)
-                    if len(parts) > 1:
-                        p = Path(parts[1]).expanduser()
-                        if p.is_dir():
-                            self.value = selected + "/"
-                        else:
-                            self.value = selected + " "
-                    else:
-                        self.value = selected + " "
-                else:
-                    self.value = selected + " "
+                parts = selected.split(None, 1)
+                if len(parts) > 1:
+                    p = Path(parts[1]).expanduser()
+                    if p.is_dir():
+                        # Drill into directory — show its contents
+                        self.value = selected + "/"
+                        self.cursor_position = len(self.value)
+                        suggestions.update_suggestions(self.value.lstrip())
+                        event.prevent_default()
+                        event.stop()
+                        return
+            # Not a directory or no selection — let Enter fall through to submit
+            if event.key == "tab":
+                event.prevent_default()
+                event.stop()
+            return
+        elif event.key == "tab":
+            selected = suggestions.get_selected()
+            if selected:
+                self.value = selected + " "
                 self.cursor_position = len(self.value)
-                # Re-trigger suggestions for path drilling
-                suggestions.update_suggestions(self.value.strip())
+                suggestions.display = False
             event.prevent_default()
             event.stop()
         elif event.key == "up":
