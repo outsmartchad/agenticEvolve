@@ -459,14 +459,73 @@ class CommandSuggestions(Widget):
         return text
 
     def update_suggestions(self, prefix: str) -> None:
-        if not prefix.startswith("/") or " " in prefix:
+        if not prefix.startswith("/"):
             self.suggestions = []
             self.display = False
             return
+
+        # Path completion for /workspace, /ws, /cwd
+        if " " in prefix:
+            parts = prefix.split(None, 1)
+            cmd = parts[0].lower()
+            if cmd in ("/workspace", "/ws", "/cwd") and len(parts) > 1:
+                self._update_path_suggestions(cmd, parts[1])
+                return
+            self.suggestions = []
+            self.display = False
+            return
+
         matches = [(cmd, desc) for cmd, desc in SLASH_COMMANDS if cmd.startswith(prefix)]
         self.suggestions = matches
         self.selected_index = 0
         self.display = bool(matches) and prefix != matches[0][0] if len(matches) == 1 else bool(matches)
+
+    def _update_path_suggestions(self, cmd: str, partial: str) -> None:
+        """Generate filesystem path suggestions for /workspace."""
+        try:
+            partial = partial.strip()
+            if not partial:
+                # Default: show ~/Desktop/projects contents
+                base = Path.home() / "Desktop" / "projects"
+                if not base.exists():
+                    base = Path.home()
+                entries = sorted(base.iterdir())
+                matches = [
+                    (f"{cmd} {e}", e.name + ("/" if e.is_dir() else ""))
+                    for e in entries
+                    if e.is_dir() and not e.name.startswith(".")
+                ][:8]
+            else:
+                p = Path(partial).expanduser()
+                if p.is_dir() and partial.endswith("/"):
+                    # Inside a directory — list contents
+                    entries = sorted(p.iterdir())
+                    matches = [
+                        (f"{cmd} {e}", e.name + ("/" if e.is_dir() else ""))
+                        for e in entries
+                        if e.is_dir() and not e.name.startswith(".")
+                    ][:8]
+                else:
+                    # Partial name — complete in parent
+                    parent = p.parent
+                    stem = p.name
+                    if parent.exists():
+                        entries = sorted(parent.iterdir())
+                        matches = [
+                            (f"{cmd} {e}", e.name + ("/" if e.is_dir() else ""))
+                            for e in entries
+                            if e.is_dir() and not e.name.startswith(".")
+                            and e.name.lower().startswith(stem.lower())
+                        ][:8]
+                    else:
+                        matches = []
+
+            self.suggestions = matches
+            self.selected_index = 0
+            self.display = bool(matches)
+        except Exception:
+            self.suggestions = []
+            self.display = False
 
     def move_selection(self, delta: int) -> None:
         if self.suggestions:
@@ -515,9 +574,23 @@ class ChatInput(Input):
         if event.key == "tab":
             selected = suggestions.get_selected()
             if selected:
-                self.value = selected + " "
+                # For path completions, add trailing / for dirs, space for final selection
+                if selected.startswith(("/workspace ", "/ws ", "/cwd ")):
+                    # Check if selected path is a directory
+                    parts = selected.split(None, 1)
+                    if len(parts) > 1:
+                        p = Path(parts[1]).expanduser()
+                        if p.is_dir():
+                            self.value = selected + "/"
+                        else:
+                            self.value = selected + " "
+                    else:
+                        self.value = selected + " "
+                else:
+                    self.value = selected + " "
                 self.cursor_position = len(self.value)
-                suggestions.display = False
+                # Re-trigger suggestions for path drilling
+                suggestions.update_suggestions(self.value.strip())
             event.prevent_default()
             event.stop()
         elif event.key == "up":
