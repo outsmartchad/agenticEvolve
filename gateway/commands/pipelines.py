@@ -358,6 +358,109 @@ class PipelineMixin:
             await self.app.bot.send_message(chat_id=int(chat_id), text="\n".join(lines))
             return
 
+        # --- Background task path (non-blocking) ---
+        bgm = self._gateway._background_mgr if self._gateway else None
+        if bgm:
+            # Capture variables needed by background closures
+            _target = target
+            _short_target = short_target
+            _learn_prompt = learn_prompt
+            _model = model
+            _is_github = is_github
+            _is_url = is_url
+
+            def _learn_invoke(task):
+                """Blocking function that runs in background thread."""
+                from ..agent import invoke_claude_streaming
+                result = invoke_claude_streaming(
+                    _learn_prompt,
+                    on_progress=on_progress_sync,
+                    model=_model,
+                    session_context=f"[Learn: {_target[:50]}]",
+                )
+                task.result = result
+                return result
+
+            async def _learn_complete(task):
+                """Deliver results to Telegram when done."""
+                stop_reporter()
+                if task.status == "failed":
+                    await self.app.bot.send_message(
+                        chat_id=int(chat_id), text=f"Learn failed: {task.error}")
+                    return
+
+                result = task.result or {}
+                response = result.get("text", "No output.")
+                cost = result.get("cost", 0)
+                tools_used = get_tool_count()
+
+                header = f"*Learn: {_target}*\n({tools_used} steps, ${cost:.2f})\n\n"
+                full = header + response
+                for i in range(0, len(full), 4000):
+                    chunk = full[i:i+4000]
+                    try:
+                        await self.app.bot.send_message(
+                            chat_id=int(chat_id), text=chunk, parse_mode="Markdown")
+                    except Exception:
+                        await self.app.bot.send_message(
+                            chat_id=int(chat_id), text=chunk)
+
+                if cost > 0 and self._gateway:
+                    self._gateway._log_cost("telegram", "learn", cost)
+
+                # Auto-sync to repo
+                await self._auto_sync_to_repo("learn")
+
+                # Store learning in DB
+                try:
+                    from ..session_db import add_learning
+                    learning_data = {"verdict": "UNKNOWN", "patterns": "", "operational_benefit": "", "skill_created": ""}
+                    json_start = response.rfind('```json')
+                    json_end = response.rfind('```', json_start + 7) if json_start >= 0 else -1
+                    if json_start >= 0 and json_end > json_start:
+                        json_str = response[json_start + 7:json_end].strip()
+                        try:
+                            learning_data = json.loads(json_str)
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+
+                    target_type = "github" if _is_github else ("url" if _is_url else "topic")
+                    add_learning(
+                        target=_target,
+                        target_type=target_type,
+                        verdict=learning_data.get("verdict", "UNKNOWN"),
+                        patterns=learning_data.get("patterns", ""),
+                        operational_benefit=learning_data.get("operational_benefit", ""),
+                        skill_created=learning_data.get("skill_created", ""),
+                        full_report=response[:8000],
+                        cost=cost,
+                    )
+                    log.info(f"[learn] Stored learning: {_target} -> {learning_data.get('verdict', '?')}")
+                except Exception as e:
+                    log.warning(f"[learn] Failed to store learning: {e}")
+
+            start_reporter()
+            task_id = await bgm.submit(
+                session_key=f"learn:{chat_id}",
+                platform="telegram",
+                chat_id=chat_id,
+                user_id=user_id,
+                description=f"Learn: {_short_target}",
+                invoke_fn=_learn_invoke,
+                on_complete=_learn_complete,
+            )
+
+            if task_id:
+                await update.message.reply_text(
+                    f"Learning about {_short_target} in background (task {task_id}).\n"
+                    "I'll send the full report when done (~3-6 min).")
+                return
+            else:
+                # At capacity — fall through to blocking execution
+                stop_reporter()
+                await update.message.reply_text("Background queue full. Running synchronously...")
+
+        # --- Fallback: blocking execution (no BackgroundTaskManager or at capacity) ---
         start_reporter()
         try:
             from ..agent import invoke_claude_streaming

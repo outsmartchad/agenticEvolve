@@ -11,12 +11,14 @@ Stages:
 Skills go to ~/.agenticEvolve/skills-queue/<name>/ and require
 human approval via /approve <name> before installing to ~/.claude/skills/.
 """
+import asyncio
 import hashlib
 import json
 import logging
 import os
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -366,6 +368,11 @@ class EvolveOrchestrator:
         - Progressive disclosure (SKILL.md < 500 lines, heavy docs in references/)
         - Explain the "why" instead of rigid MUSTs
         - Source attribution at bottom
+
+        Phase 6a: Fires subagent_spawned / subagent_ended hooks for each
+        build candidate, giving hook listeners observability into the BUILD
+        stage. Full SubagentOrchestrator.run_parallel() integration requires
+        making stage_build async (larger refactor tracked for a future phase).
         """
         candidates = analyze_result.get("candidates", [])
         if not candidates:
@@ -378,11 +385,30 @@ class EvolveOrchestrator:
         candidates = candidates[:3]
         built: list[dict] = []
         _build_semaphore = threading.BoundedSemaphore(3)
+        _build_cost_lock = threading.Lock()
+        _build_total_cost: list[float] = [0.0]  # mutable container for thread-safe accumulation
 
         QUEUE_DIR.mkdir(parents=True, exist_ok=True)
 
+        def _fire_hook(coro):
+            """Fire an async hook from a sync/thread context. Best-effort."""
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+                else:
+                    loop.run_until_complete(coro)
+            except RuntimeError:
+                # No event loop available — skip hook silently
+                pass
+            except Exception:
+                pass
+
         def _build_candidate(candidate: dict) -> dict | None:
             """Build a single skill candidate. Returns built-entry dict or None."""
+            from .hooks import hooks
+            from .subagent import SubagentTask
+
             name = candidate.get("name", "unknown").lower().replace(" ", "-")
             summary = candidate.get("summary", "")
             skill_idea = candidate.get("skill_idea", summary)
@@ -397,6 +423,13 @@ class EvolveOrchestrator:
             if (SKILLS_DIR / name / "SKILL.md").exists():
                 self._report(f"  {name}: already installed, skipping")
                 return None
+
+            # Create a SubagentTask for tracking metadata (hooks, cost, timing)
+            task = SubagentTask(
+                name=name,
+                model=self.model,
+                use_workspace=True,
+            )
 
             prompt = (
                 f"You are the BUILDER agent in the agenticEvolve pipeline.\n\n"
@@ -445,14 +478,41 @@ class EvolveOrchestrator:
                 f"Create ONLY the SKILL.md file (and references/ if needed). Nothing else."
             )
 
+            # Fire subagent_spawned hook
+            task.status = "running"
+            start = time.monotonic()
+            _fire_hook(hooks.fire_void(
+                "subagent_spawned",
+                task_id=task.id, model=self.model, stage=f"BUILD ({name})",
+            ))
+
             with _build_semaphore:
-                self._invoke(prompt, f"BUILD ({name})", use_workspace=True)
+                result = self._invoke(prompt, f"BUILD ({name})", use_workspace=True)
+
+            elapsed = time.monotonic() - start
+            cost = result.get("cost", 0.0) if isinstance(result, dict) else 0.0
+
+            # Update task metadata
+            task.elapsed = elapsed
+            task.cost = cost
+            with _build_cost_lock:
+                _build_total_cost[0] += cost
 
             if (skill_dir / "SKILL.md").exists():
-                self._report(f"  Built: {name} (score {score})")
+                task.status = "done"
+                _fire_hook(hooks.fire_void(
+                    "subagent_ended",
+                    task_id=task.id, outcome="done", cost=cost,
+                ))
+                self._report(f"  Built: {name} (score {score}, ${cost:.4f}, {elapsed:.1f}s)")
                 return {"name": name, "summary": summary, "score": score,
-                        "path": str(skill_dir / "SKILL.md")}
+                        "path": str(skill_dir / "SKILL.md"), "cost": cost}
             else:
+                task.status = "failed"
+                _fire_hook(hooks.fire_void(
+                    "subagent_ended",
+                    task_id=task.id, outcome="failed", cost=cost,
+                ))
                 self._report(f"  Failed to build: {name}")
                 return None
 
@@ -469,6 +529,8 @@ class EvolveOrchestrator:
                     log.error(f"BUILD ({name}) raised: {e}")
                     self._report(f"  Error building {name}: {e}")
 
+        self._report(f"  BUILD batch complete: {len(built)}/{len(candidates)} succeeded, "
+                     f"total cost=${_build_total_cost[0]:.4f}")
         return {"built": built}
 
     # ── Stage 4: Review ──────────────────────────────────────────
