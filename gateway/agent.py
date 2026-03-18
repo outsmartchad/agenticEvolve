@@ -324,6 +324,35 @@ def build_system_prompt(config: dict | None = None,
         if risk_prompt:
             parts.append(risk_prompt)
 
+    # Command safety rules — injected into every invocation
+    try:
+        from .exec_allowlist import DEFAULT_DENIED_PATTERNS
+        deny_lines = [
+            "# COMMAND SAFETY (hard-enforced — violations terminate the session)",
+            "NEVER run these commands or patterns. The system will kill your process if detected:",
+        ]
+        _deny_labels = {
+            r"rm\s+-rf\s+/\s*$": "rm -rf /",
+            r"rm\s+-rf\s+/\*": "rm -rf /*",
+            r"rm\s+-rf\s+~\s*$": "rm -rf ~",
+            r"mkfs\.": "mkfs.* (format disk)",
+            r"dd\s+if=.*of=/dev/": "dd to disk device",
+            r":\(\)\{.*\}": "fork bomb",
+            r"curl.*\|\s*sh": "curl | sh",
+            r"curl.*\|\s*bash": "curl | bash",
+            r"wget.*\|\s*sh": "wget | sh",
+            r"eval.*base64": "eval base64 payload",
+            r"python.*-c.*exec\(.*base64": "python exec base64",
+            r">\s*/etc/": "overwrite system config",
+            r">\s*/dev/": "write to devices",
+        }
+        for pat in DEFAULT_DENIED_PATTERNS:
+            label = _deny_labels.get(pat, pat)
+            deny_lines.append(f"- {label}")
+        parts.append("\n".join(deny_lines))
+    except Exception:
+        pass
+
     # Context mode overlay — appended last so it takes precedence as a constraint layer.
     # Overlays tighten behaviour for specific pipeline stages without touching SOUL.md.
     if context_mode:
@@ -918,6 +947,37 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                                 tool_name = block.get("name", "unknown")
                                 tool_input = block.get("input", {})
                                 tool_count += 1
+
+                                # HARD GUARD: Check Bash commands against denylist
+                                # Kill the process immediately if a destructive command is detected
+                                if tool_name == "Bash":
+                                    _bash_cmd = tool_input.get("command", "")
+                                    try:
+                                        from .exec_allowlist import ExecAllowlist
+                                        _al = ExecAllowlist()
+                                        _eval = _al._check_denylist(_bash_cmd)
+                                        if _eval:
+                                            log.critical(
+                                                f"BLOCKED destructive command: {_bash_cmd[:200]} "
+                                                f"(matched: {_eval})"
+                                            )
+                                            _terminate_proc(proc)
+                                            return {
+                                                "text": f"[BLOCKED] Destructive command detected and terminated: "
+                                                        f"`{_bash_cmd[:100]}` (matched denylist pattern: {_eval})",
+                                                "cost": cost,
+                                                "input_tokens": input_tokens,
+                                                "output_tokens": output_tokens,
+                                                "tool_count": tool_count,
+                                                "blocked": True,
+                                            }
+                                    except Exception as _al_err:
+                                        log.debug(f"Allowlist check failed (non-fatal): {_al_err}")
+
+                                # Audit log all Bash commands
+                                if tool_name == "Bash":
+                                    _bash_audit = tool_input.get("command", "")
+                                    log.info(f"BASH_AUDIT: {_bash_audit[:500]}")
 
                                 # Build a human-readable progress line
                                 if tool_name == "Bash":
