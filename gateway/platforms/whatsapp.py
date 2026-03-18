@@ -37,6 +37,23 @@ class WhatsAppAdapter(BasePlatformAdapter):
         self.process = None
         self._reader_task = None
         self._breaker = CircuitBreaker("whatsapp", fail_threshold=5, recovery_secs=60)
+        # Concurrency limiter for parallel message processing (Phase 4)
+        self._msg_semaphore = asyncio.Semaphore(5)
+
+    async def _handle_message_safe(self, platform: str, chat_id: str,
+                                    user_id: str, text: str,
+                                    msg_key: dict | None = None,
+                                    **kwargs):
+        """Handle a message in a background task with error handling and concurrency limit."""
+        async with self._msg_semaphore:
+            try:
+                response = await self.on_message(platform, chat_id, user_id, text, **kwargs)
+                if response:
+                    await self.send(chat_id, response, reply_to=msg_key)
+                    import time as _time
+                    self._last_reply_ts[chat_id] = _time.monotonic()
+            except Exception as e:
+                log.error(f"Error handling WhatsApp message from {chat_id}: {e}", exc_info=True)
 
     def _is_allowed(self, user_id: str) -> bool:
         # Deny-by-default (ZeroClaw pattern): empty allowlist = deny all
@@ -368,10 +385,11 @@ class WhatsAppAdapter(BasePlatformAdapter):
                             self._debouncer.enqueue(debounce_key, invoke_text, _debounced_send)
                             continue  # don't invoke immediately
 
-                        response = await self.on_message("whatsapp", chat_id, user_id, invoke_text)
-                        if response:
-                            await self.send(chat_id, response, reply_to=msg_key)
-                            self._last_reply_ts[chat_id] = _time.monotonic()
+                        asyncio.create_task(
+                            self._handle_message_safe(
+                                "whatsapp", chat_id, user_id, invoke_text,
+                                msg_key=msg_key)
+                        )
                     except Exception as e:
                         log.error(f"WhatsApp handler error: {e}")
 

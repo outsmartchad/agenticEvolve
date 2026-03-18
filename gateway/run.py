@@ -37,6 +37,9 @@ from .platforms.discord import DiscordAdapter
 from .platforms.discord_client import DiscordClientAdapter
 from .platforms.whatsapp import WhatsAppAdapter
 from .smart_router import SmartRouter
+from .event_bus import event_bus
+from .event_triggers import register_default_triggers
+from .heartbeat import HeartbeatRunner
 
 log = logging.getLogger("agenticEvolve.gateway")
 
@@ -119,6 +122,10 @@ class GatewayRunner:
         self._cost_cap_strike: int = 0
         self._provider_chain = None  # initialized in start() after config load
         self._smart_router: Optional[SmartRouter] = None
+        self._leak_detector = None  # initialized in start() after config load
+        # Phase 4: event bus error streak tracking + heartbeat
+        self._consecutive_errors: int = 0
+        self._heartbeat: Optional[HeartbeatRunner] = None
 
     # ── Channel context for served channels ───────────────────────
 
@@ -472,9 +479,11 @@ class GatewayRunner:
                     if _sandbox_available:
                         from .sandbox import build_sandbox_prompt
                         session_context += build_sandbox_prompt(_sandbox_container, _sandbox_output_dir)
-                    # Channel-specific knowledge injection
+                    # Channel-specific knowledge injection (raw external data — sanitize)
                     channel_kb = load_channel_knowledge().get(str(chat_id))
                     if channel_kb:
+                        from .content_sanitizer import wrap_external
+                        channel_kb = wrap_external(channel_kb, source="channel_knowledge", include_warning=False)
                         session_context += f"\n\n{channel_kb}"
 
             # Model selection for served channels
@@ -528,6 +537,16 @@ class GatewayRunner:
                 result = await fut
             except asyncio.CancelledError:
                 return "Request cancelled during shutdown."
+            except Exception as _invoke_err:
+                # Phase 4: Track consecutive errors for event bus
+                self._consecutive_errors += 1
+                if self._consecutive_errors >= 3:
+                    try:
+                        await event_bus.emit(
+                            "error:streak", count=self._consecutive_errors)
+                    except Exception:
+                        pass
+                raise _invoke_err
 
             response_text = result.get("text", "No response.")
             cost = result.get("cost", 0)
@@ -536,6 +555,17 @@ class GatewayRunner:
             images = result.get("images", [])
             if images:
                 self._pending_images[key] = images
+
+            # Security: redact leaked credentials from agent output
+            if hasattr(self, "_leak_detector") and self._leak_detector:
+                response_text, leaks = self._leak_detector.redact_leaks(response_text)
+                if leaks:
+                    leaked_names = [l.secret_name for l in leaks]
+                    log.warning(f"Credential leak detected in output: {leaked_names}")
+
+            # Security: pattern-based redaction of secrets in agent output
+            from .redact import redact
+            response_text = redact(response_text)
 
             # Smart router cascade: re-invoke with reasoning model if
             # Sonnet response indicates uncertainty
@@ -636,10 +666,34 @@ class GatewayRunner:
             await hooks.fire_void("llm_output",
                                   session_id=session_id, text=response_text, cost=cost)
 
+            # Fire message_sending hook (modifying — can alter response text)
+            if hooks.has_hooks("message_sending"):
+                response_text = await hooks.fire_modifying(
+                    "message_sending", response_text,
+                )
+
             # Log cost
             if cost > 0:
                 self._log_cost(platform, session_id, cost)
                 log.info(f"Response sent ({platform}:{chat_id}) cost=${cost:.4f}")
+
+                # Phase 4: Emit cost threshold event
+                try:
+                    daily_cap = self.config.get("daily_cost_cap", 5.0)
+                    today_cost = get_today_cost()
+                    if daily_cap > 0:
+                        pct = today_cost / daily_cap
+                        if pct >= 0.8:
+                            await event_bus.emit(
+                                "cost:threshold",
+                                pct=pct, today_cost=today_cost,
+                                daily_cap=daily_cap,
+                            )
+                except Exception:
+                    pass
+
+            # Phase 4: Reset error streak on success
+            self._consecutive_errors = 0
 
             # Emit diagnostic: message completed
             try:
@@ -1000,6 +1054,18 @@ class GatewayRunner:
         except Exception as _pc_err:
             log.warning(f"Provider chain init failed: {_pc_err}")
 
+        # Initialize credential leak detector
+        try:
+            from .credential_guard import LeakDetector
+            env_path = EXODIR / ".env"
+            if not env_path.exists():
+                # Try project-level .env
+                env_path = Path(__file__).resolve().parent.parent / ".env"
+            self._leak_detector = LeakDetector(env_path=env_path if env_path.exists() else None)
+            log.info(f"Credential guard: tracking {self._leak_detector.secret_count} secrets")
+        except Exception as _lg_err:
+            log.warning(f"Credential guard init failed: {_lg_err}")
+
         # Initialize rate limiter now that config is loaded
         try:
             from .rate_limit import RateLimiter
@@ -1050,6 +1116,31 @@ class GatewayRunner:
         except Exception as _diag_err:
             log.warning(f"Diagnostic logging init failed: {_diag_err}")
 
+        # Phase 4: Register default event triggers
+        try:
+            register_default_triggers()
+        except Exception as _et_err:
+            log.warning(f"Event trigger registration failed: {_et_err}")
+
+        # Phase 4: Start heartbeat system
+        try:
+            hb_cfg = self.config.get("heartbeat", {})
+            # Build notify function that sends to admin Telegram chat
+            async def _heartbeat_notify(msg: str):
+                tg = self._adapter_map.get("telegram")
+                admin_chat = self.config.get("platforms", {}).get(
+                    "telegram", {}).get("allowed_users", [None])[0]
+                if tg and admin_chat and hasattr(tg, "send"):
+                    try:
+                        await tg.send(str(admin_chat), msg)
+                    except Exception:
+                        pass
+
+            self._heartbeat = HeartbeatRunner(hb_cfg, notify_fn=_heartbeat_notify)
+            await self._heartbeat.start()
+        except Exception as _hb_err:
+            log.warning(f"Heartbeat init failed: {_hb_err}")
+
         # Start background tasks
         self._session_cleanup_task = asyncio.create_task(self._session_cleanup_loop())
         self._cron_task = asyncio.create_task(self._cron_loop())
@@ -1090,6 +1181,13 @@ class GatewayRunner:
         if hasattr(self, '_dashboard') and self._dashboard:
             try:
                 await self._dashboard.stop()
+            except Exception:
+                pass
+
+        # Stop heartbeat
+        if self._heartbeat:
+            try:
+                await self._heartbeat.stop()
             except Exception:
                 pass
 

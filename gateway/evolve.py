@@ -101,6 +101,24 @@ class EvolveOrchestrator:
         # Pass context_mode if a matching overlay exists for this stage
         context_mode = stage_key.lower()
 
+        # Phase 4: Fire before_pipeline_stage hook (sync-safe)
+        try:
+            from .hooks import hooks as _hooks
+            import asyncio as _aio
+            try:
+                loop = _aio.get_running_loop()
+                # Already in async context — schedule as task
+                _fut = _aio.run_coroutine_threadsafe(
+                    _hooks.fire_void("before_pipeline_stage",
+                                     pipeline="evolve", stage=stage_key,
+                                     prompt=prompt[:200]),
+                    loop)
+                _fut.result(timeout=2)
+            except RuntimeError:
+                pass  # No event loop — skip hook
+        except Exception:
+            pass
+
         result = invoke_claude_streaming(
             prompt,
             on_progress=self.on_progress,
@@ -113,6 +131,24 @@ class EvolveOrchestrator:
 
         cost = result.get("cost", 0)
         self._cost_total += cost
+
+        # Phase 4: Fire after_pipeline_stage hook (sync-safe)
+        try:
+            from .hooks import hooks as _hooks2
+            import asyncio as _aio2
+            try:
+                loop = _aio2.get_running_loop()
+                _fut2 = _aio2.run_coroutine_threadsafe(
+                    _hooks2.fire_void("after_pipeline_stage",
+                                      pipeline="evolve", stage=stage_key,
+                                      result=result.get("text", "")[:200],
+                                      cost=cost),
+                    loop)
+                _fut2.result(timeout=2)
+            except RuntimeError:
+                pass
+        except Exception:
+            pass
 
         # Audit: record every Claude invocation with outcome
         try:
