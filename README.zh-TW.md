@@ -341,6 +341,45 @@ curl -L -o ~/.agenticEvolve/models/ggml-small.bin \
 
 ## 最近更新
 
+### v2.7 — IronClaw 採納（第 1-6 階段）
+
+**第一階段：智慧模型路由**
+- 13 維正規表示式複雜度評分器（程式碼模式、對話深度、多步推理等）
+- 按訊息自動 Sonnet/Opus 路由——每天節省 $10-20 API 開銷
+- 級聯偵測：Sonnet 回覆不確定時，自動用推理模型重新呼叫
+
+**第二階段：提供者鏈**
+- Retry → CircuitBreaker → Cache 裝飾器模式（IronClaw 的提供者鏈架構）
+- 自動重試，搭配指數退避
+- 斷路器防止級聯故障
+- 回應快取，避免重複查詢
+
+**第三階段：安全強化**
+- `credential_guard.py`：LeakDetector 掃描 .env 密鑰（原始、base64、URL 編碼）
+- 雙層輸出脫敏（credential_guard + redact.py）
+- 內容消毒器接入所有平台（此前僅 WhatsApp）
+- 沙箱拒絕模式注入提示詞
+
+**第四階段：可用性升級**
+- WhatsApp 訊息並行處理（從序列改為 `Semaphore(5)`）
+- 事件匯流排（發佈/訂閱），內建預設觸發器（費用警報、連續錯誤、重連）
+- 心跳健康監控，支援自動停用通知
+- 全部 19 個鉤子現已接入（此前有 5 個未生效）
+
+**第五階段：記憶升級**
+- 透過 sentence-transformers 實現向量嵌入（all-MiniLM-L6-v2，本地執行，無 API 呼叫）
+- 混合搜尋：FTS5 + 向量嵌入 + RRF 融合排序
+- LLM 摘要用於上下文壓縮（取代截斷）
+- 記憶整合：超出限制時透過 Sonnet 自動精簡 MEMORY.md
+- 記憶儀表板頁面，支援搜尋、統計、嵌入狀態
+
+**第六階段：自我擴展增強**
+- SubagentOrchestrator 接入 evolve BUILD 階段（可觀測性）
+- `skill_metrics` 表：追蹤技能用量、評分和過期技能
+- 背景 `/learn`：透過 BackgroundTaskManager 非阻塞執行
+
+**統計：** 822 個測試通過（此前約 700 個）。新增 10 個模組。智慧路由預計每天節省 $10-20。
+
 ### v2.6 — 安全、可觀測性與平台對齊
 - **內容消毒器**：提示注入防禦，使用隨機化邊界標記、Unicode 同形字摺疊（改編自 OpenClaw）
 - **日誌脫敏**：17 個正規表示式模式自動剝離所有日誌輸出中的 API 金鑰、權杖、PEM 區塊

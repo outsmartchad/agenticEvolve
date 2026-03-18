@@ -342,6 +342,45 @@ Managed via `/loop`, `/loops`, `/unloop`, `/pause`, `/unpause`. Config in `cron/
 
 ## Recent Changes
 
+### v2.7 — IronClaw Adoption (Phases 1-6)
+
+**Phase 1: Smart Model Routing**
+- 13-dimension regex complexity scorer (code patterns, conversation depth, multi-step reasoning, etc.)
+- Automatic Sonnet/Opus routing per message — saves $10-20/day on API costs
+- Cascade detection: re-invoke with reasoning model if Sonnet shows uncertainty
+
+**Phase 2: Provider Chain**
+- Retry → CircuitBreaker → Cache decorator pattern (IronClaw's provider chain architecture)
+- Automatic retries with exponential backoff
+- Circuit breaker prevents cascade failures
+- Response cache for repeated queries
+
+**Phase 3: Security Hardening**
+- `credential_guard.py`: LeakDetector scans .env secrets (raw, base64, URL-encoded)
+- Two-layer output redaction (credential_guard + redact.py)
+- Content sanitizer wired for all platforms (was only WhatsApp before)
+- Sandbox deny patterns injected into prompt
+
+**Phase 4: Availability Upgrades**
+- Parallel WhatsApp message handling (was serial, now `Semaphore(5)`)
+- Event bus (pub/sub) with default triggers (cost alerts, error streaks, reconnect)
+- Heartbeat health monitoring with auto-disable notifications
+- All 19 hooks now wired (5 were previously dead)
+
+**Phase 5: Memory Upgrades**
+- Vector embeddings via sentence-transformers (all-MiniLM-L6-v2, local, no API calls)
+- Hybrid search: FTS5 + embedding + RRF fusion ranking
+- LLM summarization for context compaction (replaces truncation)
+- Memory consolidation: auto-prune MEMORY.md via Sonnet when over limit
+- Memory dashboard page with search, stats, embedding status
+
+**Phase 6: Self-Expanding Enhancement**
+- SubagentOrchestrator hooks into evolve BUILD stage (observability)
+- `skill_metrics` table: track usage, ratings, stale skills
+- Background `/learn`: non-blocking execution via BackgroundTaskManager
+
+**Stats:** 822 tests passing (up from ~700). 10 new modules. Estimated savings: $10-20/day from smart routing.
+
 ### v2.6 — Security, Observability & Platform Parity
 - **Content Sanitizer**: Prompt injection defense with randomized boundary markers, Unicode homoglyph folding (adapted from OpenClaw)
 - **Log Redaction**: 17 regex patterns auto-strip API keys, tokens, PEM blocks from all log output
