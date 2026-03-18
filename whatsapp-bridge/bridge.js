@@ -34,6 +34,7 @@ const AUTH_DIR = path.join(__dirname, "auth");
 const logger = pino({ level: "silent" }); // quiet baileys internal logs
 
 let sock = null;
+let isReconnecting = false;
 
 // ── LID ↔ Phone JID resolution ─────────────────────────────────
 // Baileys v7 may deliver DM messages under a LID JID (@lid) instead of
@@ -116,6 +117,13 @@ async function startBridge() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
 
+  // Clean up old socket to prevent listener accumulation on reconnect
+  if (sock) {
+    try {
+      sock.ev.removeAllListeners();
+    } catch (_) {}
+  }
+
   sock = makeWASocket({
     version,
     logger,
@@ -151,9 +159,12 @@ async function startBridge() {
         }`,
       });
 
-      if (shouldReconnect) {
-        setTimeout(startBridge, 3000);
-      } else {
+      if (shouldReconnect && !isReconnecting) {
+        isReconnecting = true;
+        setTimeout(() => {
+          startBridge().finally(() => { isReconnecting = false; });
+        }, 3000);
+      } else if (!shouldReconnect) {
         process.exit(1);
       }
     }
