@@ -219,6 +219,10 @@ class DiscordClientAdapter(BasePlatformAdapter):
                         last_msg = pending[-1][0]
                         log.info(f"Discord batch ({len(pending)} msgs) in {channel_id}")
 
+                        # Wrap served group messages with content sanitizer
+                        from ..content_sanitizer import wrap_platform_message
+                        combined = wrap_platform_message(combined, "discord", sender="batch", is_served=True)
+
                         try:
                             response = await self.on_message(
                                 "discord", channel_id, pending[-1][1], combined
@@ -234,9 +238,15 @@ class DiscordClientAdapter(BasePlatformAdapter):
                                 f"Discord message from {msg['author'].get('username')} "
                                 f"in {channel_id}: {text[:50]}"
                             )
+                            # Wrap served channel messages with content sanitizer
+                            invoke_text = text
+                            if is_served:
+                                from ..content_sanitizer import wrap_platform_message
+                                sender_name = msg.get("author", {}).get("username", "?")
+                                invoke_text = wrap_platform_message(text, "discord", sender=sender_name, is_served=True)
                             try:
                                 response = await self.on_message(
-                                    "discord", channel_id, author_id, text
+                                    "discord", channel_id, author_id, invoke_text
                                 )
                                 if response:
                                     await self.send(channel_id, response, reply_to=msg["id"])

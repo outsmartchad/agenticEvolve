@@ -331,6 +331,37 @@ def sandbox_status() -> dict:
 
 def build_sandbox_prompt(container_name: str, output_dir: str) -> str:
     """Build the system prompt section that instructs Claude how to use the sandbox."""
+    # Build denylist instructions from exec_allowlist
+    denylist_block = ""
+    try:
+        from .exec_allowlist import DEFAULT_DENIED_PATTERNS
+        if DEFAULT_DENIED_PATTERNS:
+            deny_examples = []
+            _deny_descriptions = {
+                r"rm\s+-rf\s+/\s*$": "rm -rf /",
+                r"rm\s+-rf\s+/\*": "rm -rf /*",
+                r"rm\s+-rf\s+~\s*$": "rm -rf ~",
+                r"mkfs\.": "mkfs.* (format disk)",
+                r"dd\s+if=.*of=/dev/": "dd to disk device",
+                r":\(\)\{.*\}": "fork bomb",
+                r"curl.*\|\s*sh": "curl | sh (pipe to shell)",
+                r"curl.*\|\s*bash": "curl | bash",
+                r"wget.*\|\s*sh": "wget | sh",
+                r"eval.*base64": "eval base64-encoded code",
+                r"python.*-c.*exec\(.*base64": "python exec base64",
+                r">\s*/etc/": "overwrite /etc/ files",
+                r">\s*/dev/": "write to /dev/ devices",
+            }
+            for pat in DEFAULT_DENIED_PATTERNS:
+                desc = _deny_descriptions.get(pat, pat)
+                deny_examples.append(f"  - {desc}")
+            denylist_block = (
+                "\n\nDENIED COMMANDS (NEVER execute these, even inside the sandbox):\n"
+                + "\n".join(deny_examples) + "\n"
+            )
+    except Exception:
+        pass
+
     return (
         "\n\n[SANDBOX ENVIRONMENT — CODE EXECUTION ENABLED]\n"
         "You have access to a sandboxed Python environment for code execution. "
@@ -355,6 +386,7 @@ def build_sandbox_prompt(container_name: str, output_dir: str) -> str:
         "- Math problems that benefit from computation → use Python\n\n"
         "IMPORTANT: Always save generated images as PNG to /workspace/output/ with descriptive filenames.\n"
         "Example: plt.savefig('/workspace/output/btc_price_chart.png', dpi=150, bbox_inches='tight')\n"
+        + denylist_block
     )
 
 
