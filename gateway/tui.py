@@ -416,7 +416,7 @@ class StatusBar(Widget):
             parts.append(("● ready ", "bold green"))
         parts.append((f"│ {self.model_name} ", ""))
         parts.append((f"│ {self.cost_text} ", "dim"))
-        parts.append(("│ ^⏎:send  ?:help  ^n:new  ^p:sessions  ^o:model  ^q:quit", "dim"))
+        parts.append(("│ ⏎:send  ^⏎:send multi  ?:help  ^n:new  ^p:sessions  ^q:quit", "dim"))
         text = Text()
         for content, style in parts:
             text.append(content, style=style)
@@ -626,22 +626,29 @@ class ChatInput(TextArea):
             pass
 
     def _on_key(self, event) -> None:
-        """Ctrl+Enter sends, Tab for autocomplete, arrows for suggestion nav."""
-        # Ctrl+Enter or Cmd+Enter → send
-        if event.key in ("ctrl+j", "ctrl+m") and event.is_printable is False:
-            # This doesn't work reliably, use the binding below
-            pass
-
-        # Handle Ctrl+Enter to submit
-        if event.key == "ctrl+enter":
+        """Enter sends single-line, Shift+Enter/plain Enter for newline in multi-line."""
+        # Send logic: Enter sends if content is single-line (no newlines).
+        # If content has newlines (multi-line paste), Ctrl+Enter or Escape+Enter sends.
+        # This gives the best UX: simple messages send on Enter, pasted code stays editable.
+        if event.key in ("enter", "ctrl+enter", "ctrl+j"):
             text = self.text.strip()
-            if text:
+            if not text:
+                event.prevent_default()
+                event.stop()
+                return
+
+            # Single-line: Enter sends immediately
+            # Multi-line: only Ctrl+Enter sends
+            is_multiline = "\n" in self.text.rstrip()
+            if not is_multiline or event.key in ("ctrl+enter", "ctrl+j"):
                 self.post_message(ChatSubmitted(text))
                 self.clear()
                 self._last_text = ""
                 self.styles.height = 3
-            event.prevent_default()
-            event.stop()
+                event.prevent_default()
+                event.stop()
+                return
+            # Multi-line + plain Enter: let TextArea insert newline
             return
 
         # Autocomplete handling
