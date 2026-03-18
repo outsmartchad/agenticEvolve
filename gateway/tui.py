@@ -895,9 +895,9 @@ class SessionScreen(ModalScreen[str]):
         for i in range(start, end):
             s = self._sessions[i]
             sid = s.get("id", "?")
-            title = s.get("title", "untitled")[:45]
+            title = (s.get("title") or "untitled")[:45]
             msgs = s.get("message_count", 0)
-            ts = s.get("started_at", "")[:16]
+            ts = (s.get("started_at") or "")[:16]
             is_current = sid == self._current_session_id
 
             prefix = "▸ " if i == self._selected else "  "
@@ -1377,7 +1377,7 @@ class AEApp(App):
                 recent = list_sessions(limit=1)
                 if recent:
                     last = recent[0]
-                    last_title = last.get("title", "untitled")[:50]
+                    last_title = (last.get("title") or "untitled")[:50]
                     last_msgs = last.get("message_count", 0)
                     last_ts = last.get("started_at", "")[:16]
                     if last_msgs > 0:
@@ -2080,7 +2080,7 @@ class AEApp(App):
         for s in sessions:
             ts = s.get("started_at", "")[:16]
             msgs = s.get("message_count", 0)
-            title = s.get("title", "untitled")[:40]
+            title = (s.get("title") or "untitled")[:40]
             sid = s.get("id", "?")[:16]
             lines.append(f"| {ts} | {msgs} | {title} |")
         self.post_message(CommandOutput("\n".join(lines), is_markdown=True))
