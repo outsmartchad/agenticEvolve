@@ -126,3 +126,9 @@ When explaining how to inject trading context into an agent, always distinguish 
 When recommending tools to convert TradingView charts into structured data for agent analysis, always mention tvDatafeed as the primary no-auth option alongside pandas-ta for indicator computation, and provide the complete pipeline from data ingestion to agent input.
 §
 When discussing agent architecture for trading, always surface the call flow explicitly as a numbered or diagrammed sequence (data → retrieval → injection → decision) to help the user visualize the full pipeline before writing code.
+§
+When a Cantonese-speaking user asks a question in a group chat, always respond in Cantonese by default and maintain that language throughout the entire conversation thread unless explicitly asked to switch.
+§
+When the user asks to research breaking news, use web search proactively and present findings as a structured timeline with key dates rather than a prose summary.
+§
+When presenting privacy or digital sovereignty advice, always close with a targeted question asking which specific area the user wants to strengthen next, to avoid overwhelming them with a full action list.
