@@ -627,10 +627,14 @@ def invoke_claude(message: str, model: str = "sonnet",
         "--output-format", "stream-json",
         "--verbose",
     ]
-    if enable_browser and config:
-        # Enable browser MCP for @agent invocations
-        browser_cfg = config.get("browser", {})
-        browser_default = browser_cfg.get("default", "abp")
+    browser_cfg = config.get("browser", {}) if config else {}
+    browser_default = browser_cfg.get("default", "abp")
+
+    if browser_default == "playwright":
+        # Use global Playwright MCP from ~/.claude/.mcp.json — just disable built-in Chromium
+        cmd.append("--no-chrome")
+    elif enable_browser and config:
+        # Inject explicit browser MCP (ABP / Brave / Chrome)
         browser_opts = browser_cfg.get("options", {}).get(browser_default, {})
         browser_cmd = browser_opts.get("command", "npx -y agent-browser-protocol --mcp")
         mcp_config = json.dumps({"mcpServers": {
@@ -848,9 +852,14 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         "--output-format", "stream-json",
         "--verbose",
     ]
-    if enable_browser and config:
-        browser_cfg = config.get("browser", {})
-        browser_default = browser_cfg.get("default", "abp")
+    browser_cfg = config.get("browser", {}) if config else {}
+    browser_default = browser_cfg.get("default", "abp")
+
+    if browser_default == "playwright":
+        # Use global Playwright MCP from ~/.claude/.mcp.json — just disable built-in Chromium
+        cmd.append("--no-chrome")
+    elif enable_browser and config:
+        # Inject explicit browser MCP (ABP / Brave / Chrome)
         browser_opts = browser_cfg.get("options", {}).get(browser_default, {})
         browser_cmd = browser_opts.get("command", "npx -y agent-browser-protocol --mcp")
         mcp_config = json.dumps({"mcpServers": {

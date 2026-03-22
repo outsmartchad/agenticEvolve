@@ -21,7 +21,8 @@ auto_approve_skills: true
 
 # Browser automation
 browser:
-  default: abp                    # abp = Agent Browser Protocol (bundled Chromium, best for agents)
+  default: abp                    # abp | playwright | brave | chrome
+  # "playwright" = inherit global @playwright/mcp from ~/.claude/.mcp.json (no extra MCP injection)
   options:
     abp:
       name: "Agent Browser Protocol"
