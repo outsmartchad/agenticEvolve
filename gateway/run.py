@@ -517,6 +517,13 @@ class GatewayRunner:
             # Detect @agent invocation for browser enablement
             _enable_browser = "[DIRECT @agent INVOCATION" in invoke_text
 
+            # Non-Telegram platforms: use streaming path so denylist can
+            # terminate destructive commands mid-execution.
+            _is_telegram = platform == "telegram"
+            if not _is_telegram and not on_text_chunk:
+                # Force streaming for non-Telegram so denylist guard is active
+                on_text_chunk = lambda _: None
+
             # Choose streaming vs non-streaming invoke
             if on_text_chunk:
                 fut = asyncio.ensure_future(
