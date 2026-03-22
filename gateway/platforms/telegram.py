@@ -492,7 +492,9 @@ class TelegramAdapter(
                 non_url_text = non_url_text.replace(url, "").strip()
             first_url = urls[0]
             is_social = any(h in first_url for h in _SOCIAL_HOSTS)
-            if len(non_url_text) < 30 and not is_social:
+            _BROWSE_INTENTS = ("go to", "open", "navigate", "screenshot", "browse", "check", "look at", "visit", "see the page", "let see")
+            has_browse_intent = any(kw in non_url_text.lower() for kw in _BROWSE_INTENTS)
+            if len(non_url_text) < 30 and not is_social and not has_browse_intent:
                 # Message is primarily a dev/repo link — offer absorb/learn
                 await self._offer_absorb_learn(update, first_url, "link")
                 return
@@ -533,68 +535,93 @@ class TelegramAdapter(
             except Exception:
                 pass  # fall through to Claude on any DB error
 
-        # General chat via Claude — streaming edit-in-place
+        # General chat via Claude — live progress + streaming text
         import asyncio as _asyncio
         import time as _time
 
-        # Send initial placeholder message
-        try:
-            placeholder = await update.message.reply_text("...", parse_mode=None)
-        except Exception:
-            placeholder = None
+        # Progress state — shows tool calls in a single editable message
+        _progress_msg = [None]
+        _progress_lines = []
+        _progress_dirty = [False]
+        _progress_done = [False]
+        _last_progress_edit = [0.0]
+
+        def _on_progress(text: str):
+            """Called from executor thread when Claude uses a tool."""
+            _progress_lines.append(text)
+            _progress_dirty[0] = True
+
+        async def _progress_updater():
+            """Background task: edit progress message every 3s."""
+            while not _progress_done[0]:
+                await _asyncio.sleep(3)
+                if _progress_done[0]:
+                    break
+                if not _progress_dirty[0]:
+                    # Send typing indicator even when no new tools
+                    try:
+                        await self.app.bot.send_chat_action(chat_id=int(chat_id), action="typing")
+                    except Exception:
+                        pass
+                    continue
+                _progress_dirty[0] = False
+                recent = _progress_lines[-8:]
+                display = "\n".join(recent)
+                try:
+                    if _progress_msg[0] is None:
+                        _progress_msg[0] = await self.app.bot.send_message(
+                            chat_id=int(chat_id), text=display)
+                    else:
+                        await self.app.bot.edit_message_text(
+                            chat_id=int(chat_id),
+                            message_id=_progress_msg[0].message_id,
+                            text=display)
+                except Exception:
+                    pass
+                try:
+                    await self.app.bot.send_chat_action(chat_id=int(chat_id), action="typing")
+                except Exception:
+                    pass
+
+        _updater_task = _asyncio.ensure_future(_progress_updater())
 
         # Streaming state — text chunks arrive from executor thread
         _stream_text = []
-        _last_edit_time = [0.0]
-        _edit_lock = _asyncio.Lock()
-        _placeholder_msg = [placeholder]
-
-        async def _do_edit(final=False):
-            """Edit the placeholder message with accumulated text."""
-            if not _placeholder_msg[0] or not _stream_text:
-                return
-            full = "".join(_stream_text)
-            if not full.strip():
-                return
-            # Truncate to Telegram limit
-            display = full[:4000]
-            if not final:
-                display += " ..."
-            try:
-                await _placeholder_msg[0].edit_text(display, parse_mode="Markdown")
-            except Exception:
-                try:
-                    await _placeholder_msg[0].edit_text(display, parse_mode=None)
-                except Exception:
-                    pass
 
         def _on_text_chunk(chunk_text: str):
             """Called from executor thread when Claude emits text."""
             _stream_text.append(chunk_text)
-            now = _time.monotonic()
-            # Throttle edits to every 1.5s (Telegram rate limits)
-            if now - _last_edit_time[0] >= 1.5:
-                _last_edit_time[0] = now
-                # Schedule edit on the event loop from this thread
-                try:
-                    loop = _asyncio.get_event_loop()
-                    if loop.is_running():
-                        _asyncio.run_coroutine_threadsafe(_do_edit(), loop)
-                except Exception:
-                    pass
 
         try:
             response = await self.on_message(
                 "telegram", chat_id, str(user_id), text,
-                on_text_chunk=_on_text_chunk)
+                on_text_chunk=_on_text_chunk,
+                on_progress=_on_progress)
+
+            # Stop progress updater
+            _progress_done[0] = True
+            _updater_task.cancel()
+
+            # Delete progress message (clean chat)
+            if _progress_msg[0]:
+                try:
+                    await self.app.bot.delete_message(
+                        chat_id=int(chat_id),
+                        message_id=_progress_msg[0].message_id)
+                except Exception:
+                    pass
 
             if response:
-                # Final edit with complete response
-                _stream_text.clear()
-                _stream_text.append(response)
-                await _do_edit(final=True)
+                # Send final response
+                try:
+                    await update.message.reply_text(response[:4000], parse_mode="Markdown")
+                except Exception:
+                    try:
+                        await update.message.reply_text(response[:4000])
+                    except Exception:
+                        pass
 
-                # If response > 4000 chars, send remaining chunks as new messages
+                # If response > 4000 chars, send remaining chunks
                 if len(response) > 4000:
                     for i in range(4000, len(response), 4000):
                         chunk = response[i:i+4000]
@@ -602,13 +629,6 @@ class TelegramAdapter(
                             await update.message.reply_text(chunk, parse_mode="Markdown")
                         except Exception:
                             await update.message.reply_text(chunk)
-            elif response is None:
-                # NO_REPLY — delete placeholder
-                if _placeholder_msg[0]:
-                    try:
-                        await _placeholder_msg[0].delete()
-                    except Exception:
-                        pass
 
             # Send any screenshots captured by browser MCP during this turn
             if self._gateway:
@@ -621,12 +641,13 @@ class TelegramAdapter(
                     except Exception as img_err:
                         log.warning(f"Failed to send screenshot: {img_err}")
         except Exception as e:
+            _progress_done[0] = True
+            _updater_task.cancel()
             log.error(f"Telegram handler error: {e}")
-            if _placeholder_msg[0]:
-                try:
-                    await _placeholder_msg[0].edit_text(f"Error: {e}")
-                except Exception:
-                    await update.message.reply_text(f"Error: {e}")
+            try:
+                await update.message.reply_text(f"Error: {e}")
+            except Exception:
+                pass
 
     # ── Lifecycle ────────────────────────────────────────────────
 

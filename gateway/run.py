@@ -260,7 +260,8 @@ class GatewayRunner:
                 text, model=model, history=history,
                 session_context=session_context,
                 config=cfg, user_id=user_id,
-                enable_browser=enable_browser
+                enable_browser=enable_browser,
+                cwd=str(Path.home() / ".agenticEvolve"),
             )
         )
 
@@ -269,7 +270,8 @@ class GatewayRunner:
                                           session_context: str, cfg: dict,
                                           user_id: str | None = None,
                                           enable_browser: bool = False,
-                                          on_text_chunk=None) -> dict:
+                                          on_text_chunk=None,
+                                          on_progress=None) -> dict:
         """Invoke Claude with streaming — text chunks emitted via on_text_chunk callback.
 
         Routes through the provider chain (Retry -> CircuitBreaker -> Cache -> Raw)
@@ -281,13 +283,14 @@ class GatewayRunner:
         # Build kwargs matching invoke_claude_streaming signature
         invoke_kwargs = dict(
             message=text,
-            on_progress=lambda _: None,  # ignore tool progress for chat
+            on_progress=on_progress or (lambda _: None),
             model=model, history=history,
             session_context=session_context,
             config=cfg, user_id=user_id,
             enable_browser=enable_browser,
             on_text_chunk=on_text_chunk,
             session_key=session_id,
+            cwd=str(Path.home() / ".agenticEvolve"),
         )
 
         if self._provider_chain:
@@ -301,7 +304,8 @@ class GatewayRunner:
 
     async def handle_message(self, platform: str, chat_id: str,
                                user_id: str, text: str,
-                               on_text_chunk=None) -> str:
+                               on_text_chunk=None,
+                               on_progress=None) -> str:
         """Core message handler — called by platform adapters."""
         # Drain guard — reject new messages while shutting down
         if self._draining:
@@ -521,7 +525,8 @@ class GatewayRunner:
                         history, session_context, cfg,
                         user_id=user_id,
                         enable_browser=_enable_browser,
-                        on_text_chunk=on_text_chunk)
+                        on_text_chunk=on_text_chunk,
+                        on_progress=on_progress)
                 )
             else:
                 fut = asyncio.ensure_future(

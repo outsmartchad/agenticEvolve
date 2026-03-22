@@ -81,7 +81,7 @@ DEFAULT_DENIED_PATTERNS = [
     r"eval.*base64",                    # base64 decode to eval
     r"python.*-c.*exec\(.*base64",     # python exec base64
     r">\s*/etc/",                       # overwrite system config
-    r">\s*/dev/",                       # write to devices
+    r"(?<!\d)>\s*/dev/(?!null)",         # write to devices (allow 2>/dev/null)
 ]
 
 

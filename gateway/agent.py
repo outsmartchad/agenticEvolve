@@ -904,6 +904,7 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         cost = 0
         input_tokens = 0
         output_tokens = 0
+        images: list[bytes] = []
         tool_count = 0
         last_progress_tool = ""
         timed_out = False
@@ -958,8 +959,9 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                                 tool_count += 1
 
                                 # HARD GUARD: Check Bash commands against denylist
-                                # Kill the process immediately if a destructive command is detected
-                                if tool_name == "Bash":
+                                # Skip for Telegram (full autonomy) — only enforce for WhatsApp/served chats
+                                _is_telegram = "platform=telegram" in session_context
+                                if tool_name == "Bash" and not _is_telegram:
                                     _bash_cmd = tool_input.get("command", "")
                                     try:
                                         from .exec_allowlist import ExecAllowlist
@@ -1033,6 +1035,20 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                                     except Exception as _tc_err:
                                         log.debug(f"Text chunk callback error: {_tc_err}")
 
+                    elif msg_type == "user":
+                        # Extract base64 screenshot images from tool results
+                        for block in obj.get("message", {}).get("content", []):
+                            if block.get("type") != "tool_result":
+                                continue
+                            result_content = block.get("content", [])
+                            if isinstance(result_content, list):
+                                for item in result_content:
+                                    if item.get("type") == "image":
+                                        src = item.get("source", {})
+                                        if src.get("type") == "base64" and src.get("data"):
+                                            import base64 as _b64
+                                            images.append(_b64.b64decode(src["data"]))
+
                     elif msg_type == "result":
                         result_text = obj.get("result", "")
                         if isinstance(result_text, dict):
@@ -1062,23 +1078,23 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
             log.warning(f"invoke_claude_streaming: loop guard terminated subprocess for {_sk}")
             partial = text_parts[-1] if text_parts else "Loop detected — agent was stuck repeating tool calls."
             return {"text": partial, "cost": cost, "success": False, "loop_detected": True,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens}
+                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images}
 
         if timed_out:
             log.warning(f"invoke_claude_streaming timed out after {max_seconds}s")
             partial = text_parts[-1] if text_parts else "Timed out with no output."
             return {"text": partial, "cost": cost, "success": False, "timed_out": True,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens}
+                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images}
 
         proc.wait(timeout=30)
 
         if not text_parts:
             return {"text": "Claude ran but produced no text output.", "cost": cost, "success": False,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens}
+                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images}
 
         final_text = text_parts[-1]
         return {"text": final_text, "cost": cost, "success": True,
-                "input_tokens": input_tokens, "output_tokens": output_tokens}
+                "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images}
 
     except subprocess.TimeoutExpired:
         proc.kill()
