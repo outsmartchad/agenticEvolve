@@ -9,10 +9,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-22T22:00:00+00:00",
-    "run_count": 8,
+    "next_run_at": "2026-03-23T22:00:00+00:00",
+    "run_count": 9,
     "paused": false,
-    "last_run_at": "2026-03-21T22:00:48.034156+00:00"
+    "last_run_at": "2026-03-22T22:00:46.740312+00:00"
   },
   {
     "id": "daily-digest",
@@ -24,10 +24,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-23T00:00:00+00:00",
-    "run_count": 8,
+    "next_run_at": "2026-03-24T00:00:00+00:00",
+    "run_count": 9,
     "paused": false,
-    "last_run_at": "2026-03-22T00:00:24.237206+00:00",
+    "last_run_at": "2026-03-23T00:01:12.292595+00:00",
     "_note": "Handled natively by GatewayRunner._run_due_jobs (no Claude invocation). 8 AM HKT = 00:00 UTC."
   },
   {
@@ -55,10 +55,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-23T01:00:00+00:00",
-    "run_count": 8,
+    "next_run_at": "2026-03-24T01:00:00+00:00",
+    "run_count": 9,
     "paused": false,
-    "last_run_at": "2026-03-22T01:00:49.168692+00:00",
+    "last_run_at": "2026-03-23T01:00:35.805286+00:00",
     "_note": "9 AM HKT = 01:00 UTC. Handled natively by gateway (no Claude invocation for reading, only for analysis)."
   },
   {
@@ -101,11 +101,11 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-18T00:00:00Z",
-    "next_run_at": "2026-03-22T23:58:41.617477+00:00",
-    "run_count": 18,
+    "next_run_at": "2026-03-23T05:59:13.021787+00:00",
+    "run_count": 19,
     "paused": false,
     "_note": "Every 6 hours (21600 seconds).",
-    "last_run_at": "2026-03-22T17:58:41.617477+00:00"
+    "last_run_at": "2026-03-22T23:59:13.021787+00:00"
   },
   {
     "id": "wallet-balance-check",
@@ -116,7 +116,7 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-23T00:00:00Z",
-    "next_run_at": null,
+    "next_run_at": "2026-03-23T02:05:00+00:00",
     "run_count": 0,
     "paused": false,
     "_note": "Every hour. Checks SOL, USDC, USD1 balances via Solscan."
