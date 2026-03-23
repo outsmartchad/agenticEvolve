@@ -552,7 +552,8 @@ def invoke_claude(message: str, model: str = "sonnet",
                    use_workspace: bool = False,
                    max_seconds: int = 600,
                    user_id: str | None = None,
-                   enable_browser: bool = False) -> dict:
+                   enable_browser: bool = False,
+                   resume_session_id: str = "") -> dict:
     """
     Invoke Claude Code with a message and return the response.
 
@@ -577,62 +578,76 @@ def invoke_claude(message: str, model: str = "sonnet",
         from .autonomy import resolve_tools
         allowed_tools = resolve_tools(config)
 
-    # Build the full prompt with history
-    prompt_parts = []
+    # Resume path: skip prompt/history assembly, just send raw message
+    if resume_session_id:
+        cmd = [
+            "claude", "-p", message,
+            "--resume", resume_session_id,
+            "--model", model,
+            "--output-format", "stream-json",
+            "--verbose",
+        ]
+    else:
+        # Build the full prompt with history
+        prompt_parts = []
 
-    if session_context:
-        prompt_parts.append(session_context)
+        if session_context:
+            prompt_parts.append(session_context)
 
-    # Inject conversation history
-    if history:
-        formatted = _format_history(history)
-        if formatted:
-            prompt_parts.append(
-                "# Conversation history (for context — do NOT repeat or summarize it, "
-                "just use it to understand what was discussed):\n\n" + formatted
-            )
+        # Inject conversation history
+        if history:
+            formatted = _format_history(history)
+            if formatted:
+                prompt_parts.append(
+                    "# Conversation history (for context — do NOT repeat or summarize it, "
+                    "just use it to understand what was discussed):\n\n" + formatted
+                )
 
-    # Auto-recall: search all memory layers for context relevant to this message.
-    # This is what makes the agent "conscious" — it automatically retrieves
-    # past conversations, learnings, instincts, and notes before responding.
-    try:
-        from .session_db import unified_search, format_recall_context
+        # Auto-recall: search all memory layers for context relevant to this message.
+        # This is what makes the agent "conscious" — it automatically retrieves
+        # past conversations, learnings, instincts, and notes before responding.
+        try:
+            from .session_db import unified_search, format_recall_context
 
-        # Extract search keywords from message (skip very short or command-like messages)
-        recall_query = message.strip()
-        if len(recall_query) > 15 and not recall_query.startswith("/"):
-            # Use first 200 chars as search query
-            session_id = ""
-            if session_context:
-                # Try to extract session ID from context string
-                for part in session_context.split():
-                    if part.startswith("20") and "_" in part:
-                        session_id = part
-                        break
-            results = unified_search(recall_query[:200], session_id=session_id,
-                                     limit_per_layer=2)
-            recall_block = format_recall_context(results, max_chars=1500)
-            if recall_block:
-                prompt_parts.append(recall_block)
-    except Exception as e:
-        log.debug(f"Auto-recall failed (non-fatal): {e}")
+            # Extract search keywords from message (skip very short or command-like messages)
+            recall_query = message.strip()
+            if len(recall_query) > 15 and not recall_query.startswith("/"):
+                # Use first 200 chars as search query
+                session_id = ""
+                if session_context:
+                    # Try to extract session ID from context string
+                    for part in session_context.split():
+                        if part.startswith("20") and "_" in part:
+                            session_id = part
+                            break
+                results = unified_search(recall_query[:200], session_id=session_id,
+                                         limit_per_layer=2)
+                recall_block = format_recall_context(results, max_chars=1500)
+                if recall_block:
+                    prompt_parts.append(recall_block)
+        except Exception as e:
+            log.debug(f"Auto-recall failed (non-fatal): {e}")
 
-    prompt_parts.append(f"# Current message:\n\n{message}")
+        prompt_parts.append(f"# Current message:\n\n{message}")
 
-    full_prompt = "\n\n---\n\n".join(prompt_parts)
+        full_prompt = "\n\n---\n\n".join(prompt_parts)
 
-    cmd = [
-        "claude", "-p", full_prompt,
-        "--model", model,
-        "--output-format", "stream-json",
-        "--verbose",
-    ]
+        cmd = [
+            "claude", "-p", full_prompt,
+            "--model", model,
+            "--output-format", "stream-json",
+            "--verbose",
+        ]
     browser_cfg = config.get("browser", {}) if config else {}
     browser_default = browser_cfg.get("default", "abp")
 
     if browser_default == "playwright":
-        # Use global Playwright MCP from ~/.claude/.mcp.json — just disable built-in Chromium
-        cmd.append("--no-chrome")
+        # Explicitly pass Playwright MCP via --mcp-config so it works in -p (non-interactive) mode.
+        # ~/.claude/.mcp.json is only read in interactive sessions, not claude -p.
+        mcp_config = json.dumps({"mcpServers": {
+            "playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]}
+        }})
+        cmd.extend(["--no-chrome", "--mcp-config", mcp_config])
     elif enable_browser and config:
         # Inject explicit browser MCP (ABP / Brave / Chrome)
         browser_opts = browser_cfg.get("options", {}).get(browser_default, {})
@@ -695,15 +710,15 @@ def invoke_claude(message: str, model: str = "sonnet",
                     )
                     if reason == InvokeFailReason.AUTH_PERMANENT:
                         log.error("AUTH_PERMANENT — not retrying")
-                        return {"text": "Authentication failed. Check your API key.", "cost": 0, "success": False}
+                        return {"text": "Authentication failed. Check your API key.", "cost": 0, "success": False, "claude_session_id": ""}
                     if reason == InvokeFailReason.BILLING:
                         log.error("BILLING — not retrying")
-                        return {"text": "Billing quota exceeded. Check your Anthropic account.", "cost": 0, "success": False}
+                        return {"text": "Billing quota exceeded. Check your Anthropic account.", "cost": 0, "success": False, "claude_session_id": ""}
                     if reason == InvokeFailReason.RATE_LIMIT:
                         cooldown_until = _cooldowns.get(reason.value, 0)
                         if time.time() < cooldown_until:
                             remaining = int(cooldown_until - time.time())
-                            return {"text": f"Rate limited. Please wait {remaining}s and try again.", "cost": 0, "success": False}
+                            return {"text": f"Rate limited. Please wait {remaining}s and try again.", "cost": 0, "success": False, "claude_session_id": ""}
                         _cooldowns[reason.value] = time.time() + 30
                     if attempt == 0:
                         log.info("Retrying...")
@@ -717,17 +732,22 @@ def invoke_claude(message: str, model: str = "sonnet",
                 input_tokens = 0
                 output_tokens = 0
                 images: list[bytes] = []
+                claude_session_id = ""
                 for line in output.split("\n"):
                     line = line.strip()
                     if not line:
                         continue
                     try:
                         obj = json.loads(line)
-                        if obj.get("type") == "assistant":
+                        msg_type = obj.get("type", "")
+                        # Capture session_id from init message
+                        if msg_type == "system" and obj.get("subtype") == "init":
+                            claude_session_id = obj.get("session_id", "")
+                        elif msg_type == "assistant":
                             for block in obj.get("message", {}).get("content", []):
                                 if block.get("type") == "text":
                                     text_parts.append(block["text"])
-                        elif obj.get("type") == "user":
+                        elif msg_type == "user":
                             # Tool results live in user messages; extract browser screenshot images.
                             for block in obj.get("message", {}).get("content", []):
                                 if block.get("type") != "tool_result":
@@ -740,7 +760,7 @@ def invoke_claude(message: str, model: str = "sonnet",
                                             if src.get("type") == "base64" and src.get("data"):
                                                 import base64 as _b64
                                                 images.append(_b64.b64decode(src["data"]))
-                        elif obj.get("type") == "result":
+                        elif msg_type == "result":
                             result_text = obj.get("result", "")
                             if isinstance(result_text, dict):
                                 # result can be a dict with text and usage
@@ -764,24 +784,28 @@ def invoke_claude(message: str, model: str = "sonnet",
                     log.warning(f"Claude returned output but no text found. Output preview: {output[:300]}")
                     if attempt == 0:
                         continue
-                    return {"text": "Claude responded but I couldn't parse the output. Try again.", "cost": cost, "success": False, "images": images}
+                    return {"text": "Claude responded but I couldn't parse the output. Try again.", "cost": cost,
+                            "success": False, "images": images, "claude_session_id": claude_session_id}
 
                 final_text = text_parts[-1]
                 return {"text": final_text, "cost": cost, "success": True, "images": images,
-                        "input_tokens": input_tokens, "output_tokens": output_tokens}
+                        "input_tokens": input_tokens, "output_tokens": output_tokens,
+                        "claude_session_id": claude_session_id}
 
             except subprocess.TimeoutExpired:
                 log.warning(f"invoke_claude timed out after {max_seconds}s — killing subprocess")
-                return {"text": f"Request timed out after {max_seconds // 60} minutes. Try a simpler request or break it into steps.", "cost": 0, "success": False}
+                return {"text": f"Request timed out after {max_seconds // 60} minutes. Try a simpler request or break it into steps.",
+                        "cost": 0, "success": False, "claude_session_id": ""}
             except FileNotFoundError:
-                return {"text": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code", "cost": 0, "success": False}
+                return {"text": "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code",
+                        "cost": 0, "success": False, "claude_session_id": ""}
             except Exception as e:
                 log.error(f"Claude invocation error: {e}")
                 if attempt == 0:
                     continue
-                return {"text": f"Error: {e}", "cost": 0, "success": False}
+                return {"text": f"Error: {e}", "cost": 0, "success": False, "claude_session_id": ""}
 
-        return {"text": "Failed after retries.", "cost": 0, "success": False}
+        return {"text": "Failed after retries.", "cost": 0, "success": False, "claude_session_id": ""}
 
     finally:
         if _workspace and _workspace.exists():
@@ -803,7 +827,8 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                              history: list[dict] | None = None,
                              on_text_chunk=None,
                              user_id: str | None = None,
-                             enable_browser: bool = False) -> dict:
+                             enable_browser: bool = False,
+                             resume_session_id: str = "") -> dict:
     """
     Invoke Claude Code with real-time progress reporting via on_progress callback.
 
@@ -835,29 +860,44 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         from .autonomy import resolve_tools
         allowed_tools = resolve_tools(config)
 
-    prompt_parts = []
-    if session_context:
-        prompt_parts.append(session_context)
-    # Inject conversation history (same as invoke_claude)
-    if history:
-        formatted = _format_history(history)
-        if formatted:
-            prompt_parts.append(f"# Conversation history:\n\n{formatted}")
-    prompt_parts.append(f"# Current message:\n\n{message}")
-    full_prompt = "\n\n---\n\n".join(prompt_parts)
+    # Resume path: skip prompt/history assembly, just send raw message
+    if resume_session_id:
+        cmd = [
+            "claude", "-p", message,
+            "--resume", resume_session_id,
+            "--model", model,
+            "--output-format", "stream-json",
+            "--verbose",
+        ]
+    else:
+        prompt_parts = []
+        if session_context:
+            prompt_parts.append(session_context)
+        # Inject conversation history (same as invoke_claude)
+        if history:
+            formatted = _format_history(history)
+            if formatted:
+                prompt_parts.append(f"# Conversation history:\n\n{formatted}")
+        prompt_parts.append(f"# Current message:\n\n{message}")
+        full_prompt = "\n\n---\n\n".join(prompt_parts)
 
-    cmd = [
-        "claude", "-p", full_prompt,
-        "--model", model,
-        "--output-format", "stream-json",
-        "--verbose",
-    ]
+        cmd = [
+            "claude", "-p", full_prompt,
+            "--model", model,
+            "--output-format", "stream-json",
+            "--verbose",
+        ]
+
     browser_cfg = config.get("browser", {}) if config else {}
     browser_default = browser_cfg.get("default", "abp")
 
     if browser_default == "playwright":
-        # Use global Playwright MCP from ~/.claude/.mcp.json — just disable built-in Chromium
-        cmd.append("--no-chrome")
+        # Explicitly pass Playwright MCP via --mcp-config so it works in -p (non-interactive) mode.
+        # ~/.claude/.mcp.json is only read in interactive sessions, not claude -p.
+        mcp_config = json.dumps({"mcpServers": {
+            "playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]}
+        }})
+        cmd.extend(["--no-chrome", "--mcp-config", mcp_config])
     elif enable_browser and config:
         # Inject explicit browser MCP (ABP / Brave / Chrome)
         browser_opts = browser_cfg.get("options", {}).get(browser_default, {})
@@ -909,6 +949,7 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
         last_progress_tool = ""
         timed_out = False
         loop_detected = False
+        claude_session_id = ""
         _sk = session_key or session_context  # scope for LoopDetector
 
         timer = threading.Timer(max_seconds, _terminate_proc, args=[proc])
@@ -922,6 +963,10 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                 try:
                     obj = json.loads(line)
                     msg_type = obj.get("type", "")
+
+                    # Capture session_id from init message
+                    if msg_type == "system" and obj.get("subtype") == "init":
+                        claude_session_id = obj.get("session_id", "")
 
                     # Tool use — report what Claude is doing
                     if msg_type == "assistant":
@@ -981,6 +1026,7 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
                                                 "output_tokens": output_tokens,
                                                 "tool_count": tool_count,
                                                 "blocked": True,
+                                                "claude_session_id": claude_session_id,
                                             }
                                     except Exception as _al_err:
                                         log.debug(f"Allowlist check failed (non-fatal): {_al_err}")
@@ -1078,35 +1124,39 @@ def invoke_claude_streaming(message: str, on_progress, model: str = "sonnet",
             log.warning(f"invoke_claude_streaming: loop guard terminated subprocess for {_sk}")
             partial = text_parts[-1] if text_parts else "Loop detected — agent was stuck repeating tool calls."
             return {"text": partial, "cost": cost, "success": False, "loop_detected": True,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images}
+                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images,
+                    "claude_session_id": claude_session_id}
 
         if timed_out:
             log.warning(f"invoke_claude_streaming timed out after {max_seconds}s")
             partial = text_parts[-1] if text_parts else "Timed out with no output."
             return {"text": partial, "cost": cost, "success": False, "timed_out": True,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images}
+                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images,
+                    "claude_session_id": claude_session_id}
 
         proc.wait(timeout=30)
 
         if not text_parts:
             return {"text": "Claude ran but produced no text output.", "cost": cost, "success": False,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images}
+                    "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images,
+                    "claude_session_id": claude_session_id}
 
         final_text = text_parts[-1]
         return {"text": final_text, "cost": cost, "success": True,
-                "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images}
+                "input_tokens": input_tokens, "output_tokens": output_tokens, "images": images,
+                "claude_session_id": claude_session_id}
 
     except subprocess.TimeoutExpired:
         proc.kill()
         return {"text": "Request timed out.", "cost": 0, "success": False,
-                "input_tokens": 0, "output_tokens": 0}
+                "input_tokens": 0, "output_tokens": 0, "claude_session_id": ""}
     except FileNotFoundError:
         return {"text": "Claude CLI not found.", "cost": 0, "success": False,
-                "input_tokens": 0, "output_tokens": 0}
+                "input_tokens": 0, "output_tokens": 0, "claude_session_id": ""}
     except Exception as e:
         log.error(f"Streaming invocation error: {e}")
         return {"text": f"Error: {e}", "cost": 0, "success": False,
-                "input_tokens": 0, "output_tokens": 0}
+                "input_tokens": 0, "output_tokens": 0, "claude_session_id": ""}
     finally:
         if _workspace and _workspace.exists():
             try:

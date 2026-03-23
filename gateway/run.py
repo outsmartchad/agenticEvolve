@@ -94,6 +94,30 @@ def _needs_reasoning(text: str) -> bool:
     return bool(_REASONING_PATTERNS.search(text))
 
 
+# ── Multi-turn resume detection ──────────────────────────────────
+# Detects when the agent is waiting for user input (login, confirmation, etc.)
+# so the session can be resumed via --resume <session_id>.
+
+_WAITING_PATTERNS = _re.compile(
+    r'(?i)(?:'
+    r'(?:please|could you|can you|i need you to)\s+(?:log\s*in|sign\s*in|authenticate|confirm|verify|approve|provide|enter|type|click)'
+    r'|(?:waiting for|need)\s+(?:your|user)\s+(?:input|confirmation|approval|response|credentials|login)'
+    r'|(?:please\s+)?(?:check|look at|review)\s+(?:the\s+)?(?:browser|screen|page)'
+    r'|(?:you.ll need to|you need to|you should)\s+(?:log\s*in|sign\s*in|enter|provide)'
+    r'|(?:reply|tell me|let me know)\s+(?:when|once|after)\s+(?:you|done|ready|logged|signed)'
+    r'|\[WAITING_FOR_USER\]'
+    r')'
+)
+
+
+def _needs_resume(response_text: str) -> tuple[bool, str]:
+    """Detect if the agent is waiting for user input and needs a resume session."""
+    match = _WAITING_PATTERNS.search(response_text)
+    if match:
+        return True, match.group(0)[:80]
+    return False, ""
+
+
 class GatewayRunner:
     """Main gateway process — routes platform messages to Claude Code."""
 
@@ -113,6 +137,7 @@ class GatewayRunner:
         self._draining: bool = False
         self._inflight: set[asyncio.Future] = set()
         self._pending_images: dict[str, list[bytes]] = {}  # session_key -> screenshot bytes
+        self._pending_resume: dict[str, dict] = {}  # chat_key -> {claude_session_id, created_at, reason}
         self._rate_limiter = None  # initialized after config load in start()
         self._background_mgr = BackgroundTaskManager()  # Phase 3: background tasks
         self._plugins: list = []  # loaded plugins
@@ -327,6 +352,59 @@ class GatewayRunner:
         lock = self._get_lock(key)
 
         async with lock:
+            # Check for pending resume — user replied while agent was waiting for input
+            if key in self._pending_resume:
+                pending = self._pending_resume[key]
+                age = (datetime.now(timezone.utc) - pending["created_at"]).total_seconds()
+                if age > 600:  # 10 min timeout
+                    log.info(f"Pending resume expired for {key}")
+                    del self._pending_resume[key]
+                else:
+                    log.info(f"Resuming claude session {pending['claude_session_id'][:8]} for {key}")
+                    del self._pending_resume[key]
+
+                    # Use streaming path for resume
+                    from .agent import invoke_claude_streaming
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(None, lambda: invoke_claude_streaming(
+                        message=text,
+                        on_progress=on_progress or (lambda _: None),
+                        model=self.config.get("model", "sonnet"),
+                        config=self.config,
+                        cwd=str(Path.home() / ".agenticEvolve"),
+                        session_key=key,
+                        on_text_chunk=on_text_chunk,
+                        resume_session_id=pending["claude_session_id"],
+                    ))
+
+                    response_text = result.get("text", "No response.")
+                    cost = result.get("cost", 0)
+                    images = result.get("images", [])
+                    if images:
+                        self._pending_images[key] = images
+
+                    # Check if STILL waiting
+                    new_sid = result.get("claude_session_id", "")
+                    still_waiting, reason = _needs_resume(response_text)
+                    if still_waiting and new_sid:
+                        self._pending_resume[key] = {
+                            "claude_session_id": new_sid,
+                            "created_at": datetime.now(timezone.utc),
+                            "reason": reason,
+                        }
+
+                    # Persist
+                    session_id = self._get_or_create_session(platform, chat_id, user_id)
+                    add_message(session_id, "user", text)
+                    add_message(session_id, "assistant", response_text)
+
+                    # Cost tracking
+                    if cost > 0:
+                        self._log_cost(platform, session_id, cost)
+                        log.info(f"Resume response sent ({platform}:{chat_id}) cost=${cost:.4f}")
+
+                    return response_text
+
             # Hot config reload (ZeroClaw pattern — apply on next message)
             if config_changed():
                 self.config, changes = reload_config()
@@ -567,6 +645,17 @@ class GatewayRunner:
             images = result.get("images", [])
             if images:
                 self._pending_images[key] = images
+
+            # Multi-turn resume detection: check if agent is waiting for user input
+            _claude_sid = result.get("claude_session_id", "")
+            _wants_resume, _resume_reason = _needs_resume(response_text)
+            if _wants_resume and _claude_sid:
+                self._pending_resume[key] = {
+                    "claude_session_id": _claude_sid,
+                    "created_at": datetime.now(timezone.utc),
+                    "reason": _resume_reason,
+                }
+                log.info(f"Pending resume set for {key}: {_resume_reason}")
 
             # Security: redact leaked credentials from agent output
             if hasattr(self, "_leak_detector") and self._leak_detector:
@@ -938,7 +1027,9 @@ class GatewayRunner:
                 None,
                 lambda p=prompt: invoke_claude(
                     p, model=self.config.get("model", "sonnet"),
-                    session_context=f"[Cron job: {job_id}]"
+                    session_context=f"[Cron job: {job_id}]",
+                    config=self.config,
+                    enable_browser=True,
                 )
             )
 
