@@ -16,15 +16,95 @@ Safety:
   - Changes are logged in the learnings DB
   - Gateway is NOT auto-restarted (user must restart manually or via /heartbeat)
 """
+import asyncio
+import hashlib
 import json
 import logging
 import os
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 log = logging.getLogger("agenticEvolve.absorb")
+
+# ── Loop detection ────────────────────────────────────────────────────────────
+
+MAX_TOOL_CALLS = 30  # configurable ceiling per absorb run
+MAX_IDENTICAL_CALLS = 3  # raise AbsorbLoopError after this many repeated calls
+
+
+class AbsorbLoopError(Exception):
+    """Raised when the absorb pipeline detects a repeated tool-call loop."""
+    def __init__(self, tool_name: str, args_preview: str, count: int):
+        self.tool_name = tool_name
+        self.args_preview = args_preview
+        self.count = count
+        super().__init__(
+            f"Loop detected: {tool_name}({args_preview}) called {count}x"
+        )
+
+
+class ToolCallTracker:
+    """Tracks (tool_name, args_hash) pairs to detect repeated calls."""
+
+    def __init__(self, max_identical: int = MAX_IDENTICAL_CALLS,
+                 max_total: int = MAX_TOOL_CALLS):
+        self._counts: dict[str, int] = {}
+        self._total = 0
+        self.max_identical = max_identical
+        self.max_total = max_total
+
+    def record(self, tool_name: str, args: object) -> None:
+        """Record a tool call. Raises AbsorbLoopError if limits are exceeded."""
+        self._total += 1
+        if self._total > self.max_total:
+            raise AbsorbLoopError(tool_name, str(args)[:60], self._total)
+
+        args_hash = hashlib.sha256(
+            json.dumps(args, sort_keys=True, default=str).encode()
+        ).hexdigest()[:12]
+        key = f"{tool_name}:{args_hash}"
+        self._counts[key] = self._counts.get(key, 0) + 1
+
+        if self._counts[key] >= self.max_identical:
+            raise AbsorbLoopError(tool_name, str(args)[:60], self._counts[key])
+
+    @property
+    def total(self) -> int:
+        return self._total
+
+
+# ── Fetch helper ──────────────────────────────────────────────────────────────
+
+def _fetch_with_retry(url: str, max_attempts: int = 2,
+                      backoff: float = 2.0) -> str | None:
+    """Fetch a URL with retry cap. Returns content or None on failure.
+
+    Wraps requests.get with a ceiling so fetch loops have a hard stop.
+    Failed URLs are logged; callers should mark them fetch_failed and continue.
+    """
+    try:
+        import requests
+    except ImportError:
+        log.warning("[absorb] requests not installed — fetch skipped for %s", url)
+        return None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            return resp.text
+        except Exception as exc:
+            log.warning("[absorb] fetch attempt %d/%d failed for %s: %s",
+                        attempt, max_attempts, url, exc)
+            if attempt < max_attempts:
+                time.sleep(backoff)
+
+    log.error("[absorb] fetch_with_retry: all %d attempts failed for %s",
+              max_attempts, url)
+    return None
 
 EXODIR = Path.home() / ".agenticEvolve"
 SKILLS_DIR = Path.home() / ".claude" / "skills"
@@ -76,6 +156,15 @@ class AbsorbOrchestrator:
         self.skip_security_scan = skip_security_scan
         self._cost_total = 0.0
         self._changes_made = []
+        # Loop detection
+        self._tool_tracker = ToolCallTracker()
+        self.loop_detected = False
+        self._loop_error: AbsorbLoopError | None = None
+        # Fetch state
+        self._skipped_urls: list[str] = []
+        self._failed_urls: list[str] = []
+        # Session state (populated by run())
+        self.session_id: str = ""
 
     def _report(self, msg: str):
         log.info(f"[absorb] {msg}")
@@ -84,10 +173,66 @@ class AbsorbOrchestrator:
         except Exception:
             pass
 
+    def _check_url_relevance(self, url: str, absorb_goal: str) -> bool:
+        """Quick Haiku relevance gate before spending a full Claude invocation.
+
+        Fetches the URL title + first 500 chars, asks Haiku if it's relevant
+        to absorb_goal. Returns True (relevant) or False (skip).
+        Irrelevant URLs are logged to absorb_skips.jsonl.
+        """
+        content = _fetch_with_retry(url, max_attempts=2)
+        if content is None:
+            self._failed_urls.append(url)
+            log.warning("[absorb] relevance check: fetch failed for %s", url)
+            return False
+
+        snippet = content[:500]
+
+        try:
+            from .agent import invoke_claude_streaming
+            check = invoke_claude_streaming(
+                f"Is this page relevant to: '{absorb_goal}'?\n\nPage content:\n{snippet}\n\nReply with exactly 'yes' or 'no'.",
+                model="haiku",
+                session_context="[Absorb/relevance-check]",
+            )
+            answer = check.get("text", "").strip().lower()
+            relevant = answer.startswith("yes")
+        except Exception as exc:
+            log.warning("[absorb] relevance Haiku call failed: %s — defaulting to relevant", exc)
+            return True
+
+        if not relevant:
+            self._skipped_urls.append(url)
+            skip_record = {
+                "url": url,
+                "goal": absorb_goal,
+                "snippet": snippet[:200],
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+            skip_log = EXODIR / "absorb_skips.jsonl"
+            try:
+                with open(skip_log, "a") as fh:
+                    fh.write(json.dumps(skip_record) + "\n")
+            except OSError as exc:
+                log.warning("[absorb] could not write absorb_skips.jsonl: %s", exc)
+            log.info("[absorb] skipped irrelevant URL: %s", url)
+
+        return relevant
+
     def _invoke(self, prompt: str, stage: str) -> dict:
+        """Invoke Claude with loop-detection guard around the tool tracker."""
         from .agent import invoke_claude_streaming
 
         self._report(f"*Stage: {stage}*")
+
+        # Record this high-level invoke as a tracked call
+        try:
+            self._tool_tracker.record("_invoke", {"stage": stage})
+        except AbsorbLoopError as err:
+            self.loop_detected = True
+            self._loop_error = err
+            log.error("[absorb] loop detected in _invoke: %s", err)
+            return {"text": f"[LOOP DETECTED] {err}", "cost": 0}
 
         result = invoke_claude_streaming(
             prompt,
@@ -381,10 +526,41 @@ class AbsorbOrchestrator:
 
     # ── Stage 5: REPORT ──────────────────────────────────────────
 
+    def _emit_loop_incident(self) -> None:
+        """Send a structured loop incident summary to the progress channel.
+
+        Called at the end of REPORT stage when loop_detected=True.
+        Surfaces the loop to Vincent proactively instead of silent failure.
+        """
+        if not self._loop_error:
+            return
+        err = self._loop_error
+        lines = [
+            f"⚠️ *Absorb loop detected*",
+            f"  Session: `{self.session_id or 'unknown'}`",
+            f"  Repeated: `{err.tool_name}({err.args_preview})` — {err.count}x",
+            f"  Skipped to REPORT stage.",
+        ]
+        if self._skipped_urls:
+            lines.append(f"  Skipped URLs: {len(self._skipped_urls)}")
+        lines.append(f"  Review: `~/.agenticEvolve/absorb_skips.jsonl`")
+        self._report("\n".join(lines))
+
     def generate_report(self, scan_result: dict, gap_result: dict,
                         plan_result: dict, impl_result: dict) -> str:
-        """Generate final absorb report."""
+        """Generate final absorb report, including loop incident if detected."""
         lines = [f"*Absorb complete: {self.target}*\n"]
+
+        # Loop incident — emit to progress channel and include in report
+        if self.loop_detected:
+            self._emit_loop_incident()
+            err = self._loop_error
+            lines.append(
+                f"⚠️ *Loop detected during run* — "
+                f"`{err.tool_name}` called {err.count}x. "
+                f"Pipeline skipped to REPORT."
+            )
+            lines.append("")
 
         # Parse implementation changes
         impl_text = impl_result.get("text", "")
@@ -484,7 +660,16 @@ class AbsorbOrchestrator:
         return "\n".join(lines)
 
     def run(self, dry_run: bool = False) -> tuple[str, float]:
-        """Run the absorb pipeline. If dry_run, stops after GAP analysis."""
+        """Run the absorb pipeline. If dry_run, stops after GAP analysis.
+
+        Loop detection is active throughout. If AbsorbLoopError is raised
+        in any stage, the pipeline skips directly to REPORT with
+        loop_detected=True so the incident is surfaced rather than silently
+        failing or retrying indefinitely.
+        """
+        import uuid
+        self.session_id = str(uuid.uuid4())[:8]
+
         mode = "DRY RUN" if dry_run else "full"
         self._report(f"*Absorbing ({mode}): {self.target}*")
         if dry_run:
@@ -493,8 +678,20 @@ class AbsorbOrchestrator:
             self._report("Stages: SCAN → GAP → PLAN → IMPLEMENT → REPORT")
         self._cost_total = 0.0
 
+        # Persist initial absorb state
+        from . import session_db as _sdb
+        _sdb.save_absorb_state(
+            session_id=self.session_id,
+            stage="SCAN",
+            tool_call_count=self._tool_tracker.total,
+            loop_detected=False,
+            skipped_urls=self._skipped_urls,
+        )
+
         # Stage 1: Deep scan
         scan_result = self.stage_scan()
+        if self.loop_detected:
+            return self._loop_bailout(scan_result, {}, {}, {})
 
         # Stage 1.5: Security scan (before any code execution or implementation)
         if self.skip_security_scan:
@@ -509,7 +706,14 @@ class AbsorbOrchestrator:
             return report, self._cost_total
 
         # Stage 2: Gap analysis against our system
+        _sdb.save_absorb_state(
+            session_id=self.session_id, stage="GAP",
+            tool_call_count=self._tool_tracker.total,
+            loop_detected=self.loop_detected, skipped_urls=self._skipped_urls,
+        )
         gap_result = self.stage_gap(scan_result)
+        if self.loop_detected:
+            return self._loop_bailout(scan_result, gap_result, {}, {})
 
         if dry_run:
             summary = self._dry_run_report(scan_result, gap_result)
@@ -517,9 +721,21 @@ class AbsorbOrchestrator:
             return summary, self._cost_total
 
         # Stage 3: Concrete plan
+        _sdb.save_absorb_state(
+            session_id=self.session_id, stage="PLAN",
+            tool_call_count=self._tool_tracker.total,
+            loop_detected=self.loop_detected, skipped_urls=self._skipped_urls,
+        )
         plan_result = self.stage_plan(gap_result)
+        if self.loop_detected:
+            return self._loop_bailout(scan_result, gap_result, plan_result, {})
 
         # Stage 4: Implement
+        _sdb.save_absorb_state(
+            session_id=self.session_id, stage="IMPLEMENT",
+            tool_call_count=self._tool_tracker.total,
+            loop_detected=self.loop_detected, skipped_urls=self._skipped_urls,
+        )
         impl_result = self.stage_implement(plan_result)
 
         # Stage 4.5: AgentShield scan (Layer 2) — check ~/.claude/ config after implementation
@@ -527,9 +743,27 @@ class AbsorbOrchestrator:
             self._agentshield_scan()
 
         # Stage 5: Report
+        _sdb.save_absorb_state(
+            session_id=self.session_id, stage="REPORT",
+            tool_call_count=self._tool_tracker.total,
+            loop_detected=self.loop_detected, skipped_urls=self._skipped_urls,
+        )
         summary = self.generate_report(scan_result, gap_result, plan_result, impl_result)
 
         self._report("*Absorb pipeline complete.*")
+        return summary, self._cost_total
+
+    def _loop_bailout(self, scan_result: dict, gap_result: dict,
+                      plan_result: dict, impl_result: dict) -> tuple[str, float]:
+        """Skip directly to REPORT when a loop is detected mid-pipeline."""
+        log.warning("[absorb] bailing out to REPORT due to loop detection")
+        from . import session_db as _sdb
+        _sdb.save_absorb_state(
+            session_id=self.session_id, stage="REPORT(loop-bailout)",
+            tool_call_count=self._tool_tracker.total,
+            loop_detected=True, skipped_urls=self._skipped_urls,
+        )
+        summary = self.generate_report(scan_result, gap_result, plan_result, impl_result)
         return summary, self._cost_total
 
     def _agentshield_scan(self):

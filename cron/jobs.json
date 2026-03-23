@@ -15,22 +15,6 @@
     "last_run_at": "2026-03-22T22:00:46.740312+00:00"
   },
   {
-    "id": "daily-digest",
-    "description": "Morning briefing \u2014 top signals, skills built, sessions, cost",
-    "prompt": "native:digest",
-    "schedule_type": "cron",
-    "cron": "0 8 * * *",
-    "timezone": "Asia/Hong_Kong",
-    "deliver_to": "telegram",
-    "deliver_chat_id": "934847281",
-    "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-24T00:00:00+00:00",
-    "run_count": 9,
-    "paused": false,
-    "last_run_at": "2026-03-23T00:01:12.292595+00:00",
-    "_note": "Handled natively by GatewayRunner._run_due_jobs (no Claude invocation). 8 AM HKT = 00:00 UTC."
-  },
-  {
     "id": "daily-ux-review",
     "description": "Daily read-only UX and codebase review \u2014 report issues, never edit files",
     "prompt": "Review the agenticEvolve codebase for UX improvements, bugs, and optimization opportunities. DO NOT edit any files. Produce a brief report with: 1) Top 3 issues found, 2) Top 3 improvement suggestions, 3) Any failing tests or regressions. Send this report to the user.",
@@ -40,10 +24,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-23T17:00:00+00:00",
-    "run_count": 8,
+    "next_run_at": "2026-03-24T17:00:00+00:00",
+    "run_count": 9,
     "paused": false,
-    "last_run_at": "2026-03-22T17:00:34.209933+00:00"
+    "last_run_at": "2026-03-23T17:00:55.061292+00:00"
   },
   {
     "id": "wechat-digest",
@@ -93,32 +77,33 @@
     "_note": "Every Monday 7 AM HKT = Sunday 23:00 UTC."
   },
   {
-    "id": "cost-anomaly-check",
-    "description": "Check cost status every 6 hours \u2014 flag anomalies, expensive sessions, and budget warnings",
-    "prompt": "Check agenticEvolve cost status. If today's cost exceeds 80% of the daily cap, send a warning. If any single session in the last 6 hours cost more than $3, flag it. Report: today's total cost, daily cap, top 3 most expensive sessions today.",
-    "schedule_type": "interval",
-    "interval_seconds": 21600,
-    "deliver_to": "telegram",
-    "deliver_chat_id": "934847281",
-    "created_at": "2026-03-18T00:00:00Z",
-    "next_run_at": "2026-03-23T05:59:13.021787+00:00",
-    "run_count": 19,
-    "paused": false,
-    "_note": "Every 6 hours (21600 seconds).",
-    "last_run_at": "2026-03-22T23:59:13.021787+00:00"
-  },
-  {
-    "id": "wallet-balance-check",
+    "id": "wallet-balance-monitor",
     "description": "Hourly Solana wallet balance check \u2014 SOL, USDC, USD1 for pmYRFhyXLiGzUrRqeo4BFECgnwKrkdVu7N9AsR3v6ox",
-    "prompt": "Check the Solana wallet balance for address pmYRFhyXLiGzUrRqeo4BFECgnwKrkdVu7N9AsR3v6ox using Solscan.\n\n1. Go to https://solscan.io/account/pmYRFhyXLiGzUrRqeo4BFECgnwKrkdVu7N9AsR3v6ox using Playwright MCP browser_navigate\n2. Take a snapshot to read the page\n3. Find balances for: SOL (native), USDC (EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v), and USD1 (USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB)\n4. Report in this exact format (use real numbers, no placeholders):\n\n\u26a1 Wallet Report\n\ud83d\udccd pmYRFhyX...v6ox\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\ud83d\udfe1 SOL      X.XXXX     $X,XXX\n\ud83d\udd35 USDC     $X,XXX     $X,XXX\n\u26aa USD1     $X,XXX     $X,XXX\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\ud83d\udcb0 Total            $X,XXX\n\ud83d\udd52 HH:MM HKT \u00b7 Solscan",
+    "prompt": "Check the Solana wallet balance for address pmYRFhyXLiGzUrRqeo4BFECgnwKrkdVu7N9AsR3v6ox using public APIs (no browser needed).\n\n1. Fetch SOL balance via Bash:\n   curl -s 'https://api.mainnet-beta.solana.com' -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBalance\",\"params\":[\"pmYRFhyXLiGzUrRqeo4BFECgnwKrkdVu7N9AsR3v6ox\"]}'\n   Extract 'result.value' (lamports) and divide by 1000000000 to get SOL.\n\n2. Fetch all token accounts via Bash:\n   curl -s 'https://api.mainnet-beta.solana.com' -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTokenAccountsByOwner\",\"params\":[\"pmYRFhyXLiGzUrRqeo4BFECgnwKrkdVu7N9AsR3v6ox\",{\"programId\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"},{\"encoding\":\"jsonParsed\"}]}'\n   From the result, find:\n   - USDC: mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v (decimals: 6)\n   - USD1: mint USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB (decimals: 6)\n   Extract uiAmount for each.\n\n3. Fetch SOL price via Bash:\n   curl -s 'https://price.jup.ag/v6/price?ids=So11111111111111111111111111111111111111112'\n   Extract data.So11111111111111111111111111111111111111112.price\n\n4. Calculate: SOL_USD = SOL_amount * price, USDC_USD = USDC_amount (1:1), USD1_USD = USD1_amount (~1:1), Total = sum.\n\n5. Get current HKT time via Bash: TZ='Asia/Hong_Kong' date '+%H:%M'\n\n6. Report in this exact format:\n\n\u26a1 Wallet Report\n\ud83d\udccd pmYRFhyX...v6ox\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\ud83d\udfe1 SOL      X.XXXX     $X.XX\n\ud83d\udd35 USDC     XX.XX      $XX.XX\n\u26aa USD1     XX.XX      $XX.XX\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\ud83d\udcb0 Total            $XXX.XX\n\ud83d\udd52 HH:MM HKT \u00b7 Solana RPC",
     "schedule_type": "interval",
     "interval_seconds": 3600,
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-23T00:00:00Z",
-    "next_run_at": "2026-03-23T02:05:00+00:00",
+    "next_run_at": "2026-03-23T22:16:05.271539+00:00",
+    "run_count": 20,
+    "paused": false,
+    "_note": "Every hour. Checks SOL, USDC, USD1 balances via Solana RPC + Jupiter price API. No browser needed.",
+    "last_run_at": "2026-03-23T21:16:05.271539+00:00"
+  },
+  {
+    "id": "investbank-research-digest",
+    "description": "Daily investment bank research report digest \u2014 summarize latest reports from WeChat group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5'",
+    "prompt": "Read the WeChat group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5' using the local decrypted WeChat DB.\n\n1. Use Bash to run: python3 ~/.agenticEvolve/tools/wechat-decrypt/export_messages.py --group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5' --hours 24\n   If that fails, try: python3 ~/Desktop/projects/agenticEvolve/tools/wechat-decrypt/export_messages.py --group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5' --hours 24\n\n2. From the output, extract all messages that mention research reports, analysis, or market insights. Focus on:\n   - Goldman Sachs (\u9ad8\u76db), Morgan Stanley (\u5927\u6469), J.P. Morgan (\u6469\u6839\u5927\u901a), UBS (\u745e\u94f6)\n   - Bernstein (\u4f2f\u6069\u65af\u5766), Nomura (\u91ce\u6751), Citi (\u82b1\u65d7), HSBC (\u6c47\u4e30)\n   - Jefferies (\u6770\u5bcc\u745e), Barclays (\u5df4\u514b\u83b1), Bank of America (\u7f8e\u94f6), Deutsche Bank (\u5fb7\u94f6)\n\n3. Summarize the key findings, ratings changes, target price updates, and macro views from the last 24 hours.\n\n4. Format the digest as:\n\n\ud83d\udcca \u6295\u884c\u7814\u62a5\u65e5\u62a5 \u2014 [DATE] HKT\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n[For each report/insight found:]\n\ud83c\udfe6 [Bank Name] \u2014 [Topic/Stock/Sector]\n\ud83d\udcdd [Key finding in 1-2 sentences]\n\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\ud83d\udccc [Overall macro theme of the day if any]\n\ud83d\udd22 Total reports: N\n\n5. If no new messages in the last 24 hours, output: '\ud83d\udcca \u6295\u884c\u7814\u62a5\u65e5\u62a5 \u2014 No new reports in the last 24 hours.'",
+    "schedule_type": "cron",
+    "cron": "0 9 * * *",
+    "timezone": "Asia/Hong_Kong",
+    "deliver_to": "telegram",
+    "deliver_chat_id": "187788523",
+    "created_at": "2026-03-23T01:00:00Z",
+    "next_run_at": "2026-03-24T01:00:00Z",
     "run_count": 0,
     "paused": false,
-    "_note": "Every hour. Checks SOL, USDC, USD1 balances via Solscan."
+    "_note": "9 AM HKT = 01:00 UTC. Reads WeChat group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5' local DB and summarizes research reports."
   }
 ]

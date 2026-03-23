@@ -166,3 +166,13 @@ When analyzing a business model image or diagram, always end with a critical rea
 When analyzing AI-generated passive income models, always explicitly compare the theoretical ceiling to a realistic median outcome with concrete numbers.
 §
 When a user asks to expand on a business model or monetization strategy, always close with a direct comparison to their existing infrastructure and an honest ROI assessment.
+§
+When a Cloudflare-protected site blocks headless browsers, always update the cron job prompt to explicitly require browser-switch to Brave CDP and add a warning comment in the prompt saying do NOT use headless Playwright.
+§
+When a loop agent gets stuck repeating tool calls, break out immediately and diagnose root cause rather than retrying the same sequence.
+§
+When stopping a cron job via jobs.json deletion, always remind the user that a gateway restart is required for the change to take effect on currently running instances.
+§
+When reporting wallet token balances in a cron job, always verify mint addresses against a trusted reference before deploying — a single character error in a mint address silently zeros out a token balance.
+§
+Dune provides Polymarket data beyond price and volume: order book fills, LP positions, user-level activity, open interest, market resolution, and redemption events — always enumerate the full schema when asked about data availability for a specific protocol.

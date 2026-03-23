@@ -100,12 +100,23 @@ def _needs_reasoning(text: str) -> bool:
 
 _WAITING_PATTERNS = _re.compile(
     r'(?i)(?:'
+    # English patterns
     r'(?:please|could you|can you|i need you to)\s+(?:log\s*in|sign\s*in|authenticate|confirm|verify|approve|provide|enter|type|click)'
     r'|(?:waiting for|need)\s+(?:your|user)\s+(?:input|confirmation|approval|response|credentials|login)'
     r'|(?:please\s+)?(?:check|look at|review)\s+(?:the\s+)?(?:browser|screen|page)'
     r'|(?:you.ll need to|you need to|you should)\s+(?:log\s*in|sign\s*in|enter|provide)'
     r'|(?:reply|tell me|let me know)\s+(?:when|once|after)\s+(?:you|done|ready|logged|signed)'
+    r'|which\s+(?:option|approach|method|way)\s+(?:do you|would you|should)'
+    r'|(?:what|how)\s+(?:do you want|would you like)\s+(?:to|me to)'
     r'|\[WAITING_FOR_USER\]'
+    # Chinese patterns
+    r'|想怎么做'        # what do you want to do
+    r'|你(?:想|要)(?:哪|选|怎)'  # which do you want / what do you choose
+    r'|请(?:登录|登入|输入|提供|确认|选择)'  # please log in / enter / provide / confirm / choose
+    r'|需要(?:你|登录|输入|确认)'  # need you to / need login / need input
+    r'|(?:登录|登入).*(?:后|完成|好了)'  # after logging in / when done
+    r'|哪种方式'        # which method
+    r'|替代方案'        # alternatives (agent offering options)
     r')'
 )
 
