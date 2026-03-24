@@ -1,0 +1,140 @@
+[    1694ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at Bfe.checkIsLogin (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666558)
+    at new rG (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1531:187567)
+    at tTe (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:200226)
+    at vUt (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:200173)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:202814
+    at bUt (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:202867) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1696ms] [WARNING] [callNativePromise] 触发终端调用： getCurSettingForKey {"key":"kExtraSettingInfo"} @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1696ms] [WARNING] [callNativePromise] 触发终端调用： getCurSettingForKey {"key":"kExtraSettingInfo"} @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1701ms] [WARNING] [callNativePromise] 触发终端调用： getKey {"key":"podCastOptions"} @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1711ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at Bfe.checkIsLogin (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666558)
+    at F3e.onLogin (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1544:347920)
+    at new F3e (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1544:348047)
+    at tTe (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:200226)
+    at vUt (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:200173)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:202814 @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1731ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1531:59692
+    at al (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:96666)
+    at Ln (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:114852)
+    at la (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:109033)
+    at Dt (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:47600)
+    at sc (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:113722) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1734ms] [WARNING] [tiptap warn]: Invalid content. Passed value: [] Error: RangeError: Unknown node type: undefined
+    at V3t.nodeType (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1515:872211)
+    at Tge.fromJSON (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1515:859473)
+    at V3t.nodeFromJSON (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1515:872107)
+    at RW (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1515:1060126)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1515:1061328
+    at Object.insertContentAt (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1515:1040353)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1515:1059548
+    at Object.insertContent (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1515:1039782)
+    at Object.A [as setData] (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1531:20617)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1531:13756 @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1514
+[    1735ms] [WARNING] [callNativePromise] 触发终端调用： getKey {"key":"podCastOptions"} @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1738ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:76:121699
+    at al (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:96666)
+    at Ln (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:114852)
+    at la (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:109033)
+    at Dt (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:47600)
+    at sc (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:113722) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1738ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:76:120807
+    at al (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:96666)
+    at Ln (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:114852)
+    at la (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:109033)
+    at Dt (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:47600)
+    at sc (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:113722) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1738ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1555:1222444
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:76:99409
+    at al (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:96666)
+    at Ln (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:114852)
+    at la (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:109033)
+    at Dt (https://static.ima.qq.com/ima/assets/wikis/assets/vendor-BRmyPyFj.js:25:47600) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1745ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at x8.getCookie (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:428566)
+    at T8.getHeader (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:430537)
+    at bc.resetHeader (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:446613)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:443573
+    at tK._fetch (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:441715)
+    at i (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:439311) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1745ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at x8.getCookie (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:428566)
+    at T8.getHeader (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:430537)
+    at bc.resetHeader (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:446613)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:443573
+    at tK._fetch (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:441715)
+    at i (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:439311) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1745ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at x8.getCookie (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:428566)
+    at T8.getHeader (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:430537)
+    at bc.resetHeader (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:446613)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:443573
+    at tK._fetch (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:441715)
+    at i (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:439311) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1745ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at x8.getCookie (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:428566)
+    at T8.getHeader (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:430537)
+    at bc.resetHeader (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:446613)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:443573
+    at tK._fetch (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:441715)
+    at i (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:439311) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    1765ms] [ERROR] [parseJson] parse json error, jsonString:  SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Xs (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:27551)
+    at Ndn.getItem (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:671411)
+    at Bfe.getAccountInfo (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:69:666343)
+    at Rme.init (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1531:165832)
+    at new Rme (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:1531:167631)
+    at tTe (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:200226)
+    at vUt (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:200173)
+    at https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:202814
+    at bUt (https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:23:202867) @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    2261ms] [WARNING] [callNativePromise] 触发终端调用： getCurSettingForKey {"key":"kExtraSettingInfo"} @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    2261ms] [WARNING] [callNativePromise] 触发终端调用： getCurSettingForKey {"key":"kExtraSettingInfo"} @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    2261ms] [WARNING] [callNativePromise] 触发终端调用： getCurSettingForKey {"key":"kExtraSettingInfo"} @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22
+[    2261ms] [WARNING] [callNativePromise] 触发终端调用： saveInfoWithKey {"key":"kExtraSettingInfo","info":"{\"modelConfig\":{\"modelOptions\":[{\"id\":4,\"name\":\"DeepSeek V3.2\",\"desc\":\"通用逻辑推理\",\"enableEnhancement\":true,\"isDefault\":true,\"shortModelName\":\"DS\",\"isNew\":false,\"subModelTypes\":{\"0\":4,\"1\":5}},{\"id\":0,\"name\":\"Tencent HY 2.0\",\"desc\":\"适合大部分任务\",\"enableEnhancement\":true,\"isDefault\":false,\"shortModelName\":\"HY\",\"isNew\":false,\"subModelTypes\":{\"0\":0,\"1\":2}}],\"timestamp\":1774256717208}}"} @ https://static.ima.qq.com/ima/assets/wikis/assets/index-DvqlJcTL.js:22

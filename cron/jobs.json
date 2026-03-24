@@ -9,10 +9,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-23T22:00:00+00:00",
-    "run_count": 9,
+    "next_run_at": "2026-03-24T22:00:00+00:00",
+    "run_count": 10,
     "paused": false,
-    "last_run_at": "2026-03-22T22:00:46.740312+00:00"
+    "last_run_at": "2026-03-23T22:00:54.860286+00:00"
   },
   {
     "id": "daily-ux-review",
@@ -24,10 +24,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-24T17:00:00+00:00",
-    "run_count": 9,
+    "next_run_at": "2026-03-25T17:00:00+00:00",
+    "run_count": 10,
     "paused": false,
-    "last_run_at": "2026-03-23T17:00:55.061292+00:00"
+    "last_run_at": "2026-03-24T17:00:28.390674+00:00"
   },
   {
     "id": "wechat-digest",
@@ -39,10 +39,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-24T01:00:00+00:00",
-    "run_count": 9,
+    "next_run_at": "2026-03-25T01:00:00+00:00",
+    "run_count": 10,
     "paused": false,
-    "last_run_at": "2026-03-23T01:00:35.805286+00:00",
+    "last_run_at": "2026-03-24T01:00:33.641728+00:00",
     "_note": "9 AM HKT = 01:00 UTC. Handled natively by gateway (no Claude invocation for reading, only for analysis)."
   },
   {
@@ -71,10 +71,11 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-18T00:00:00Z",
-    "next_run_at": "2026-03-23T23:00:00+00:00",
-    "run_count": 0,
+    "next_run_at": "2026-03-29T23:00:00+00:00",
+    "run_count": 1,
     "paused": false,
-    "_note": "Every Monday 7 AM HKT = Sunday 23:00 UTC."
+    "_note": "Every Monday 7 AM HKT = Sunday 23:00 UTC.",
+    "last_run_at": "2026-03-23T23:00:24.448114+00:00"
   },
   {
     "id": "wallet-balance-monitor",
@@ -85,25 +86,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-23T00:00:00Z",
-    "next_run_at": "2026-03-23T22:16:05.271539+00:00",
-    "run_count": 20,
+    "next_run_at": "2026-03-24T22:28:51.737810+00:00",
+    "run_count": 44,
     "paused": false,
     "_note": "Every hour. Checks SOL, USDC, USD1 balances via Solana RPC + Jupiter price API. No browser needed.",
-    "last_run_at": "2026-03-23T21:16:05.271539+00:00"
-  },
-  {
-    "id": "investbank-research-digest",
-    "description": "Daily investment bank research report digest \u2014 summarize latest reports from WeChat group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5'",
-    "prompt": "Read the WeChat group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5' using the local decrypted WeChat DB.\n\n1. Use Bash to run: python3 ~/.agenticEvolve/tools/wechat-decrypt/export_messages.py --group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5' --hours 24\n   If that fails, try: python3 ~/Desktop/projects/agenticEvolve/tools/wechat-decrypt/export_messages.py --group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5' --hours 24\n\n2. From the output, extract all messages that mention research reports, analysis, or market insights. Focus on:\n   - Goldman Sachs (\u9ad8\u76db), Morgan Stanley (\u5927\u6469), J.P. Morgan (\u6469\u6839\u5927\u901a), UBS (\u745e\u94f6)\n   - Bernstein (\u4f2f\u6069\u65af\u5766), Nomura (\u91ce\u6751), Citi (\u82b1\u65d7), HSBC (\u6c47\u4e30)\n   - Jefferies (\u6770\u5bcc\u745e), Barclays (\u5df4\u514b\u83b1), Bank of America (\u7f8e\u94f6), Deutsche Bank (\u5fb7\u94f6)\n\n3. Summarize the key findings, ratings changes, target price updates, and macro views from the last 24 hours.\n\n4. Format the digest as:\n\n\ud83d\udcca \u6295\u884c\u7814\u62a5\u65e5\u62a5 \u2014 [DATE] HKT\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n[For each report/insight found:]\n\ud83c\udfe6 [Bank Name] \u2014 [Topic/Stock/Sector]\n\ud83d\udcdd [Key finding in 1-2 sentences]\n\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\ud83d\udccc [Overall macro theme of the day if any]\n\ud83d\udd22 Total reports: N\n\n5. If no new messages in the last 24 hours, output: '\ud83d\udcca \u6295\u884c\u7814\u62a5\u65e5\u62a5 \u2014 No new reports in the last 24 hours.'",
-    "schedule_type": "cron",
-    "cron": "0 9 * * *",
-    "timezone": "Asia/Hong_Kong",
-    "deliver_to": "telegram",
-    "deliver_chat_id": "187788523",
-    "created_at": "2026-03-23T01:00:00Z",
-    "next_run_at": "2026-03-24T01:00:00Z",
-    "run_count": 0,
-    "paused": false,
-    "_note": "9 AM HKT = 01:00 UTC. Reads WeChat group '2026\u5e74\u516b\u5927\u9876\u7ea7\u6295\u884c\u7814\u62a5' local DB and summarizes research reports."
+    "last_run_at": "2026-03-24T21:28:51.737810+00:00"
   }
 ]

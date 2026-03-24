@@ -1,0 +1,8 @@
+[    2231ms] [WARNING] [callNativePromise] 触发终端调用： getAccountInfo {} @ https://static.ima.qq.com/ima/assets/knowledge-base-share/assets/index-Bw1AnOjT.js:30
+[    2231ms] [WARNING] [callNativePromise] 触发终端调用： getDeviceInfo undefined @ https://static.ima.qq.com/ima/assets/knowledge-base-share/assets/index-Bw1AnOjT.js:30
+[    2231ms] [WARNING] [callNative] 触发终端调用： log @ https://static.ima.qq.com/ima/assets/knowledge-base-share/assets/index-Bw1AnOjT.js:30
+[    2231ms] [WARNING] [callNative] 触发终端调用： log @ https://static.ima.qq.com/ima/assets/knowledge-base-share/assets/index-Bw1AnOjT.js:30
+[    2649ms] [WARNING] [callNativePromise] 触发终端调用： getAccountInfo undefined @ https://static.ima.qq.com/ima/assets/knowledge-base-share/assets/index-Bw1AnOjT.js:30
+[    2649ms] [ERROR] 终端接口空响应 @ https://static.ima.qq.com/ima/assets/knowledge-base-share/assets/index-Bw1AnOjT.js:30
+[    2649ms] [WARNING] [callNativePromise] 触发终端调用： getDeviceInfo undefined @ https://static.ima.qq.com/ima/assets/knowledge-base-share/assets/index-Bw1AnOjT.js:30
+[    6220ms] [WARNING] [callNative] 触发终端调用： log @ https://static.ima.qq.com/ima/assets/knowledge-base-share/assets/index-Bw1AnOjT.js:30
