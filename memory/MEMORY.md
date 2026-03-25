@@ -176,3 +176,7 @@ When stopping a cron job via jobs.json deletion, always remind the user that a g
 When reporting wallet token balances in a cron job, always verify mint addresses against a trusted reference before deploying — a single character error in a mint address silently zeros out a token balance.
 §
 Dune provides Polymarket data beyond price and volume: order book fills, LP positions, user-level activity, open interest, market resolution, and redemption events — always enumerate the full schema when asked about data availability for a specific protocol.
+§
+In TradingView Pine Script, the fill() function requires named plot variables — fill() cannot be called with raw numeric values; always assign plot() calls to variables when fill() is needed.
+§
+When a user asks 'which one is the divergence detection version', always check the full conversation history before responding — if no divergence version exists, say so directly and offer to build it.
