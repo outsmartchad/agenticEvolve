@@ -180,3 +180,17 @@ Dune provides Polymarket data beyond price and volume: order book fills, LP posi
 In TradingView Pine Script, the fill() function requires named plot variables — fill() cannot be called with raw numeric values; always assign plot() calls to variables when fill() is needed.
 §
 When a user asks 'which one is the divergence detection version', always check the full conversation history before responding — if no divergence version exists, say so directly and offer to build it.
+§
+When mapping cognitive frameworks to trading domains, always structure the response as: signal collection → information edge → pattern recognition, with concrete examples for each domain (trading, AMM LP, prediction markets) rather than treating them as separate topics.
+§
+When designing autonomous agent loops for financial strategy research, always include a structured COLLECT → ANALYZE → HYPOTHESIZE → BACKTEST → REFINE → DEPLOY → OBSERVE cycle with explicit iteration tracking and a persistent knowledge base file path.
+§
+When discussing Polymarket alpha strategies, always enumerate at least three distinct edge types: smart money signal detection (probability shifts without news), systematic mispricing (low-volume markets with trackable data), and crowd error patterns (recency bias, overconfidence near resolution).
+§
+When a user asks to build a non-stop loop agent prompt, always include state persistence variables (iteration number, previous strategies file, performance log) so the agent can self-improve across runs rather than starting fresh each time.
+§
+When discussing prediction market inefficiencies, always include order book movement analysis (probability shift >5% without news event) as a primary signal — this is the most reliable smart money indicator before public information arrives.
+§
+When the user frames a concept as a loop or cycle (e.g. monitor → acquire → recognize → act), always render it as a code block diagram to make the structure visually scannable before explaining each node.
+§
+When discussing AMM LP alpha, always distinguish between the three lifecycle phases — new pool honeymoon (high fee), maturity (fee compression), whale exit (volume anomaly before withdrawal) — since each phase requires a different position strategy.
