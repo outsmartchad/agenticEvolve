@@ -9,10 +9,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-26T22:00:00+00:00",
-    "run_count": 12,
+    "next_run_at": "2026-03-27T22:00:00+00:00",
+    "run_count": 13,
     "paused": false,
-    "last_run_at": "2026-03-25T22:00:49.705612+00:00"
+    "last_run_at": "2026-03-26T22:00:56.564814+00:00"
   },
   {
     "id": "daily-ux-review",
@@ -24,10 +24,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-27T17:00:00+00:00",
-    "run_count": 12,
+    "next_run_at": "2026-03-28T17:00:00+00:00",
+    "run_count": 13,
     "paused": false,
-    "last_run_at": "2026-03-26T17:00:59.023223+00:00"
+    "last_run_at": "2026-03-27T17:00:30.125016+00:00"
   },
   {
     "id": "wechat-digest",
@@ -39,10 +39,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-27T01:00:00+00:00",
-    "run_count": 12,
+    "next_run_at": "2026-03-28T01:00:00+00:00",
+    "run_count": 13,
     "paused": false,
-    "last_run_at": "2026-03-26T01:00:38.456916+00:00",
+    "last_run_at": "2026-03-27T01:00:48.657243+00:00",
     "_note": "9 AM HKT = 01:00 UTC. Handled natively by gateway (no Claude invocation for reading, only for analysis)."
   },
   {
@@ -86,10 +86,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-23T00:00:00Z",
-    "next_run_at": "2026-03-26T22:56:24.032925+00:00",
-    "run_count": 92,
+    "next_run_at": "2026-03-27T22:09:32.593492+00:00",
+    "run_count": 115,
     "paused": false,
     "_note": "Every hour. Checks SOL, USDC, USD1 balances via Solana RPC + Jupiter price API. No browser needed.",
-    "last_run_at": "2026-03-26T21:56:24.032925+00:00"
+    "last_run_at": "2026-03-27T21:09:32.593492+00:00"
   }
 ]
