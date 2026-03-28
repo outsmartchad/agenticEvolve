@@ -194,3 +194,11 @@ When discussing prediction market inefficiencies, always include order book move
 When the user frames a concept as a loop or cycle (e.g. monitor → acquire → recognize → act), always render it as a code block diagram to make the structure visually scannable before explaining each node.
 §
 When discussing AMM LP alpha, always distinguish between the three lifecycle phases — new pool honeymoon (high fee), maturity (fee compression), whale exit (volume anomaly before withdrawal) — since each phase requires a different position strategy.
+§
+When a user asks about a specific on-chain market (e.g. Anthropic/USDH), always identify the actual deployer entity and their backing/ownership before discussing mechanics or risks.
+§
+When analyzing HIP-3 or deployer-controlled oracle markets, always present a risk matrix table with columns: risk type, description, severity — not a prose list.
+§
+When discussing pre-IPO perpetual contracts, always explicitly state that oracle prices are deployer-controlled with no external verifiable benchmark, and distinguish this from Chainlink or on-chain feeds.
+§
+When explaining slashing in HIP-3 context, always clarify that slashed funds are burned not redistributed to affected users — this is a common user misconception.
