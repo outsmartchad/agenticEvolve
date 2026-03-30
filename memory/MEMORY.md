@@ -202,3 +202,13 @@ When analyzing HIP-3 or deployer-controlled oracle markets, always present a ris
 When discussing pre-IPO perpetual contracts, always explicitly state that oracle prices are deployer-controlled with no external verifiable benchmark, and distinguish this from Chainlink or on-chain feeds.
 §
 When explaining slashing in HIP-3 context, always clarify that slashed funds are burned not redistributed to affected users — this is a common user misconception.
+§
+When explaining a blockchain/web3 technical article, always include a structured summary table showing stakeholder impacts (mainnet, developers, users) rather than prose-only explanations.
+§
+When explaining a new protocol or framework, always distinguish its architectural difference from prior approaches with a concrete before/after comparison (e.g. async bridge vs atomic composability).
+§
+When covering a multi-party alliance announcement, always include a membership table with each founding member's role/category, not just a list of names.
+§
+When analyzing a DeFi or onchain infrastructure announcement, always close with a direct connection to how it affects Vincent's active projects (agenticEvolve, Polymarket strategy) by name.
+§
+When covering a project with a named technical lead with significant prior work (e.g. Jordi Baylina / Circom), always include their prior contributions as a credibility anchor, not just their current role.

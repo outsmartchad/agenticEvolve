@@ -9,10 +9,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-29T22:00:00+00:00",
-    "run_count": 15,
+    "next_run_at": "2026-03-30T22:00:00+00:00",
+    "run_count": 16,
     "paused": false,
-    "last_run_at": "2026-03-28T22:00:39.432153+00:00"
+    "last_run_at": "2026-03-29T22:00:58.162973+00:00"
   },
   {
     "id": "daily-ux-review",
@@ -24,10 +24,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-30T17:00:00+00:00",
-    "run_count": 15,
+    "next_run_at": "2026-03-31T17:00:00+00:00",
+    "run_count": 16,
     "paused": false,
-    "last_run_at": "2026-03-29T17:00:36.772919+00:00"
+    "last_run_at": "2026-03-30T17:00:28.418092+00:00"
   },
   {
     "id": "wechat-digest",
@@ -39,10 +39,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-14T00:00:00Z",
-    "next_run_at": "2026-03-30T01:00:00+00:00",
-    "run_count": 15,
+    "next_run_at": "2026-03-31T01:00:00+00:00",
+    "run_count": 16,
     "paused": false,
-    "last_run_at": "2026-03-29T01:00:54.921799+00:00",
+    "last_run_at": "2026-03-30T01:00:05.054651+00:00",
     "_note": "9 AM HKT = 01:00 UTC. Handled natively by gateway (no Claude invocation for reading, only for analysis)."
   },
   {
@@ -71,11 +71,11 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-18T00:00:00Z",
-    "next_run_at": "2026-03-29T23:00:00+00:00",
-    "run_count": 1,
+    "next_run_at": "2026-04-05T23:00:00+00:00",
+    "run_count": 2,
     "paused": false,
     "_note": "Every Monday 7 AM HKT = Sunday 23:00 UTC.",
-    "last_run_at": "2026-03-23T23:00:24.448114+00:00"
+    "last_run_at": "2026-03-29T23:00:42.954120+00:00"
   },
   {
     "id": "wallet-balance-monitor",
@@ -86,10 +86,10 @@
     "deliver_to": "telegram",
     "deliver_chat_id": "934847281",
     "created_at": "2026-03-23T00:00:00Z",
-    "next_run_at": "2026-03-29T22:34:25.351941+00:00",
-    "run_count": 163,
+    "next_run_at": "2026-03-30T22:49:18.931196+00:00",
+    "run_count": 187,
     "paused": false,
     "_note": "Every hour. Checks SOL, USDC, USD1 balances via Solana RPC + Jupiter price API. No browser needed.",
-    "last_run_at": "2026-03-29T21:34:25.351941+00:00"
+    "last_run_at": "2026-03-30T21:49:18.931196+00:00"
   }
 ]
